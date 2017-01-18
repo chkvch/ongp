@@ -7,6 +7,19 @@ import pickle
 import utils
 import time
 
+# this module is adapted from Daniel P. Thorngren's general-purpose giant planet
+# modelling code. the main modifications were the implementation of
+# (1) the general Saumon, Chabrier, & van Horn (1995) equation of state
+#     for hydrogen and helium (not just adiabats);
+# (2) the Fortney+2011 model atmospheres for Jupiter and Saturn (could easily be
+#     extended to Uranus and Neptune also);
+# (3) the Lorenzen+2011 ab initio phase diagram for hydrogen and helium, obtained
+#     courtesy of Nadine Nettelmann;
+# (4) the Thompson ANEOS for heavy elements, including water, water ice, iron, 
+#     serpentine, and dunite;
+# (5) the Rostock eos (REOS) for water, also obtained courtesy of Nadine Nettelmann.
+#     at present won't work for cool planet models since it only covers T > 1000 K.
+
 class Evolver:
     
     def __init__(self,hhe_eos_option='scvh',z_eos_option='reos water',nz=1000,relative_radius_tolerance=1e-4,max_iters_for_static_model=500, phase_t_offset=0.):
