@@ -41,7 +41,6 @@ class hhe_phase_diagram:
         for i, pval in enumerate(self.p_grid):
             x = self.lhs_data['x'][self.lhs_data['p'] == pval]
             t = self.lhs_data['t'][self.lhs_data['p'] == pval]
-
             self.splines_lhs[pval] = interpolate.splrep(t, x, s=smooth, k=order)
         
     def xmax_lhs(self, pval, tval):

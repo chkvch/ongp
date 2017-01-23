@@ -149,7 +149,7 @@ class eos:
         try:
             res = self.get_hhe(pair, y)
         except ValueError:
-            print 'probably out of bounds in logP, logT -- did you accidentally pass P, T? (or loglogP, loglogT?)'
+            print 'probably out of bounds in logP, logT, or Y -- did you accidentally pass P, T? (or loglogP, loglogT?)'
             print logp
             print logt
             raise
@@ -184,6 +184,9 @@ class eos:
 
     def get_chit(self, logp, logt, y):
         return self.get(logp, logt, y)['chit']        
+        
+    def get_rhot(self, logp, logt, y):
+        return self.get(logp, logt, y)['rhot']
 
 
     def rhot_get(self, logrho, logt, y, logp_guess=None):
@@ -237,18 +240,25 @@ class eos:
         logp_hi = self.rhot_get(logrho, logt, y_hi)['logp']
 
         return (logp_hi - logp_lo) / 2. / f
+        
+    # def get_dlogrho_dlogy_numerical(self, logp, logt, y, f=5e-3):
+    #     y_lo = y * (1. - f)
+    #     y_hi = y * (1. + f)
+    #     if np.any(y_lo <= 0.) or np.any(y_hi >= 1.):
+    #         print 'warning: dlogrho_dlogy not calculable for y this close to 0 or 1. should change size of step for finite differences.'
+    #         return None
+    #
+    #     logrho_y_lo = self.get_logrho(logp, logt, y_lo)
+    #     logrho_y_hi = self.get_logrho(logp, logt, y_hi)
+    #
+    #     return (logrho_y_hi - logrho_y_lo) / (np.log10(y_hi) - np.log10(y_lo))
 
-    def get_dlogrho_dlogy(self, logp, logt, y, f=5e-3):
-        y_lo = y * (1. - f)
-        y_hi = y * (1. + f)
-        if np.any(y_lo <= 0.) or np.any(y_hi >= 1.):
-            print 'warning: dlogrho_dlogy not calculable for y this close to 0 or 1. should change size of step for finite differences.'
-            return None
-            
-        logrho_y_lo = self.get_logrho(logp, logt, y_lo)
-        logrho_y_hi = self.get_logrho(logp, logt, y_hi)
-
-        return (logrho_y_hi - logrho_y_lo) / (np.log10(y_hi) - np.log10(y_lo))                
+    # actually, no need to do this numerically -- since it's just additive volume, it's simple analytically
+    def get_dlogrho_dlogy(self, logp, logt, y):
+        rho = 10 ** self.get_logrho(logp, logt, y)
+        rho_h = 10 ** self.get_h_logrho((logp, logt))
+        rho_he = 10 ** self.get_he_logrho((logp, logt))
+        return -1. * rho * y * (1. / rho_he - 1. / rho_h)
     
     
     # rest of these are only meant to be called internally    
@@ -279,8 +289,10 @@ class eos:
         pair is just the tuple (logp, logt).'''
         
         # can't be bothered to sort out handling of pure H or He for now
-        assert not np.any(y == 0.), 'get_hhe cannot handle pure H for the time being. try a mixture.'
-        assert not np.any(y == 1.), 'get_hhe cannot handle pure He for the time being. try a mixture.'
+        if np.any(y == 0.):
+            raise ValueError('get_hhe cannot handle pure H for the time being. try a mixture.')
+        if np.any(y == 1.):
+            raise ValueError('get_hhe cannot handle pure He for the time being. try a mixture.')
         
         def get_beta(y):
             '''eq. 54 of SCvH95.

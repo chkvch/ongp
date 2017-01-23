@@ -64,6 +64,20 @@ class eos:
         return self._get_chirho((logp, logt))
     def get_gamma1(self, logp, logt):
         return self._get_gamma1((logp, logt))
+        
+    def get_dlogrho_dlogp_const_t(self, logp, logt, f=0.8):
+        logp_lo = logp - np.log10(1. - f)
+        logp_hi = logp + np.log10(1. + f)
+        logrho_lo = self.get_logrho(logp_lo, logt)
+        logrho_hi = self.get_logrho(logp_hi, logt)
+        return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
+
+    def get_dlogrho_dlogt_const_p(self, logp, logt, f=0.8):
+        logt_lo = logt - np.log10(1. - f)
+        logt_hi = logt + np.log10(1. + f)
+        logrho_lo = self.get_logrho(logp, logt_lo)
+        logrho_hi = self.get_logrho(logp, logt_hi)
+        return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
                         
     def regularize_to_ps(self):
         from scipy.optimize import brentq

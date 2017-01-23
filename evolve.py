@@ -9,8 +9,8 @@ import time
 
 # this module is adapted from Daniel P. Thorngren's general-purpose giant planet
 # modelling code. the main modifications were the implementation of
-# (1) the general Saumon, Chabrier, & van Horn (1995) equation of state
-#     for hydrogen and helium (not just adiabats);
+# (1) the complete Saumon, Chabrier, & van Horn (1995) equation of state
+#     for hydrogen and helium, not just solar-Y adiabats;
 # (2) the Fortney+2011 model atmospheres for Jupiter and Saturn (could easily be
 #     extended to Uranus and Neptune also);
 # (3) the Lorenzen+2011 ab initio phase diagram for hydrogen and helium, obtained
@@ -22,7 +22,14 @@ import time
 
 class Evolver:
     
-    def __init__(self,hhe_eos_option='scvh',z_eos_option='reos water',nz=1000,relative_radius_tolerance=1e-4,max_iters_for_static_model=500, phase_t_offset=0.):
+    def __init__(self,
+        hhe_eos_option='scvh', 
+        z_eos_option='aneos ice',
+        nz=1000,
+        relative_radius_tolerance=1e-4,
+        max_iters_for_static_model=500, 
+        min_iters_for_static_model=12,
+        phase_t_offset=0.):
         # Load in the equations of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)
@@ -48,16 +55,11 @@ class Evolver:
         import reos; reload(reos)
         if z_eos_option == 'reos water':
             self.z_eos = reos.eos()
-        elif z_eos_option == 'aneos ice':
-            self.z_eos = aneos.eos('ice')
-        elif z_eos_option == 'aneos water': # aneos "water" and "ice" seem essentially indistinguishable
-            self.z_eos = aneos.eos('water')
-        elif z_eos_option == 'aneos iron':
-            self.z_eos = aneos.eos('iron')
-        elif z_eos_option == 'aneos serpentine':
-            self.z_eos = aneos.eos('serpentine')
+        elif 'aneos' in z_eos_option:
+            material = z_eos_option.split()[1]
+            self.z_eos = aneos.eos(material)
         else:
-            raise ValueError('z eos option %s not recognized.' % z_eos_option)
+            raise ValueError("z eos option '%s' not recognized." % z_eos_option)
 
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
@@ -89,6 +91,7 @@ class Evolver:
         # relative_radius_tolerance over both of the last two iterations.
         self.relative_radius_tolerance = relative_radius_tolerance
         self.max_iters_for_static_model = max_iters_for_static_model
+        self.min_iters_for_static_model = min_iters_for_static_model
         
         self.have_rainout = False
         self.have_rainout_to_core = False
@@ -106,34 +109,17 @@ class Evolver:
     # with Y, Z functions of depth so that entropy is non-uniform, want to be able to get density 
     # as a function of these same independent variables P, T, Y, Z.
 
-    def get_rho_xyz(self, logp, logt, y, z):             
-        # old: zero-temperature rock/ice aneos  
-        # rhoinv = (1. - z) / 10 ** self.hhe_eos.get_logrho(logp, logt, y) + \
-               # z / 10 ** self.getRockIceDensity((logp))
-        try:
+    def get_rho_xyz(self, logp, logt, y, z):
+        # only meant to be called when Z is non-zero and Y is not 0 or 1.
+        try: 
             rho_z = 10 ** self.z_eos.get_logrho(logp, logt)
         except ValueError:
-            print 'out of bounds in z_eos.get_logrho'
+            print 'off z_eos tables.'
             raise
+        
         rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
-
-    def test(self):
-        print "Static Models:"
-        print 0.9276, round(self.staticModel(2,6.5,.9,100)[0]/const.rjup,4)
-        print 1.1102, round(self.staticModel(10,9,.8,15)[0]/const.rjup,4)
-        print 0.5458, round(self.staticModel(.1,7,.4,1)[0]/const.rjup,4)
-        print 0.3893, round(self.staticModel(.069849,7,.4,15)[0]/const.rjup,4)
-        print "Evolution Models:"
-        print 1.2518, round(self.run(4,10,50,1e9,.02,3)[0]/const.rjup,4)
-        # print 1.0638, round(self.run(2,100,0,1.3e6,0,1)[0]/const.rjup,4)
-        print 1.0249, round(self.run(1,25,20,1.5e7,.01,3.1623)[0]/const.rjup,4)
-        # print 0.4089, round(self.run(.1,25,3,1e8,0,10)[0]/const.rjup,4)
-        print "Jonathan / Old / New:"
-        print 1.010, 1.0252, round(self.run(.406,0,10,1.37e6,0,3.1623)/const.rjup,4)
-        print 1.066, 1.0895, round(self.run(1.886,0,0,1.37e6,0,10)/const.rjup,4)
-        return
 
     def staticModel_adiabatic_solar(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
         '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
@@ -190,7 +176,7 @@ class Evolver:
         dSdE = 1. / trapz(self.t, dx=dm)
         return self.r[-1], dSdE
 
-    def equilibrium_y_profile(self, verbose=False, show_timing=False):
+    def equilibrium_y_profile(self, verbose=False, show_timing=False, minimum_y_is_envelope_y=False):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
         may require a nearly pure-helium layer atop the core.'''
         p = self.p * 1e-12 # Mbar
@@ -199,8 +185,11 @@ class Evolver:
         
         if np.isnan(ymax1) or self.y[k1] < ymax1:
             if verbose: print 'first point at P > 1 Mbar is stable to demixing. Y, Ymax', self.y[k1], ymax1
+            self.nz_gradient = 0
+            self.nz_shell = 0
             return self.y
             
+        self.ystart = np.copy(self.y)
         yout = np.copy(self.y)
         yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
         if verbose: print 'demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1]
@@ -209,18 +198,21 @@ class Evolver:
         rainout_to_core = False
         
         self.nz_gradient = 0
-        for k in np.arange(k1-1, self.kcore, -1):
+        for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > 1 Mbar
             t1 = time.time()
             ymax = self.phase.ymax_lhs(p[k], self.t[k])
             if np.isnan(ymax):
                 raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
             if show_timing: print 'zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0)
-            # sys.stdout.write('.')
             if yout[k] < ymax:
                 if verbose: print 'stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1
                 break
             ystart = yout[k]
             yout[k] = ymax
+            
+            if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
+                yout[k:] = yout[k]
+            
             # difference between initial he mass and current proposed he mass above and including this zone
             # must be in the deeper interior.
             he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
@@ -278,7 +270,7 @@ class Evolver:
         return yout
 
 
-    def staticModel(self, mtot=1., t10=300., yenv=0.27, zenv=0., mcore=0.,include_he_immiscibility=False,
+    def staticModel(self, mtot=1., t10=300., yenv=0.27, zenv=0., mcore=0.,include_he_immiscibility=False,minimum_y_is_envelope_y=False,
         verbose=False):
         '''build a hydrostatic model with a given total mass massTotal, 10-bar temperature t10, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and ice/rock core mass mcore. returns the number of iterations taken before 
@@ -305,6 +297,7 @@ class Evolver:
         # self.m = mtot * const.mjup * np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
         self.m = mtot * const.mjup * mesh_func(t)   
         self.kcore = kcore = int(np.where(mcore * const.mearth <= self.m)[0][0])
+        self.mcore = mcore
         self.dm = np.diff(self.m)
         q = np.zeros(self.nz) # a proxy for dr
         self.grada = np.zeros(self.nz)
@@ -410,7 +403,7 @@ class Evolver:
             q[1:] = 3. * self.dm / 4 / np.pi / self.rho[1:]
             self.r = np.cumsum(q) ** (1. / 3)
             # if verbose: print iteration, self.r[-1]
-            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
+            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance) and iteration >= self.min_iters_for_static_model:
                 break
             if not np.isfinite(self.r[-1]):
                 print 'found infinite total radius'
@@ -456,7 +449,7 @@ class Evolver:
                     logt = np.log10(self.t[k+1]) + self.grada[k+1] * self.dlogp[k]
                     self.t[k] = 10 ** logt
 
-                self.y = self.equilibrium_y_profile()
+                self.y = self.equilibrium_y_profile(minimum_y_is_envelope_y=minimum_y_is_envelope_y)
 
                 # update density from P, T to update hydrostatic r
                 self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
@@ -485,7 +478,17 @@ class Evolver:
         # finalize profiles
         dp[1:] = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4.
         self.p[:] = np.cumsum(dp[::-1])[::-1] + 10 * 1e6
+        self.p[0] *= (1. + 1e-10)
+        # update density for the last time
+        self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
+        if zenv == 0.:
+            self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # XY envelope
+        else:
+            self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:], self.z[kcore:]) # XYZ envelope
         
+        self.rtot = self.r[-1]
+        self.mtot = self.m[-1]
+
         # extrapolate in logp to get a 10-bar temperature
         # f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
         # logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
@@ -500,14 +503,14 @@ class Evolver:
         try:
             self.tint = atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
+            self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
             print 'failed to get tint for converged model. g_mks = %f, t10 = %f' % (self.surface_g * 1e-2, self.t10)
             self.tint = 1e20
             self.teff = 1e20
-        self.rtot = self.r[-1]
-        self.mtot = self.m[-1]
+            self.lint = 1e50
         self.entropy = np.zeros_like(self.p)
-        self.entropy[:kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) * const.mp / const.kb
+        # self.entropy[:kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) * const.mp / const.kb # leave this out, unsure of units on aneos entropy
         # note -- in the envelope, ignoring any contribution that heavies make to the entropy.
         self.entropy[kcore:] = 10 ** self.hhe_eos.get_logs(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) * const.mp / const.kb
         self.t[:kcore] = self.t[kcore]
@@ -518,25 +521,30 @@ class Evolver:
         # wherever the profile is a perfect adiabat, this is also gamma1.
         self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
 
-        # this gamma1 is general (for H-He mixtures, at least.)
         self.gamma1 = np.zeros_like(self.p)
         self.csound = np.zeros_like(self.p)
         self.chirho = np.zeros_like(self.p)
         self.chit = np.zeros_like(self.p)
         self.gradt = np.zeros_like(self.p)
         
+        self.r[0] = 1. # 1 cm central radius to keep these things calculable at in center zone
         self.gamma1[:kcore] = self.z_eos.get_gamma1(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
         self.gamma1[kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
         # self.csound[kcore:] = np.sqrt(self.p[kcore:] / self.rho[kcore:] * self.gamma1[kcore:])
         self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
-        self.lamb_s12[self.r == 0.] = 0.
+        # self.lamb_s12[self.r == 0.] = 0.
         dlnp_dlnr = np.diff(np.log(self.p)) / np.diff(np.log(self.r))
         dlnrho_dlnr = np.diff(np.log(self.rho)) / np.diff(np.log(self.r))
         
-        self.chirho[:kcore] = self.z_eos.get_chirho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
-        self.chit[:kcore] = self.z_eos.get_chit(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
-        self.grada[:kcore] = (1. - self.chirho[:kcore] / self.gamma1[:kcore]) / self.chit[:kcore] # e.g., Unno's equations 13.85, 13.86
+        try:
+            self.chirho[:kcore] = self.z_eos.get_chirho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
+            self.chit[:kcore] = self.z_eos.get_chit(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
+            self.grada[:kcore] = (1. - self.chirho[:kcore] / self.gamma1[:kcore]) / self.chit[:kcore] # e.g., Unno's equations 13.85, 13.86
+        except AttributeError:
+            print "warning: z eos option '%s' does not provide methods for get_chirho and get_chit. cannot calculate grada in core \
+                and so this model may not be suited for eigenmode calculations."
+            pass # this z eos doesn't provide methods get_chirho and get_chit
         
         self.chirho[kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
         self.chit[kcore:] = self.hhe_eos.get_chit(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
@@ -552,27 +560,68 @@ class Evolver:
         self.brunt_n2_unno_direct[kcore+1:] = self.g[kcore+1:] * self.homology_v[kcore+1:] / self.r[kcore+1:] * \
             (self.dlogp_dlogrho[kcore:] ** -1. - self.gamma1[kcore+1:] ** -1.) # Unno 13.102
         
+        # terms needed for calculation of the composition term brunt_B.
+        # (sometimes I refer to this term as "gradmu", although mu is just a proxy for every species composition.)
         self.dlogy_dlogp = np.zeros_like(self.p)
         self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p)) # structure derivative
         # this is the thermodynamic derivative (const P and T), for H-He.
         self.dlogrho_dlogy = np.zeros_like(self.p)
         self.dlogrho_dlogy[kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
         
+        rho_z = np.zeros_like(self.p)
+        rho_hhe = np.zeros_like(self.p)
+        rho_z[self.z > 0.] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
+        rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
+        self.dlogrho_dlogz = np.zeros_like(self.p)
+        # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
+        self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
+        self.dlogz_dlogp = np.zeros_like(self.p)
+        self.dlogz_dlogp[1:] = np.diff(np.log(self.z)) / np.diff(np.log(self.p))
+        
+        
+        # this is the form of brunt_n2 that makes use of grad, grada, and the composition term brunt B.
         self.brunt_n2_unno = np.zeros_like(self.p)
+        # in core, explicitly ignore the Y gradient.
+        self.brunt_n2_unno[:kcore+1] = self.g[:kcore+1] * self.homology_v[:kcore+1] / self.r[:kcore+1] * \
+            (self.chit[:kcore+1] / self.chirho[:kcore+1] * (self.grada[:kcore+1] - self.gradt[:kcore+1]) + \
+            self.dlogrho_dlogz[:kcore+1] * self.dlogz_dlogp[:kcore+1])
+        # in envelope, Y gradient is crucial.
         self.brunt_n2_unno[kcore:] = self.g[kcore:] * self.homology_v[kcore:] / self.r[kcore:] * \
             (self.chit[kcore:] / self.chirho[kcore:] * (self.grada[kcore:] - self.gradt[kcore:]) + \
             self.dlogrho_dlogy[kcore:] * self.dlogy_dlogp[kcore:])
-        self.brunt_n2_unno[:kcore] = self.g[:kcore] * self.homology_v[:kcore] / self.r[:kcore] * \
-            self.chit[:kcore] / self.chirho[:kcore] * (self.grada[:kcore] - self.gradt[:kcore])
             
-        self.brunt_n2 = self.brunt_n2_unno
+        # akin to mike montgomery's form for brunt_B, which is how mesa does it by default (Paxton+2013)
+        rho_this_pt_next_comp = np.zeros_like(self.p)
+        rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
+        # core-mantle point must be treated separately since next cell down is pure Z, and get_rho_xyz is not designed for pure Z. 
+        # call z_eos.get_logrho directly instead.
+        rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+        # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
+        rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]
+        
+        self.brunt_b_mhm = np.zeros_like(self.p)
+        self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
+        self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
+        self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
+        
+        # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
+        self.dlogrho_dlogt_const_p = np.zeros_like(self.p)
+        self.dlogrho_dlogt_const_p[:kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
+        self.dlogrho_dlogt_const_p[kcore:] = self.rho[kcore:] * (self.z[kcore:] / rho_z[kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[kcore:]), np.log10(self.t[kcore:])) + (1. - self.z[kcore:]) / rho_hhe[kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]))
+            
+        self.brunt_n2 = self.brunt_n2_mhm
 
         self.mf = self.m / self.mtot
-        self.rf = self.r / self.rtot                
+        self.rf = self.r / self.rtot  
+        
+        # this is written assuming two-layer constant Z: Z uniform in envelope, Z=1 in core. 
+        self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
+        self.mz = self.mz_env + self.mcore * const.mearth
+        self.bulk_z = self.mz / self.mtot
                         
         return self.iters
                 
-    def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100,include_he_immiscibility=False,output_prefix=None):
+    def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100,include_he_immiscibility=False,output_prefix=None,minimum_y_is_envelope_y=True):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
             "invalid core mass %f for total mass %f" % (mcore, mtot * const.mjup / const.mearth)
@@ -582,18 +631,19 @@ class Evolver:
         target_t10s = np.logspace(np.log10(min_t10), np.log10(starting_t10), nsteps)[::-1]
 
         self.history = {}
-        self.history_columns = 'age', 'radius', 'tint', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell'
+        self.history_columns = 'step', 'age', 'radius', 'tint', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', 'mz_env', 'mz', 'bulk_z'
         for name in self.history_columns:
             self.history[name] = np.zeros_like(target_t10s)
 
+        keep_going = True
         previous_entropy = 0
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
-        columns = 'step', 'iters', 'tgt_t10', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'walltime'
+        columns = 'step', 'iters', 'tgt_t10', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
         start_time = time.time()
         print ('%12s ' * len(columns)) % columns
         for step, target_t10 in enumerate(target_t10s):
-            self.staticModel(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, include_he_immiscibility=include_he_immiscibility)
+            self.staticModel(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, include_he_immiscibility=include_he_immiscibility,minimum_y_is_envelope_y=minimum_y_is_envelope_y)
             walltime = time.time() - start_time
             if self.tint == 1e20:
                 print 'failed in atmospheric boundary condition. stopping.'
@@ -602,24 +652,47 @@ class Evolver:
                         pickle.dump(self.history, fw, 0)
                     print 'wrote history data to output/%s.history' % output_prefix
                 return self.history
-            lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
             dt_yr = 0.
             if step > 0:
                 delta_s = self.entropy - previous_entropy
                 delta_s *= const.kb / const.mp # now erg K^-1 g^-1
-                dt = -1. * trapz(self.t * delta_s, dx=self.dm) / lint
+                assert self.lint > 0, 'found negative intrinsic luminosity.'
+                int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
+                dt = -1. *  int_tdsdm / self.lint
+                if dt < 0:
+                    import matplotlib.pyplot as plt
+                    fig, ax = plt.subplots(2, 1, figsize=(6, 8), sharex=True)
+                    ax[0].plot(self.mf, self.y - self.ystart, 'k-', lw=1)
+                    ax[0].set_ylabel(r'$dY$')
+                    integrand = self.t * delta_s
+                    ax[1].plot(self.mf, delta_s / max(abs(delta_s)), '.', label=r'$\Delta s$')
+                    ax[1].plot(self.mf, integrand / max(abs(integrand)), '.', label=r'$T\,\Delta s$')
+                    partial_integral = -1. * np.cumsum(self.t[:-1] * delta_s[:-1] * self.dm)
+                    ax[1].plot(self.mf[:-1], partial_integral / max(abs(partial_integral)), '-', lw=1, label=r'$\propto \delta t$')
+                    ax[1].legend(fontsize=14, loc='best')
+                    print 'error: integral of t*(delta_s)*dm = %g, but should be negative.' % int_tdsdm
+                    print 'mean entropy %f' % np.mean(self.entropy[self.kcore:])
+                    print 'tint, lint', self.tint, self.lint
+                    print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
+                        (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+                    keep_going = False
                 dt_yr = dt / const.secyear
                 age_gyr += dt_yr * 1e-9
 
+                self.history['step'][step] = step
+                self.history['iters'][step] = self.iters
                 self.history['age'][step] = age_gyr
                 self.history['radius'][step] = self.rtot
                 self.history['tint'][step] = self.tint
-                self.history['lint'][step] = lint
+                self.history['lint'][step] = self.lint
                 self.history['t10'][step] = self.t10
                 self.history['teff'][step] = self.teff
                 self.history['ysurf'][step] = self.y[-1]
                 self.history['nz_gradient'][step] = self.nz_gradient
                 self.history['nz_shell'][step] = self.nz_shell
+                self.history['mz_env'][step] = self.mz_env
+                self.history['mz'][step] = self.mz
+                self.history['bulk_z'][step] = self.bulk_z
                 
             # history and profile quantities go in dictionaries which are pickled
             if output_prefix:
@@ -631,6 +704,10 @@ class Evolver:
                 self.profile['t'] = self.t
                 self.profile['rho'] = self.rho
                 self.profile['y'] = self.y
+                try:
+                    self.profile['dy'] = self.y - self.ystart
+                except AttributeError: # no phase separation for this step
+                    pass
                 self.profile['entropy'] = self.entropy
                 self.profile['r'] = self.r
                 self.profile['m'] = self.m
@@ -648,14 +725,20 @@ class Evolver:
                 self.profile['mf'] = self.mf
                 
                 # profile scalars
+                self.profile['step'] = step
+                self.profile['age'] = age_gyr
                 self.profile['nz'] = self.nz
                 self.profile['kcore'] = self.kcore
                 # self.profile['age']
 
                 with open('output/%s%i.profile' % (output_prefix, step), 'w') as f:
                     pickle.dump(self.profile, f, 0) # 0 means dump as text
+                                        
+                if not keep_going: 
+                    print 'stopping.'
+                    break
                 
-            print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f' % (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, walltime)
+            print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
 
             previous_entropy = self.entropy
             
@@ -665,6 +748,42 @@ class Evolver:
             print 'wrote history data to output/%s.history' % output_prefix
             
         return self.history
+        
+        
+    def save_gyre_model(self, outfile):
+        # outfile = 'output/%s%i.gyre' % (output_prefix, step)
+        with open(outfile, 'w') as f:
+            header_format = '%6i ' + '%19.12e '*3 + '%5i\n'
+            line_format = '%6i ' + '%26.16e '*18 + '\n'
+            ncols = 19
+            
+            # gyre doesn't like the first zone to have zero enclosed mass, so we omit the center point when writing the gyre model.
+            
+            f.write(header_format % (self.nz - 1, self.mtot, self.rtot, self.lint, ncols))
+            w = np.zeros_like(self.m)
+            w[:-1] = self.m[:-1] / (self.mtot - self.m[:-1])
+            w[-1] = 1e10
+            # things we're not bothering to calculate in the interior (fill with zeros or ones or nonsense):
+                # luminosity (column 4)
+                # opacity and its derivatives (columns 13, 14, 15)
+                # energy generation rate and its derivatives (columns 16, 17, 18)
+                # rotation (column 19)
+            
+            dummy_luminosity = 0.
+            dummy_kappa = 1.
+            dummy_kappa_t = 0.
+            dummy_kappa_rho = 0.
+            dummy_epsilon = 0.
+            dummy_epsilon_t = 0.
+            dummy_epsilon_rho = 0.
+            
+            for k in np.arange(self.nz):
+                if k == 0: continue
+                f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
+                                       self.gradt[k], self.brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
+                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, 0.))
+        print 'wrote %i zones to %s' % (k, outfile)
+    
         
                                     
 # if __name__ == "__main__" and sys.argv[1] != '--pylab':
