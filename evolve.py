@@ -272,7 +272,7 @@ class Evolver:
 
     def staticModel(self, mtot=1., t10=300., yenv=0.27, zenv=0., mcore=0.,include_he_immiscibility=False,minimum_y_is_envelope_y=False,
         verbose=False):
-        '''build a hydrostatic model with a given total mass massTotal, 10-bar temperature t10, envelope helium mass fraction yenv,
+        '''build a hydrostatic model with a given total mass mtot, 10-bar temperature t10, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and ice/rock core mass mcore. returns the number of iterations taken before 
             convergence, or -1 for failure to converge.'''
         
@@ -291,7 +291,10 @@ class Evolver:
 
         def mesh_func(t): # t is a parameter that varies from 0 at center to pi/2 at surface
             # really should work out a function giving better resolution at low P, near surface.
-            return np.sin(t) ** (1. / 10) * (1. - np.exp(-t ** 2. / (2 * np.pi / 20)))
+            # near center possibly a problem for correctly classifying modes - need to be able to pick up a node near center.
+            
+            # return np.sin(t) ** (1. / 10) * (1. - np.exp(-t ** 2. / (2 * np.pi / 20)))
+            return np.sin(t) ** 5
         
         t = np.linspace(0, np.pi / 2, self.nz)
         # self.m = mtot * const.mjup * np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
@@ -489,10 +492,7 @@ class Evolver:
         self.rtot = self.r[-1]
         self.mtot = self.m[-1]
 
-        # extrapolate in logp to get a 10-bar temperature
-        # f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
-        # logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
-        # self.t10 = 10 ** logt10
+        # extrapolate in logp to get a 10-bar temperature using a cubic spline. could do a quick integration of grad_ad too
         npts_get_t10 = 10
         logp_near_surf = np.log10(self.p[-npts_get_t10:][::-1])
         t_near_surf = self.t[-npts_get_t10:][::-1]
@@ -749,8 +749,24 @@ class Evolver:
             
         return self.history
         
+    def smooth(self, array, width=50, type='flat', std=None):
+        if type == 'flat':
+            weights = np.ones(width)
+        elif type == 'gaussian':
+            assert std, 'need to specify standard deviation for gaussian filter.'
+            from scipy.signal import gaussian
+            weights = gaussian(width, std=std)
+        res = np.zeros_like(array)
+        for k in np.arange(len(array)):
+            window = array[k-width/2:k+width/2]
+            try:
+                res[k] = np.dot(weights, window) / np.sum(weights)
+            except:
+                res[k] = array[k]
+        return res
         
-    def save_gyre_model(self, outfile):
+        
+    def save_gyre_model(self, outfile, smooth_brunt_n2_std=None, add_rigid_rotation=None):
         # outfile = 'output/%s%i.gyre' % (output_prefix, step)
         with open(outfile, 'w') as f:
             header_format = '%6i ' + '%19.12e '*3 + '%5i\n'
@@ -777,14 +793,20 @@ class Evolver:
             dummy_epsilon_t = 0.
             dummy_epsilon_rho = 0.
             
+            if smooth_brunt_n2_std:
+                brunt_n2 = self.smooth(self.brunt_n2, type='gaussian', std=smooth_brunt_n2_std)
+            else:
+                brunt_n2 = self.brunt_n2
+                
+            if add_rigid_rotation:
+                import saturn_data
+                omega = np.pi * 2 / saturn_data.cassini_period
+            else:
+                omega = 0.
+            
             for k in np.arange(self.nz):
                 if k == 0: continue
                 f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
-                                       self.gradt[k], self.brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
-                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, 0.))
+                                       self.gradt[k], brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
+                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, omega))
         print 'wrote %i zones to %s' % (k, outfile)
-    
-        
-                                    
-# if __name__ == "__main__" and sys.argv[1] != '--pylab':
-#     Evolver().makeGrid()

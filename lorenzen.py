@@ -10,7 +10,7 @@ def get_y(xhe):
 
 class hhe_phase_diagram:
     """interpolates in the Lorenzen et al. 2011 phase diagram to return maximum soluble helium fraction, 
-    either by number (xmax) or by mass (ymax).
+    either by number (xmax) or by mass (ymax), as a function of P, T.
     
     the way this is done is to look look at each P-node from the tables and construct a cubic spline 
     representing x-T for this P. when seeking xmax for a general P-T point, the two splines corresponding
