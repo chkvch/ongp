@@ -30,7 +30,8 @@ class Evolver:
         relative_radius_tolerance=1e-4,
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
-        phase_t_offset=0.):
+        phase_t_offset=0.,
+        extrapolate_phase_diagram_to_low_pressure=True):
         # Load in the equations of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)
@@ -66,7 +67,8 @@ class Evolver:
 
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
-        self.phase = lorenzen.hhe_phase_diagram(t_offset=phase_t_offset)
+        self.phase = lorenzen.hhe_phase_diagram(t_offset=phase_t_offset, 
+                        extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
                                           
         # model atmospheres -- now initialized in self.staticModel        
         # atmos = np.load('data/atmosphereGrid.npz')
@@ -694,7 +696,7 @@ class Evolver:
                         
         return self.iters
                 
-    def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100,
+    def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
                 include_he_immiscibility=False, output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
@@ -814,9 +816,10 @@ class Evolver:
                                         
                 if not keep_going: 
                     print 'stopping.'
-                    break
+                    raise
                 
-            print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+            if step % stdout_interval == 0 or step == nsteps - 1: 
+                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
 
             previous_entropy = self.entropy
             
