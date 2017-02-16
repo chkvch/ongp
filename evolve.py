@@ -405,6 +405,7 @@ class Evolver:
             # compute temperature profile by integrating grad_ad from surface
             self.grada[:kcore] = 0.
             self.grada[kcore:] = self.hhe_eos.get_grada(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
+            self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
 
             # a nan might appear in grada if a p, t point is just outside the original tables.
             # e.g., this was happening at logp, logt = 11.4015234804 3.61913879612, just under
@@ -693,6 +694,9 @@ class Evolver:
         self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
         self.mz = self.mz_env + self.mcore * const.mearth
         self.bulk_z = self.mz / self.mtot
+        
+        # axial moment of inertia, in units of mtot * rtot ** 2
+        self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
                         
         return self.iters
                 
@@ -846,8 +850,34 @@ class Evolver:
                 res[k] = array[k]
         return res
         
+    def basic_profile(self, save_prefix=None):
+        import os
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'hspace':0.1})
+        ax[0].loglog(self.p, self.t); ax[0].set_ylabel(r'$T$')
+        ax[1].loglog(self.p, self.rho); ax[1].set_ylabel(r'$\rho$')
+        ax[-1].set_xlabel(r'$P$')
+        if save_prefix:
+            outdir = '%s/figs' % save_prefix
+            if not os.path.exists(outdir):
+                os.mkdir(outdir)
+            plt.savefig('%s/ptrho.pdf' % outdir, bbox_inches='tight')
+        fig, ax = plt.subplots(3, 1, figsize=(6, 8), sharex=True, gridspec_kw={'hspace':0.1})
+        ax[0].plot(self.rf, self.rho); ax[0].set_ylabel(r'$\rho$')
+        ax[1].plot(self.rf, self.y); ax[1].set_ylabel(r'$Y$')
+        ax[2].semilogy(self.rf, self.brunt_n2)
+        ax[2].semilogy(self.rf, self.lamb_s12)
+        ax[2].set_ylabel(r'$N^2,\ \ S_{\ell=1}^2$')
+        ax[2].set_ylim(1e-10, 1e-3)
+        ax[-1].set_xlabel(r'$r/R$')
+        if save_prefix:
+            outdir = '%s/figs' % save_prefix
+            if not os.path.exists(outdir):
+                os.mkdir(outdir)
+            plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')
         
-    def save_gyre_model(self, outfile, smooth_brunt_n2_std=None, add_rigid_rotation=None):
+    def save_gyre_model(self, outfile, 
+                    smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False):
         # outfile = 'output/%s%i.gyre' % (output_prefix, step)
         with open(outfile, 'w') as f:
             header_format = '%6i ' + '%19.12e '*3 + '%5i\n'
@@ -874,20 +904,28 @@ class Evolver:
             dummy_epsilon_t = 0.
             dummy_epsilon_rho = 0.
             
+            if erase_y_discontinuity_from_brunt:
+                assert self.k_shell_top > 0, 'no helium-rich shell, and thus no y discontinuity to erase.'
+                self.brunt_n2[self.k_shell_top + 1] = self.brunt_n2[self.k_shell_top + 2]
+            
+            if erase_z_discontinuity_from_brunt:
+                assert self.kcore > 0, 'no core, and thus no z discontinuity to erase.'
+                if self.kcore == 1:
+                    self.brunt_n2[self.kcore] = 0.
+                else:
+                    self.brunt_n2[self.kcore] = self.brunt_n2[self.kcore - 1]
+            
             if smooth_brunt_n2_std:
-                brunt_n2 = self.smooth(self.brunt_n2, type='gaussian', std=smooth_brunt_n2_std)
-            else:
-                brunt_n2 = self.brunt_n2
+                self.brunt_n2 = self.smooth(self.brunt_n2, type='gaussian', std=smooth_brunt_n2_std)
                 
             if add_rigid_rotation:
-                import saturn_data
-                omega = np.pi * 2 / saturn_data.cassini_period
+                omega = add_rigid_rotation
             else:
                 omega = 0.
             
             for k in np.arange(self.nz):
                 if k == 0: continue
                 f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
-                                       self.gradt[k], brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
+                                       self.gradt[k], self.brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
                                        dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, omega))
         print 'wrote %i zones to %s' % (k, outfile)
