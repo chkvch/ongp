@@ -834,13 +834,10 @@ class Evolver:
             
         return self.history
         
-    def smooth(self, array, width=50, type='flat', std=None):
-        if type == 'flat':
-            weights = np.ones(width)
-        elif type == 'gaussian':
-            assert std, 'need to specify standard deviation for gaussian filter.'
-            from scipy.signal import gaussian
-            weights = gaussian(width, std=std)
+    def smooth(self, array, std, type='flat'):
+        width = 10 * std
+        from scipy.signal import gaussian
+        weights = gaussian(width, std=std)
         res = np.zeros_like(array)
         for k in np.arange(len(array)):
             window = array[k-width/2:k+width/2]
@@ -916,7 +913,7 @@ class Evolver:
                     self.brunt_n2[self.kcore] = self.brunt_n2[self.kcore - 1]
             
             if smooth_brunt_n2_std:
-                self.brunt_n2 = self.smooth(self.brunt_n2, type='gaussian', std=smooth_brunt_n2_std)
+                self.brunt_n2 = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
                 
             if add_rigid_rotation:
                 omega = add_rigid_rotation
