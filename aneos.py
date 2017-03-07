@@ -52,7 +52,7 @@ class eos:
         try:
             return self._get_logrho((logp, logt))
         except ValueError:
-            print 'out of bounds with logp, logt = ', logp, logt
+            print 'out of bounds in aneos get_logrho.'
             raise
     def get_logu(self, logp, logt):
         return self._get_logu((logp, logt))
@@ -78,6 +78,12 @@ class eos:
         logrho_lo = self.get_logrho(logp, logt_lo)
         logrho_hi = self.get_logrho(logp, logt_hi)
         return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
+        
+    # def get_dlogrho_dlogt_const_p(self, logp, logt):
+    #     return self.get_chit(logp, logt) / self.get_chirho(logp, logt)
+    #
+    # def get_dlogrho_dlogp_const_t(self, logp, logt):
+    #     return 1. / self.get_chirho(logp, logt)
                         
     def regularize_to_ps(self):
         from scipy.optimize import brentq
