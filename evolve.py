@@ -25,7 +25,7 @@ class Evolver:
     
     def __init__(self,
         hhe_eos_option='scvh', 
-        z_eos_option='aneos ice',
+        z_eos_option='reos water',
         atm_option='f11_tables',
         nz=1000,
         relative_radius_tolerance=1e-4,
@@ -304,6 +304,7 @@ class Evolver:
                     
         self.have_rainout = self.nz_gradient > 0
         self.have_rainout_to_core = rainout_to_core
+        if rainout_to_core: assert self.k_shell_top
                  
         return yout
 
@@ -351,7 +352,6 @@ class Evolver:
             return np.sin(t) ** 5
         
         t = np.linspace(0, np.pi / 2, self.nz)
-        # self.m = mtot * const.mjup * np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
         self.m = mtot * const.mjup * mesh_func(t)   
         self.kcore = kcore = int(np.where(mcore * const.mearth <= self.m)[0][0])
         self.mcore = mcore
@@ -423,6 +423,8 @@ class Evolver:
         self.brunt_b = np.zeros_like(self.p)
         self.chirho = np.zeros_like(self.p)
         self.chit = np.zeros_like(self.p)
+        self.chiy = np.zeros_like(self.p)
+        self.dlogy_dlogp = np.zeros_like(self.p)        
         
         # relax to hydrostatic
         oldRadii = (0, 0, 0)
@@ -488,7 +490,7 @@ class Evolver:
             
         else:
             return -1
-            
+                        
         if verbose: print 'converged homogeneous model after %i iterations.' % self.iters
 
         if include_he_immiscibility: # repeat iterations, now including the phase diagram calculation
@@ -499,9 +501,9 @@ class Evolver:
                 dp[1:] = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4.
                 self.p[:] = np.cumsum(dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
             
-                # compute temperature profile by integrating grad_ad from surface
-                self.grada[:kcore] = 0.
-                self.grada[kcore:] = self.hhe_eos.get_grada(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
+                # compute temperature profile by integrating gradt from surface
+                self.grada[:kcore] = 0. # can compute after model is converged, since we take core to be isothermal
+                self.grada[kcore:] = self.hhe_eos.get_grada(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # last time grada is set for envelope
 
                 if np.any(np.isnan(self.grada)):
                     print '\t%i nans in grada' % len(self.grada[np.isnan(self.grada)])
@@ -511,7 +513,7 @@ class Evolver:
                             if np.isnan(val):
                                 fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
                     print 'saved problematic logp, logt, y to grada_nans.dat'
-                    assert False
+                    raise ValueError('nans from eos')
 
                 self.gradt = np.copy(self.grada)
                 
@@ -521,30 +523,53 @@ class Evolver:
                     # might cost some time because of the additional eos calls.
 
                     self.chit[kcore:] = self.hhe_eos.get_chit(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
-                    self.brunt_b[:] = 0.
+                    self.chirho[kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
+                    self.chiy[kcore:] = self.hhe_eos.get_chiy(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:])
+                    self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p)) # actual log rate of change of Y with P
+                    self.brunt_b[kcore+1:] = self.chirho[kcore+1:] / self.chit[kcore+1:] * self.chiy[kcore+1:] * self.dlogy_dlogp[kcore+1:]
+                    self.brunt_b[self.k_shell_top + 1] = 0.
+                    # print 'in internal brunt_b calculation: self.k_shell_top = %i; brunt_b[self.k_shell_top] == %g' % (self.k_shell_top, self.brunt_b[self.k_shell_top+1])
+                    assert np.all(self.brunt_b[kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform 
                     
-                    rho_this_pt_next_comp = np.zeros_like(self.p)
-                    rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
-                    
-                    # for the purposes of getting the T profile, ignore the density discontinuities at top of helium shell and top of core, since we don't want T to jump there
-                    rho_this_pt_next_comp[self.kcore] = self.rho[self.kcore]
-                    rho_this_pt_next_comp[self.k_shell_top+1] = self.rho[self.k_shell_top+1]
-                                        
-                    self.brunt_b[kcore:-1] = (np.log(rho_this_pt_next_comp[self.kcore:-1]) - np.log(self.rho[self.kcore:-1])) / (np.log(self.rho[self.kcore:-1]) - np.log(self.rho[self.kcore+1:])) / self.chit[self.kcore:-1]
-                    
-                    # core, He layer, and uniform envelope should both be homogeneous. 
-                    # this should not be necessary! because brunt_b is proportional to rho_this_pt_next_comp - rho,
-                    # and at constant composition the two are equal, brunt_b should be zero in homogeneous regions by construction.
-                    self.brunt_b[:kcore] = 0.
-                    self.brunt_b[self.k_gradient_top+1:] = 0.
-                    self.brunt_b[self.kcore:self.k_shell_top] = 0.
+                    # rho_this_pt_next_comp = np.zeros_like(self.p)
+                    # rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
+                    # # for the purposes of getting the T profile, ignore the density discontinuities at top of helium shell and top of core, since we don't want T to jump there
+                    # rho_this_pt_next_comp[self.kcore + 1] = self.rho[self.kcore + 1]
+                    # if self.k_shell_top > 0:
+                    #     rho_this_pt_next_comp[self.k_shell_top+1] = self.rho[self.k_shell_top+1]
+                    #
+                    # self.brunt_b[self.kcore:-1] = (np.log(rho_this_pt_next_comp[self.kcore:-1]) - np.log(self.rho[self.kcore:-1])) / (np.log(self.rho[self.kcore:-1]) - np.log(self.rho[self.kcore+1:])) / self.chit[self.kcore:-1]
+                    #
+                    # n_negative_brunt_b = len(self.brunt_b[self.brunt_b < 0])
+                    # if n_negative_brunt_b > 0:
+                    #     print 'iteration %i.%i: zeroing out %i negative values in brunt_b' % (self.iters, self.iters_immiscibility, n_negative_brunt_b)
+                    #     self.brunt_b[self.brunt_b < 0] = 0. # ignore composition inversions for purposes of getting T profile. shouldn't be necessary, but might help during iterations
+                    #     print '\t %i positive values remain after pruning b<0' % len(self.brunt_b[self.brunt_b > 0])
+                    #
+                    # # core, He layer, and uniform envelope should all be homogeneous.
+                    # # this should not be necessary! because brunt_b is proportional to rho_this_pt_next_comp - rho,
+                    # # and at constant composition the two are equal, brunt_b should be zero in homogeneous regions by construction.
+                    # self.brunt_b[:self.kcore] = 0.
+                    # self.brunt_b[self.k_gradient_top+1:] = 0.
+                    # if self.k_shell_top > 0:
+                    #     self.brunt_b[self.kcore:self.k_shell_top + 1] = 0.
+                    #
+                    # if n_negative_brunt_b > 0:
+                    #     print '\t %i positive values remain after pruning zones that should be homogeneous' % len(self.brunt_b[self.brunt_b > 0])
+                    #     print '\t self.k_shell_top is %i' % self.k_shell_top
+                    #
+                    # if n_negative_brunt_b == 0:
+                    #     print 'iteration %i.%i: all good' % (self.iters, self.iters_immiscibility)
+                    #     print '\t self.k_shell_top is %i' % self.k_shell_top
                     
                     self.gradt += rrho_where_have_helium_gradient * self.brunt_b
+                    # self.gradt[kcore:] = self.grada[kcore:] + rrho_where_have_helium_gradient * self.brunt_b[kcore:]
                                                 
+                # print 'integrating for T profile'
                 self.dlogp = -1. * np.diff(np.log10(self.p))
-                for k in np.arange(self.nz-2, kcore-1, -1):
+                for k in np.arange(self.nz-2, self.kcore-1, -1): # surface to center
                     logt = np.log10(self.t[k+1]) + self.gradt[k+1] * self.dlogp[k]
-                    self.doing_k = k
+                    # print '\t%i %f %f %f' % (k, logt, self.gradt[k+1], self.brunt_b[k+1])
                     if np.isinf(logt):
                         print 'k', k
                         print 'gradt', self.gradt[k+1]
@@ -569,12 +594,12 @@ class Evolver:
 
                 if np.any(np.isnan(self.rho)):
                     with open('output/found_nans_eos.dat', 'w') as f:
-                        f.write('%12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r'))
+                        f.write('%12s %12s %12s %12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r', 'y', 'brunt_B', 'gradt-grada'))
                         for k in xrange(self.nz):
                             in_core = k < self.kcore
-                            f.write('%12s %12g %12g %12g %12g %12g\n' % (in_core, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
+                            f.write('%12s %12g %12g %12g %12g %12g %12g %12g %12g\n' % (in_core, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k], self.y[k], self.brunt_b[k], self.gradt[k]-self.grada[k]))
                     print 'saved output/found_nans_eos.dat'
-                    raise RuntimeError('found nans in rho')
+                    raise RuntimeError('found nans in rho on staticModel iteration %i' % self.iters)
 
                 if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
                     break
@@ -592,9 +617,6 @@ class Evolver:
                 return -1
             
             if verbose: print 'converged with new Y profile after %i iterations.' % self.iters_immiscibility
-
-        self.brunt_b_temp = self.brunt_b
-
 
         # finalize hydrostatic profiles, and calculate lots of auxiliary quantities of interest.
         dp[1:] = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4.
@@ -682,7 +704,6 @@ class Evolver:
             (self.dlogp_dlogrho[kcore:] ** -1. - self.gamma1[kcore+1:] ** -1.) # Unno 13.102
         
         # terms needed for calculation of the composition term brunt_B.
-        self.dlogy_dlogp = np.zeros_like(self.p)
         self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p)) # structure derivative
         # this is the thermodynamic derivative (const P and T), for H-He.
         self.dlogrho_dlogy = np.zeros_like(self.p)
@@ -718,12 +739,19 @@ class Evolver:
         # call z_eos.get_logrho directly instead.
         rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
         # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
-        rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]
+        rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
+        # TODO: get true self.k_shell_top here. appears to always be zero for some reason.
+        # ignore Y discontinuity at surface of he-rich layer
+        if self.k_shell_top > 0:
+            rho_this_pt_next_comp[self.k_shell_top + 1] = self.rho[self.k_shell_top + 1]
         
         self.brunt_b_mhm = np.zeros_like(self.p)
         self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
+        
+        # self.brunt_b = self.brunt_b_mhm
+        # self.brunt_n2 = self.brunt_n2_mhm
                 
         # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
@@ -741,9 +769,6 @@ class Evolver:
         else: # no need to sweat low vs. high t
             self.dlogrho_dlogt_const_p[kcore:] = self.rho[kcore:] * (self.z[kcore:] / rho_z[kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[kcore:]), np.log10(self.t[kcore:])) + (1. - self.z[kcore:]) / rho_hhe[kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]))
             
-        self.brunt_b = self.brunt_b_mhm
-        self.brunt_n2 = self.brunt_n2_mhm
-
         self.mf = self.m / self.mtot
         self.rf = self.r / self.rtot  
         

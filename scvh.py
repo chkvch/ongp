@@ -229,17 +229,24 @@ class eos:
         return res
 
     def get_chiy(self, logp, logt, y, f=5e-3):
+        """dlogrho/dlogY at const p, t"""
         y_lo = y * (1. - f)
         y_hi = y * (1. + f)
         if np.any(y_lo < 0.) or np.any(y_hi > 1.):
             print 'warning: chiy not calculable for y this close to 0 or 1. should change size of step for finite differences.'
             return None
 
-        logrho = self.get_logrho(logp, logt, y)
-        logp_lo = self.rhot_get(logrho, logt, y_lo)['logp']
-        logp_hi = self.rhot_get(logrho, logt, y_hi)['logp']
+        # logrho = self.get_logrho(logp, logt, y)
+        # logp_lo = self.rhot_get(logrho, logt, y_lo)['logp']
+        # logp_hi = self.rhot_get(logrho, logt, y_hi)['logp']
 
-        return (logp_hi - logp_lo) / 2. / f
+        # return (logp_hi - logp_lo) / 2. / f
+
+        logrho_lo = self.get_logrho(logp, logt, y_lo)
+        logrho_hi = self.get_logrho(logp, logt, y_hi)
+        return (logrho_hi  - logrho_lo) / 2. / f
+        
+        
         
     # def get_dlogrho_dlogy_numerical(self, logp, logt, y, f=5e-3):
     #     y_lo = y * (1. - f)
