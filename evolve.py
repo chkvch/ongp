@@ -82,6 +82,7 @@ class Evolver:
         self.nz = self.nBins = nz
         self.workingMemory = np.zeros(self.nBins)
         
+        self.k = np.arange(self.nz)
         self.p = np.zeros(self.nz)
         self.m = np.zeros(self.nz)
         self.r = np.zeros(self.nz)
@@ -313,6 +314,7 @@ class Evolver:
                     include_he_immiscibility=False,
                     minimum_y_is_envelope_y=False,
                     rrho_where_have_helium_gradient=None,
+                    erase_z_discontinuity_from_brunt=False,
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 10-bar temperature t10, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and ice/rock core mass mcore. returns the number of iterations taken before 
@@ -392,6 +394,7 @@ class Evolver:
         self.z[kcore:] = zenv
         
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. must conserve when later adjusting Y distribution
+        self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
                 
         # continuity equation
         q[0] = 0.
@@ -739,19 +742,22 @@ class Evolver:
         # call z_eos.get_logrho directly instead.
         rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
         # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
-        rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
-        # TODO: get true self.k_shell_top here. appears to always be zero for some reason.
+        if erase_z_discontinuity_from_brunt:
+            rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
+        else:
+            rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]            
+
         # ignore Y discontinuity at surface of he-rich layer
-        if self.k_shell_top > 0:
-            rho_this_pt_next_comp[self.k_shell_top + 1] = self.rho[self.k_shell_top + 1]
+        # if self.k_shell_top > 0:
+            # rho_this_pt_next_comp[self.k_shell_top + 1] = self.rho[self.k_shell_top + 1]
         
         self.brunt_b_mhm = np.zeros_like(self.p)
         self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
         
-        # self.brunt_b = self.brunt_b_mhm
-        # self.brunt_n2 = self.brunt_n2_mhm
+        self.brunt_b = self.brunt_b_mhm
+        self.brunt_n2 = self.brunt_n2_mhm
                 
         # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
@@ -776,6 +782,8 @@ class Evolver:
         self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
         self.mz = self.mz_env + self.mcore * const.mearth
         self.bulk_z = self.mz / self.mtot
+        
+        self.ysurf = self.y[-1]
         
         # axial moment of inertia, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
         self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
@@ -810,7 +818,7 @@ class Evolver:
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y, 
                                 rrho_where_have_helium_gradient=rrho_where_have_helium_gradient)
             walltime = time.time() - start_time
-            if self.tint == 1e20:
+            if self.tint > 1e9:
                 print 'failed in atmospheric boundary condition. stopping.'
                 if output_prefix:
                     with open('output/%s.history' % output_prefix, 'wb') as fw:
@@ -953,7 +961,7 @@ class Evolver:
             outdir = '%s/figs' % save_prefix
             if not os.path.exists(outdir):
                 os.mkdir(outdir)
-            plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')
+            plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')        
         
     def save_gyre_model(self, outfile, 
                     smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False):
@@ -969,7 +977,7 @@ class Evolver:
             w = np.zeros_like(self.m)
             w[:-1] = self.m[:-1] / (self.mtot - self.m[:-1])
             w[-1] = 1e10
-            # things we're not bothering to calculate in the interior (fill with zeros or ones or nonsense):
+            # things we're not bothering to calculate in the interior (fill with zeros or ones):
                 # luminosity (column 4)
                 # opacity and its derivatives (columns 13, 14, 15)
                 # energy generation rate and its derivatives (columns 16, 17, 18)
@@ -983,19 +991,21 @@ class Evolver:
             dummy_epsilon_t = 0.
             dummy_epsilon_rho = 0.
             
+            brunt_n2_for_gyre_model = np.copy(self.brunt_n2)
+            
             if erase_y_discontinuity_from_brunt:
                 assert self.k_shell_top > 0, 'no helium-rich shell, and thus no y discontinuity to erase.'
-                self.brunt_n2[self.k_shell_top + 1] = self.brunt_n2[self.k_shell_top + 2]
+                brunt_n2_for_gyre_model[self.k_shell_top + 1] = self.brunt_n2[self.k_shell_top + 2]
             
             if erase_z_discontinuity_from_brunt:
                 assert self.kcore > 0, 'no core, and thus no z discontinuity to erase.'
                 if self.kcore == 1:
-                    self.brunt_n2[self.kcore] = 0.
+                    brunt_n2_for_gyre_model[self.kcore] = 0.
                 else:
-                    self.brunt_n2[self.kcore] = self.brunt_n2[self.kcore - 1]
+                    brunt_n2_for_gyre_model[self.kcore] = self.brunt_n2[self.kcore - 1]
             
             if smooth_brunt_n2_std:
-                self.brunt_n2 = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
+                brunt_n2_for_gyre_model = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
                 
             if add_rigid_rotation:
                 omega = add_rigid_rotation
@@ -1005,6 +1015,43 @@ class Evolver:
             for k in np.arange(self.nz):
                 if k == 0: continue
                 f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
-                                       self.gradt[k], self.brunt_n2[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
+                                       self.gradt[k], brunt_n2_for_gyre_model[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
                                        dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, omega))
-        print 'wrote %i zones to %s' % (k, outfile)
+
+            print 'wrote %i zones to %s' % (k, outfile)
+            
+        # also write more complete profile info
+        outfile_more = outfile.replace('.gyre', '.profile')
+        with open(outfile_more, 'w') as f:
+                        
+            # write scalars
+            # these names should match attributes of the Evolver instance
+            scalar_names = 'nz', 'iters', 'rtot', 'tint', 'lint', 't10', 'teff', 'ysurf', 'nz_gradient', 'nz_shell', 'mz_env', 'mz', 'bulk_z', 'delta_nu', 'delta_nu_env'
+            n_scalars = len(scalar_names)
+            scalar_header_fmt = '%20s ' * n_scalars
+            f.write(scalar_header_fmt % scalar_names)
+            f.write('\n')
+            for name in scalar_names:
+                f.write('%20.10g ' % getattr(self, name))
+            f.write('\n')
+            f.write('\n')
+                        
+            # write vectors
+            vector_names = 'p', 't', 'rho', 'y', 'entropy', 'r', 'm', 'g', 'gamma1', \
+                'csound', 'lamb_s12', 'brunt_n2', 'brunt_n2_direct', 'brunt_b', 'chirho', 'chit', 'gradt', 'grada', 'gradt_direct', 'rf', 'mf'
+            n_vectors = len(vector_names)
+            vector_header_fmt = '%20s ' * n_vectors
+            f.write(vector_header_fmt % vector_names)
+            f.write('\n')
+            for k in np.arange(self.nz):
+                for name in vector_names:
+                    try:
+                        f.write('%20.10g ' % getattr(self, name)[k])
+                    except:
+                        print k, name
+                f.write('\n')
+            f.write('\n')
+            
+            print 'wrote %i zones to %s' % (k, outfile_more)
+            
+                                    

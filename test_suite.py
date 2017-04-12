@@ -60,7 +60,8 @@ def static_jupiter_and_saturn():
         ax[0].semilogy(sat_rain.rf, sat_rain.brunt_b)
     except ValueError:
         '''no positive brunt_b.'''
-        raise ValueError('no positive brunt_b in the helium rain models.')
+        pass
+        # raise ValueError('no positive brunt_b in the helium rain models.')
     ax[0].set_xlabel(r'$r/R$')
     ax[0].set_ylabel(r'$B$')
     
