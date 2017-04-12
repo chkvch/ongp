@@ -82,7 +82,8 @@ def evolve_jupiter():
     print 'test evolve_jupiter'
         
     t0 = time.time()
-    jup_homog = evolve.Evolver()
+    # must use aneos for evolutionary models since REOS water does not cover high T.
+    jup_homog = evolve.Evolver(z_eos_option='aneos ice')
     try:
         jup_homog.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=300., nsteps=100., 
                         stdout_interval=10,  output_prefix='test_suite/jup_homog')
@@ -93,7 +94,7 @@ def evolve_jupiter():
     print
 
     t0 = time.time()
-    jup_rain = evolve.Evolver(phase_t_offset=-700.)
+    jup_rain = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
     try:
         jup_rain.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=300., nsteps=100., include_he_immiscibility=True,
                         stdout_interval=10,  output_prefix='test_suite/jup_rain')
@@ -108,7 +109,7 @@ def evolve_saturn():
     print 'test evolve_saturn'
         
     t0 = time.time()
-    sat_homog = evolve.Evolver()
+    sat_homog = evolve.Evolver(z_eos_option='aneos ice')
     try:
         sat_homog.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., 
                         stdout_interval=10,  output_prefix='test_suite/sat_homog')
@@ -119,7 +120,7 @@ def evolve_saturn():
     print
 
     t0 = time.time()
-    sat_rain = evolve.Evolver(phase_t_offset=-700.)
+    sat_rain = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
     try:
         sat_rain.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., include_he_immiscibility=True,
                         stdout_interval=10,  output_prefix='test_suite/sat_rain')

@@ -19,7 +19,8 @@ import time
 #     serpentine, and dunite;
 # (5) the Rostock eos (REOS) for water, also obtained courtesy of Nadine Nettelmann.
 #     at present won't work for cool planet models since it only covers T > 1000 K; 
-#     an effort is in the works to blend with aneos water at low T.
+#     blends with aneos water at low T. reference: 2009PhRvB..79e4107F
+
 
 class Evolver:
     
