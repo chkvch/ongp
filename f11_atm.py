@@ -77,6 +77,8 @@ class atm:
     def get_tint(self, g, t10):
         """give g (mks) and t10 (K) as arguments, does a root find to obtain the
         intrinsic temperature tint (K)."""
+        
+        assert t10 > 0., 'get_tint got a negative t10 %f' % t10
         def zero_me(tint):
             # print tint, t10 - self.get_t10((g, tint))
             try:

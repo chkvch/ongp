@@ -32,7 +32,7 @@ class Evolver:
         relative_radius_tolerance=1e-4,
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
-        phase_t_offset=0.,
+        mesh_func_type='sin',
         extrapolate_phase_diagram_to_low_pressure=True):
         # Load in the equations of state
         if hhe_eos_option == 'scvh':
@@ -72,12 +72,23 @@ class Evolver:
 
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
-        self.phase = lorenzen.hhe_phase_diagram(t_offset=phase_t_offset, 
-                        extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
+        # self.phase = lorenzen.hhe_phase_diagram(t_offset=phase_t_offset,
+                        # extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
+        self.phase = lorenzen.hhe_phase_diagram(extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
                                           
         # model atmospheres are now initialized in self.staticModel, so that individual models
         # can be calculated with different model atmospheres within a single Evolver instance.
         # e.g., can run a Jupiter and then a Saturn without making a new Evolver instance.
+        
+        # initialize structure mesh function
+        if mesh_func_type == 'sin':
+            self.mesh_func = lambda t: np.sin(t) ** 3
+        elif mesh_func_type == 'sin_alt':
+            self.mesh_func = lambda t: 1. - np.sin(np.pi / 2 - t) ** 3
+        elif mesh_func_type == 'tanh':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
+        else:
+            raise ValueError('mesh function type %s not recognized' % mesh_func_type)
             
         # Initialize memory
         self.nz = self.nBins = nz
@@ -213,12 +224,12 @@ class Evolver:
         dSdE = 1. / trapz(self.t, dx=dm)
         return self.r[-1], dSdE
 
-    def equilibrium_y_profile(self, verbose=False, show_timing=False, minimum_y_is_envelope_y=False):
+    def equilibrium_y_profile(self, phase_t_offset, verbose=False, show_timing=False, minimum_y_is_envelope_y=False):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
         may require a nearly pure-helium layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         k1 = np.where(p > 1.)[0][-1]
-        ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1])
+        ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
         
         if np.isnan(ymax1) or self.y[k1] < ymax1:
             if verbose: print 'first point at P > 1 Mbar is stable to demixing. Y, Ymax', self.y[k1], ymax1
@@ -239,7 +250,7 @@ class Evolver:
         self.k_gradient_top = k1
         for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > 1 Mbar
             t1 = time.time()
-            ymax = self.phase.ymax_lhs(p[k], self.t[k])
+            ymax = self.phase.ymax_lhs(p[k], self.t[k] - phase_t_offset) # April 12 2017: phase_t_offset here rather than in Lorenzen module
             if np.isnan(ymax):
                 raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
             if show_timing: print 'zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0)
@@ -313,6 +324,7 @@ class Evolver:
 
     def staticModel(self, mtot=1., t10=300., yenv=0.27, zenv=0., mcore=0.,
                     include_he_immiscibility=False,
+                    phase_t_offset=0,
                     minimum_y_is_envelope_y=False,
                     rrho_where_have_helium_gradient=None,
                     erase_z_discontinuity_from_brunt=False,
@@ -347,15 +359,15 @@ class Evolver:
         else:
             raise ValueError('model is neither Jupiter- nor Saturn- mass; implement a general model atmosphere option.')
 
-        def mesh_func(t): # t is a parameter that varies from 0 at center to pi/2 at surface
-            # really should work out a function giving better resolution at low P, near surface.
-            # near center possibly a problem for correctly classifying modes - need to be able to pick up a node near center.
-            
-            # return np.sin(t) ** (1. / 10) * (1. - np.exp(-t ** 2. / (2 * np.pi / 20)))
-            return np.sin(t) ** 5
+        # def mesh_func(t): # t is a parameter that varies from 0 at center to pi/2 at surface
+        #     # really should work out a function giving better resolution at low P, near surface.
+        #     # near center possibly a problem for correctly classifying modes - need to be able to pick up a node near center.
+        #
+        #     # return np.sin(t) ** (1. / 10) * (1. - np.exp(-t ** 2. / (2 * np.pi / 20)))
+        #     return np.sin(t) ** 5
         
         t = np.linspace(0, np.pi / 2, self.nz)
-        self.m = mtot * const.mjup * mesh_func(t)   
+        self.m = mtot * const.mjup * self.mesh_func(t)   
         self.kcore = kcore = int(np.where(mcore * const.mearth <= self.m)[0][0])
         self.mcore = mcore
         self.dm = np.diff(self.m)
@@ -582,7 +594,7 @@ class Evolver:
                         raise RuntimeError('got infinite temperature in integration of gradT.')
                     self.t[k] = 10 ** logt
 
-                self.y = self.equilibrium_y_profile(minimum_y_is_envelope_y=minimum_y_is_envelope_y)
+                self.y = self.equilibrium_y_profile(phase_t_offset, minimum_y_is_envelope_y=minimum_y_is_envelope_y)
 
                 # update density from P, T to update hydrostatic r
                 self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
@@ -636,12 +648,26 @@ class Evolver:
         self.rtot = self.r[-1]
         self.mtot = self.m[-1]
 
-        # extrapolate in logp to get a 10-bar temperature using a cubic spline. could do a quick integration of grad_ad too
-        npts_get_t10 = 10
-        logp_near_surf = np.log10(self.p[-npts_get_t10:][::-1])
-        t_near_surf = self.t[-npts_get_t10:][::-1]
-        t_surf_spline = splrep(logp_near_surf, t_near_surf, s=0, k=3)
-        self.t10 = splev(7., t_surf_spline, der=0, ext=0) # ext=0 for extrapolate
+        # # extrapolate in logp to get a 10-bar temperature using a cubic spline.
+        # npts_get_t10 = 10
+        # logp_near_surf = np.log10(self.p[-npts_get_t10:][::-1])
+        # t_near_surf = self.t[-npts_get_t10:][::-1]
+        # t_surf_spline = splrep(logp_near_surf, t_near_surf, s=0, k=3)
+        # self.t10 = splev(7., t_surf_spline, der=0, ext=0) # ext=0 for extrapolate
+        
+        # better to integrate grada instead. 20 points takes around 50 ms done this way.
+        npts_integrate = 20
+        logp_ = np.linspace(np.log10(self.p[-1]), 7., npts_integrate)
+        logt_ = np.zeros_like(logp_)
+        logt_[0] = np.log10(self.t[-1])
+        for j, logp in enumerate(logp_):
+            if j == 0: continue
+            grada = self.hhe_eos.get_grada(logp_[j-1], logt_[j-1], self.y[-1])
+            dlogp = logp_[j] - logp_[j-1]
+            logt_[j] = logt_[j-1] + grada * dlogp
+        self.t10 = 10 ** logt_[-1]
+        
+        assert self.t10 > 0., 'surface integration yielded a negative t10 %g' % self.t10
         
         self.surface_g = const.cgrav * mtot * const.mjup / self.r[-1] ** 2
         try:
@@ -650,6 +676,7 @@ class Evolver:
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
             print 'failed to get tint for converged model. g_mks = %f, t10 = %f' % (self.surface_g * 1e-2, self.t10)
+            print 'surface p, t', self.p[-1], self.t[-1]
             self.tint = 1e20
             self.teff = 1e20
             self.lint = 1e50

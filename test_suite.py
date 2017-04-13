@@ -77,29 +77,64 @@ def static_jupiter_and_saturn():
     ax[2].set_ylabel(r'$S_{\ell=1}^2\ \ {\rm s^{-2}}$')
     ax[2].set_ylim(1e-10, 1e-3)
     
-def evolve_jupiter():
+def evolve_jupiter(min_t10=250.):
     
     print 'test evolve_jupiter'
         
+    print 'doing case jup_homog'
     t0 = time.time()
-    # must use aneos for evolutionary models since REOS water does not cover high T.
+    # for now, must use aneos for evolutionary models since REOS water does not cover high T.
     jup_homog = evolve.Evolver(z_eos_option='aneos ice')
     try:
-        jup_homog.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=300., nsteps=100., 
+        jup_homog.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., 
                         stdout_interval=10,  output_prefix='test_suite/jup_homog')
+        print 'case jup_homog completed in %3.2f s.' % (time.time() - t0)
     except:
         print 'case jup_homog failed.'
         print
         pass
     print
+    
+    
+    print 'doing case jup_homog_tanh_mesh'
+    t0 = time.time()
+    # must use aneos for evolutionary models since REOS water does not cover high T.
+    jup_homog_tanh_mesh = evolve.Evolver(z_eos_option='aneos ice', mesh_func_type='tanh')
+    try:
+        jup_homog_tanh_mesh.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., 
+                        stdout_interval=10,  output_prefix='test_suite/jup_homog_tanh_mesh')
+        print 'case jup_homog_tanh_mesh completed in %3.2f s.' % (time.time() - t0)
+    except:
+        print 'case jup_homog_tanh_mesh failed.'
+        print
+        pass
+    print
 
+
+
+    print 'doing case jup_rain'
     t0 = time.time()
     jup_rain = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
     try:
-        jup_rain.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=300., nsteps=100., include_he_immiscibility=True,
+        jup_rain.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True,
                         stdout_interval=10,  output_prefix='test_suite/jup_rain')
+        print 'case jup_rain completed in %3.2f s.' % (time.time() - t0)
     except:
         print 'case jup_rain failed.'
+        print
+        pass
+    print
+    
+    
+    print 'doing case jup_rain_superad'
+    t0 = time.time()
+    jup_rain_superad = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
+    try:
+        jup_rain_superad.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True,
+                        stdout_interval=10,  output_prefix='test_suite/jup_rain_superad', rrho_where_have_helium_gradient=1.5e-2)
+        print 'case jup_rain_superad completed in %3.2f s.' % (time.time() - t0)
+    except:
+        print 'case jup_rain_superad failed.'
         print
         pass
     print
@@ -108,25 +143,59 @@ def evolve_saturn():
     
     print 'test evolve_saturn'
         
+    print 'doing case sat_homog'
     t0 = time.time()
     sat_homog = evolve.Evolver(z_eos_option='aneos ice')
     try:
         sat_homog.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., 
                         stdout_interval=10,  output_prefix='test_suite/sat_homog')
+        print 'case sat_homog completed in %3.2f s.' % (time.time() - t0)
     except:
         print 'case sat_homog failed.'
         print
         pass
     print
 
+
+    print 'doing case sat_homog_tanh_mesh'
+    t0 = time.time()
+    sat_homog_tanh_mesh = evolve.Evolver(z_eos_option='aneos ice', mesh_func_type='tanh')
+    try:
+        sat_homog_tanh_mesh.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., 
+                        stdout_interval=10,  output_prefix='test_suite/sat_homog_tanh_mesh')
+        print 'case sat_homog_tanh_mesh completed in %3.2f s.' % (time.time() - t0)
+    except:
+        print 'case sat_homog_tanh_mesh failed.'
+        print
+        pass
+    print
+
+
+
+    print 'doing case sat_rain'
     t0 = time.time()
     sat_rain = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
     try:
         sat_rain.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., include_he_immiscibility=True,
                         stdout_interval=10,  output_prefix='test_suite/sat_rain')
+        print 'case sat_rain completed in %3.2f s.' % (time.time() - t0)
     except:
         print 'case sat_rain failed.'
         print
         pass
     print
-        
+
+
+
+    print 'doing case sat_rain_superad'
+    t0 = time.time()
+    sat_rain_superad = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
+    try:
+        sat_rain_superad.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=200., nsteps=100., include_he_immiscibility=True,
+                        stdout_interval=10,  output_prefix='test_suite/sat_rain_superad', rrho_where_have_helium_gradient=1.5e-2)
+        print 'case sat_rain_superad completed in %3.2f s.' % (time.time() - t0)
+    except:
+        print 'case sat_rain_superad failed.'
+        print
+        pass
+    print

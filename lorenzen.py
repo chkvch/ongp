@@ -26,15 +26,19 @@ class hhe_phase_diagram:
     
     def __init__(self, order=3, smooth=0., t_offset=0., extrapolate_to_low_pressure=True):
         
-        self.t_offset = t_offset
         
         self.path_to_lhs_data = 'data/lorenzen_lhs.dat'
         self.path_to_rhs_data = 'data/lorenzen_rhs.dat'
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         self.lhs_data = np.genfromtxt(self.path_to_lhs_data, names=self.columns)
         self.rhs_data = np.genfromtxt(self.path_to_rhs_data, names=self.columns)
-        self.lhs_data['t'] += self.t_offset
-        self.rhs_data['t'] += self.t_offset
+
+        # April 12 2017: implement t_offset inside Evolver.staticModel instead, so we don't
+        # need to create a new Evolver instance every time we want to change dtphase
+        #
+        # self.t_offset = t_offset
+        # self.lhs_data['t'] += self.t_offset
+        # self.rhs_data['t'] += self.t_offset
                 
         self.p_grid = np.unique(self.lhs_data['p'])
 
