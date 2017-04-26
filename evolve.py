@@ -28,11 +28,11 @@ class Evolver:
         hhe_eos_option='scvh', 
         z_eos_option='reos water',
         atm_option='f11_tables',
-        nz=1000,
+        nz=1024,
         relative_radius_tolerance=1e-4,
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
-        mesh_func_type='sin',
+        mesh_func_type='tanh',
         extrapolate_phase_diagram_to_low_pressure=True):
         # Load in the equations of state
         if hhe_eos_option == 'scvh':
@@ -87,6 +87,16 @@ class Evolver:
             self.mesh_func = lambda t: 1. - np.sin(np.pi / 2 - t) ** 3
         elif mesh_func_type == 'tanh':
             self.mesh_func = lambda t: 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
+        elif mesh_func_type == 'tanh_9':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(9. * (t - np.pi / 4)))
+        elif mesh_func_type == 'tanh_8':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(8. * (t - np.pi / 4)))
+        elif mesh_func_type == 'tanh_7':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(7. * (t - np.pi / 4)))
+        elif mesh_func_type == 'tanh_5':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(5. * (t - np.pi / 4)))
+        elif mesh_func_type == 'tanh_3':
+            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(3. * (t - np.pi / 4)))
         else:
             raise ValueError('mesh function type %s not recognized' % mesh_func_type)
             
@@ -357,20 +367,37 @@ class Evolver:
                 raise ValueError('atm_option %s not recognized.' % self.atm_option)
             self.teq = 81.3
         else:
-            raise ValueError('model is neither Jupiter- nor Saturn- mass; implement a general model atmosphere option.')
-
-        # def mesh_func(t): # t is a parameter that varies from 0 at center to pi/2 at surface
-        #     # really should work out a function giving better resolution at low P, near surface.
-        #     # near center possibly a problem for correctly classifying modes - need to be able to pick up a node near center.
-        #
-        #     # return np.sin(t) ** (1. / 10) * (1. - np.exp(-t ** 2. / (2 * np.pi / 20)))
-        #     return np.sin(t) ** 5
+            raise ValueError('model is neither Jupiter- nor Saturn- mass; implement a general model atmosphere option.')        
         
-        t = np.linspace(0, np.pi / 2, self.nz)
-        self.m = mtot * const.mjup * self.mesh_func(t)   
-        self.kcore = kcore = int(np.where(mcore * const.mearth <= self.m)[0][0])
+        # t = np.linspace(0, np.pi / 2, self.nz)
+        # self.m = mtot * const.mjup * self.mesh_func(t) # grams
+        
+        # self.dm = np.diff(self.m)
+        # self.kcore = kcore = int(np.where(mcore * const.mearth <= self.m)[0][0]) - 1
+        # self.mcore = np.sum(self.dm[:kcore])
+        # self.mcore = mcore
+        
+        # hitch: self.mcore not necessarily mcore specified as arg. fix by putting remainder (typically ~tenth of an earth mass) into envelope
+        #
+        # zenv_remainder_from_core_misfit = (mcore - self.mcore / const.mearth) / (np.sum(self.dm[kcore:]) / const.mearth)
+        # print 'specified mcore %2.3f, actual mcore %2.3f. diff %2.3f; will add Z=%1.4f to envelope.' % (mcore, self.mcore / const.mearth, mcore - self.mcore / const.mearth, zenv_remainder_from_core_misfit)
+        #
+        # solution a: just move the nearest mesh point to the transition to the core mass exactly
+        # self.kcore = kcore = np.argmin(abs(self.m - mcore * const.mearth))
+        # self.m[kcore] = mcore * const.mearth
+        # self.mcore = mcore
+        # 
+        # solution b: add a new mesh point at mcore (total number of zones is now nz + 1).
+        # problematic because structure arrays are initialized in Evolve.__init__ with length nz.
+        # so initialize self.m with length < nz before adding zones such that total is nz.
+        t = np.linspace(0, np.pi / 2, self.nz - 1)
+        self.m = mtot * const.mjup * self.mesh_func(t) # grams
+        self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
+        self.m = np.insert(self.m, self.kcore, mcore * const.mearth)
         self.mcore = mcore
+
         self.dm = np.diff(self.m)
+        
         q = np.zeros(self.nz) # a proxy for dr
         self.grada = np.zeros(self.nz)
         
@@ -397,14 +424,14 @@ class Evolver:
         self.t = 10 ** self.logt_on_solar_isentrope((entropy_guess, np.log10(self.p)))
                 
         self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
-        self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), yenv) # for now, no Z in envelope
+        self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), yenv) # for first pass, no Z in envelope
         # self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y, self.z)
         
         self.y = np.zeros_like(self.p)
         self.y[kcore:] = yenv
         
         self.z[:kcore] = 1.
-        self.z[kcore:] = zenv
+        # self.z[kcore:] = zenv + zenv_remainder_from_core_misfit
         
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. must conserve when later adjusting Y distribution
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
@@ -428,7 +455,7 @@ class Evolver:
 
         # self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore]))) # core
         self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
-        if zenv == 0.:
+        if self.z[-1] == 0.: # this check is only valid if envelope is homogeneous in Z
             self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # XY envelope
         else:
             self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:], self.z[kcore:]) # XYZ envelope
@@ -459,14 +486,15 @@ class Evolver:
             # e.g., this was happening at logp, logt = 11.4015234804 3.61913879612, just under
             # the right-hand side "knee" of available data.
             if np.any(np.isnan(self.grada)):
-                print '\t%i nans in grada' % len(self.grada[np.isnan(self.grada)])
+                print '%i nans in grada' % len(self.grada[np.isnan(self.grada)])
                 
                 with open('output/grada_nans.dat', 'w') as fw:
                     for k, val in enumerate(self.grada):
                         if np.isnan(val):
                             fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
-                print 'saved problematic logp, logt, y to grada_nans.dat'
-                assert False, 'nans in eos quantities; cannot continue.'
+                print 'saved problematic logp, logt, y to output/grada_nans.dat'
+                raise ValueError('eos limits')
+                # assert False, 'nans in eos quantities; cannot continue.'
 
             self.dlogp = -1. * np.diff(np.log10(self.p))
             for k in np.arange(self.nz-2, kcore-1, -1):
@@ -477,7 +505,7 @@ class Evolver:
 
             # update density from P, T to update hydrostatic r
             self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
-            if zenv == 0.:
+            if self.z[-1] == 0.: # again, this check is only valid if envelope is homogeneous in Z
                 self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # XY envelope
             else:
                 self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:], self.z[kcore:]) # XYZ envelope
@@ -522,14 +550,14 @@ class Evolver:
                 self.grada[kcore:] = self.hhe_eos.get_grada(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # last time grada is set for envelope
 
                 if np.any(np.isnan(self.grada)):
-                    print '\t%i nans in grada' % len(self.grada[np.isnan(self.grada)])
+                    print '%i nans in grada' % len(self.grada[np.isnan(self.grada)])
                 
-                    with open('grada_nans.dat', 'w') as fw:
+                    with open('output/grada_nans.dat', 'w') as fw:
                         for k, val in enumerate(self.grada):
                             if np.isnan(val):
                                 fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
-                    print 'saved problematic logp, logt, y to grada_nans.dat'
-                    raise ValueError('nans from eos')
+                    print 'saved problematic logp, logt, y to output/grada_nans.dat'
+                    raise ValueError('eos limits')
 
                 self.gradt = np.copy(self.grada)
                 
@@ -657,7 +685,7 @@ class Evolver:
         
         # better to integrate grada instead. 20 points takes around 50 ms done this way.
         npts_integrate = 20
-        logp_ = np.linspace(np.log10(self.p[-1]), 7., npts_integrate)
+        logp_ = np.linspace(np.log10(self.p[-1]), 7, npts_integrate)
         logt_ = np.zeros_like(logp_)
         logt_[0] = np.log10(self.t[-1])
         for j, logp in enumerate(logp_):
@@ -666,6 +694,19 @@ class Evolver:
             dlogp = logp_[j] - logp_[j-1]
             logt_[j] = logt_[j-1] + grada * dlogp
         self.t10 = 10 ** logt_[-1]
+        
+        # april 24: try integrating all the way down to 1 bar, starting from the t10 just obtained
+        npts_integrate = 10
+        logp_ = np.linspace(7., 6., npts_integrate)
+        logt_ = np.zeros_like(logp_)
+        logt_[0] = np.log10(self.t10)
+        for j, logp in enumerate(logp_):
+            if j == 0: continue
+            grada = self.hhe_eos.get_grada(logp_[j-1], logt_[j-1], self.y[-1])
+            dlogp = logp_[j] - logp_[j-1]
+            logt_[j] = logt_[j-1] + grada * dlogp
+        self.t1 = 10 ** logt_[-1]
+        
         
         assert self.t10 > 0., 'surface integration yielded a negative t10 %g' % self.t10
         
@@ -677,6 +718,7 @@ class Evolver:
         except ValueError:
             print 'failed to get tint for converged model. g_mks = %f, t10 = %f' % (self.surface_g * 1e-2, self.t10)
             print 'surface p, t', self.p[-1], self.t[-1]
+            raise ValueError('atm limits')
             self.tint = 1e20
             self.teff = 1e20
             self.lint = 1e50

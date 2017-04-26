@@ -7,27 +7,28 @@ import time
 def static_jupiter_and_saturn():
     
     print 'test static_jupiter_and_saturn'
-    fmt = '%20s %20s %20s %20s %20s'
-    print fmt % ('case', 'iters', 'walltime (s)', 'rtot', 'teff')
+    fmt = '%20s %20s %20s %20s %20s %20s %20s'
+    print fmt % ('case', 'iters', 'walltime (s)', 'rtot', 'teff', 't10', 't1')
+    
     t0 = time.time()
     jup_homog = evolve.Evolver()
-    jup_homog.staticModel(mtot=1., yenv=0.27, zenv=0.0465, mcore=10., t10=300.)
-    print fmt % ('jup_homog', jup_homog.iters, time.time() - t0, jup_homog.rtot, jup_homog.teff)
+    jup_homog.staticModel(mtot=1., yenv=0.27, zenv=0.0465, mcore=10., t10=260.)
+    print fmt % ('jup_homog', jup_homog.iters, time.time() - t0, jup_homog.rtot, jup_homog.teff, jup_homog.t10, jup_homog.t1)
 
     t0 = time.time()
-    jup_rain = evolve.Evolver(phase_t_offset=-700.)
-    jup_rain.staticModel(mtot=1., yenv=0.27, zenv=0.05, mcore=10., t10=308., include_he_immiscibility=True)
-    print fmt % ('jup_rain', jup_rain.iters, time.time() - t0, jup_rain.rtot, jup_rain.teff)
+    jup_rain = evolve.Evolver()
+    jup_rain.staticModel(mtot=1., yenv=0.27, zenv=0.05, mcore=10., t10=260., include_he_immiscibility=True, phase_t_offset=-700.)
+    print fmt % ('jup_rain', jup_rain.iters, time.time() - t0, jup_rain.rtot, jup_rain.teff, jup_rain.t10, jup_rain.t1)
     
     t0 = time.time()
     sat_homog = evolve.Evolver()
-    sat_homog.staticModel(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., t10=200)
-    print fmt % ('sat_homog', sat_homog.iters, time.time() - t0, sat_homog.rtot, sat_homog.teff)
+    sat_homog.staticModel(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., t10=212.)
+    print fmt % ('sat_homog', sat_homog.iters, time.time() - t0, sat_homog.rtot, sat_homog.teff, sat_homog.t10, sat_homog.t1)
     
     t0 = time.time()
-    sat_rain = evolve.Evolver(phase_t_offset=-700.)
-    sat_rain.staticModel(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., t10=200., include_he_immiscibility=True)
-    print fmt % ('sat_rain', sat_rain.iters, time.time() - t0, sat_rain.rtot, sat_rain.teff)
+    sat_rain = evolve.Evolver()
+    sat_rain.staticModel(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., t10=212., include_he_immiscibility=True, phase_t_offset=-700.)
+    print fmt % ('sat_rain', sat_rain.iters, time.time() - t0, sat_rain.rtot, sat_rain.teff, sat_rain.t10, sat_rain.t1)
     
     
     fig, ax = plt.subplots(1, 3, figsize=(20, 4), gridspec_kw={'wspace':0.4})
