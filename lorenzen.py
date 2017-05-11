@@ -62,30 +62,38 @@ class hhe_phase_diagram:
     def xmax_lhs(self, pval, tval):
         assert self.pmin <= pval < self.pmax, 'p value %f Mbar out of bounds' % pval
         
-        if pval < 2. and self.extrapolate_to_low_pressure:
-            p_lo, p_hi = self.p_grid[0], self.p_grid[1]
-            # alpha_p will be negative.
-        else: # use the full tables
-            p_bin = np.where(self.p_grid - pval > 0)[0][0]
-            p_lo, p_hi = self.p_grid[p_bin - 1], self.p_grid[p_bin]
+        if True:
+            if pval < 2. and self.extrapolate_to_low_pressure:
+                p_lo, p_hi = self.p_grid[0], self.p_grid[1]
+                # alpha_p will be negative.
+            else: # use the full tables; search for relevant p bin
+                p_bin = np.where(self.p_grid - pval > 0)[0][0]
+                p_lo, p_hi = self.p_grid[p_bin - 1], self.p_grid[p_bin]
         
-        alpha_p = (np.log10(pval) - np.log10(p_lo)) / (np.log10(p_hi) - np.log10(p_lo)) # linear in logp
-        # alpha_p = (pval - p_lo) / (p_hi - p_lo) # could also do linear in p if preferred
+            alpha_p = (np.log10(pval) - np.log10(p_lo)) / (np.log10(p_hi) - np.log10(p_lo)) # linear in logp
+            # alpha_p = (pval - p_lo) / (p_hi - p_lo) # could also do linear in p if preferred
     
-        # from the scipy.interpolate.splev documentation:
-        #
-        # der : int, optional; The order of derivative of the spline to compute (must be less than or equal to k).
-        # ext : int, optional; Controls the value returned for elements of x not in the interval defined by the knot sequence.
-        # if ext=0, return the extrapolated value.
-        # if ext=1, return 0
-        # if ext=2, raise a ValueError
-        # if ext=3, return the boundary value.
+            # from the scipy.interpolate.splev documentation:
+            #
+            # der : int, optional; The order of derivative of the spline to compute (must be less than or equal to k).
+            # ext : int, optional; Controls the value returned for elements of x not in the interval defined by the knot sequence.
+            # if ext=0, return the extrapolated value.
+            # if ext=1, return 0
+            # if ext=2, raise a ValueError
+            # if ext=3, return the boundary value.
 
-        ext=0
-        res_lo_p = interpolate.splev(tval, self.xt_splines_lhs[p_lo], der=0, ext=ext)
-        res_hi_p = interpolate.splev(tval, self.xt_splines_lhs[p_hi], der=0, ext=ext)
+            ext=0
+            res_lo_p = interpolate.splev(tval, self.xt_splines_lhs[p_lo], der=0, ext=ext)
+            res_hi_p = interpolate.splev(tval, self.xt_splines_lhs[p_hi], der=0, ext=ext)
         
-        res = alpha_p * res_hi_p + (1. - alpha_p) * res_lo_p
+            res = alpha_p * res_hi_p + (1. - alpha_p) * res_lo_p
+        
+        else: # accomplishes the same thing as the above if k==1
+            res_at_p = np.zeros_like(self.p_grid)
+            for j, this_pval in enumerate(self.p_grid):
+                res_at_p[j] = interpolate.splev(tval, self.xt_splines_lhs[this_pval], der=0, ext=0)
+            pspline = interpolate.splrep(self.p_grid, res_at_p, s=0, k=1)
+            res = interpolate.splev(pval, pspline, der=0, ext=0)
         
         return res
         
@@ -98,15 +106,17 @@ class hhe_phase_diagram:
         from scipy.interpolate import griddata
         return griddata(zip(self.lhs_data['x'], np.log10(self.lhs_data['p'])), self.lhs_data['t'], (xval, np.log10(pval)), method='linear')
         
-    def show_phase_curves(self, **kwargs):
+    def show_phase_curves(self, ax=None, **kwargs):
         import matplotlib.pyplot as plt
-        plt.xlabel(r'$Y$')
-        plt.ylabel(r'$T$')
+        if not ax: ax = plt.gca()
+        ax.set_xlabel(r'$Y$')
+        ax.set_ylabel(r'$T$')
         for pval in self.p_grid:
             x = self.lhs_data['x'][self.lhs_data['p'] == pval]
             t = self.lhs_data['t'][self.lhs_data['p'] == pval]
-            plt.plot(get_y(x), t, '-', label='%2f Mbar' % pval, lw=1, **kwargs)
+            ax.plot(get_y(x), t, 'k-', label='%i Mbar' % pval, lw=1, **kwargs)
             
-        plt.xlim(0, 0.3)
-        plt.ylim(2e3, 8e3)
+        ax.set_xlim(0, 0.3)
+        ax.set_ylim(2e3, 8e3)
+        ax.legend(loc=4, fontsize=12)
         

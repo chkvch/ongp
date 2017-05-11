@@ -255,8 +255,11 @@ class Evolver:
         t0 = time.time()
         rainout_to_core = False
         
-        self.nz_gradient = 0
-        self.k_shell_top = 0
+        # this can't go here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
+        # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
+        # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
+        # self.nz_gradient = 0 
+        # self.k_shell_top = 0
         self.k_gradient_top = k1
         for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > 1 Mbar
             t1 = time.time()
@@ -267,6 +270,8 @@ class Evolver:
             if yout[k] < ymax:
                 if verbose: print 'stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1
                 break
+            self.nz_gradient = 0
+            self.k_shell_top = 0
             ystart = yout[k]
             yout[k] = ymax
             
@@ -278,8 +283,6 @@ class Evolver:
             he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
             enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
             if not enclosed_envelope_mass > 0: # at core boundary
-                msg = 'gradient reaches core boundary; rainout to core.'
-                print msg
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
                 # assert this "should"
@@ -296,7 +299,7 @@ class Evolver:
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
                 # assert this "should"
-                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior > 1'
+                # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
                 kbot = k
                 break
             else:        
@@ -432,6 +435,8 @@ class Evolver:
         
         self.z[:kcore] = 1.
         # self.z[kcore:] = zenv + zenv_remainder_from_core_misfit
+        assert zenv >= 0., 'got negative zenv %g' % zenv
+        self.z[kcore:] = zenv
         
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. must conserve when later adjusting Y distribution
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
@@ -861,7 +866,7 @@ class Evolver:
         return self.iters
                 
     def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
-                include_he_immiscibility=False, output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None):
+                include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
             "invalid core mass %f for total mass %f" % (mcore, mtot * const.mjup / const.mearth)
@@ -884,7 +889,8 @@ class Evolver:
         print ('%12s ' * len(columns)) % columns
         for step, target_t10 in enumerate(target_t10s):
             self.staticModel(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, 
-                                include_he_immiscibility=include_he_immiscibility, 
+                                include_he_immiscibility=include_he_immiscibility,
+                                phase_t_offset=phase_t_offset, 
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y, 
                                 rrho_where_have_helium_gradient=rrho_where_have_helium_gradient)
             walltime = time.time() - start_time
@@ -973,7 +979,19 @@ class Evolver:
                 self.profile['age'] = age_gyr
                 self.profile['nz'] = self.nz
                 self.profile['kcore'] = self.kcore
-                # self.profile['age']
+                self.profile['radius'] = self.rtot
+                self.profile['tint'] = self.tint
+                self.profile['lint'] = self.lint
+                self.profile['t10'] = self.t10
+                self.profile['t1'] = self.t1
+                self.profile['teff'] = self.teff
+                self.profile['ysurf'] = self.y[-1]
+                self.profile['nz_gradient'] = self.nz_gradient
+                self.profile['nz_shell'] = self.nz_shell
+                self.profile['mz_env'] = self.mz_env
+                self.profile['mz'] = self.mz
+                self.profile['bulk_z'] = self.bulk_z
+                
 
                 with open('output/%s%i.profile' % (output_prefix, step), 'w') as f:
                     pickle.dump(self.profile, f, 0) # 0 means dump as text
