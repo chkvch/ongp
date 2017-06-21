@@ -100,9 +100,9 @@ def evolve_jupiter(min_t10=250.):
 
     print 'doing case jup_rain'
     t0 = time.time()
-    jup_rain = evolve.Evolver(z_eos_option='aneos ice', phase_t_offset=-700.)
+    jup_rain = evolve.Evolver(z_eos_option='aneos ice')
     try:
-        jup_rain.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True,
+        jup_rain.run(mtot=1., yenv=0.27, zenv=0.05, mcore=10., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True, phase_t_offset=-700.,
                         stdout_interval=10,  output_prefix='test_suite/jup_rain')
         print 'case jup_rain completed in %3.2f s.' % (time.time() - t0)
     except:
@@ -125,7 +125,7 @@ def evolve_jupiter(min_t10=250.):
         pass
     print
     
-def evolve_saturn():
+def evolve_saturn(min_t10 = 209.):
     
     print 'test evolve_saturn'
         
@@ -133,7 +133,7 @@ def evolve_saturn():
     t0 = time.time()
     sat_homog = evolve.Evolver(z_eos_option='aneos ice')
     try:
-        sat_homog.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=209., nsteps=100., 
+        sat_homog.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=min_t10, nsteps=100., 
                         stdout_interval=10,  output_prefix='test_suite/sat_homog')
         print 'case sat_homog completed in %3.2f s.' % (time.time() - t0)
     except:
@@ -148,7 +148,7 @@ def evolve_saturn():
     t0 = time.time()
     sat_rain = evolve.Evolver(z_eos_option='aneos ice')
     try:
-        sat_rain.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=209., nsteps=100., include_he_immiscibility=True, phase_t_offset=-700.,
+        sat_rain.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True, phase_t_offset=-700.,
                         stdout_interval=10,  output_prefix='test_suite/sat_rain')
         print 'case sat_rain completed in %3.2f s.' % (time.time() - t0)
     except:
@@ -163,7 +163,7 @@ def evolve_saturn():
     t0 = time.time()
     sat_rain_superad = evolve.Evolver(z_eos_option='aneos ice')
     try:
-        sat_rain_superad.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=209., nsteps=100., include_he_immiscibility=True, phase_t_offset=-700.,
+        sat_rain_superad.run(mtot=const.msat/const.mjup, yenv=0.27, zenv=0.05, mcore=20., starting_t10=1e3, min_t10=min_t10, nsteps=100., include_he_immiscibility=True, phase_t_offset=-700.,
                         stdout_interval=10,  output_prefix='test_suite/sat_rain_superad', rrho_where_have_helium_gradient=1.5e-2)
         print 'case sat_rain_superad completed in %3.2f s.' % (time.time() - t0)
     except:

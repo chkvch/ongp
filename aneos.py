@@ -11,7 +11,7 @@ class eos:
         assert self.material in available_materials, 'material must be one of %s, %s, %s, %s, %s' % available_materials
         self.path = '/Users/chris/Dropbox/planet_models/aneos/aneos_%s_pt.dat' % self.material
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
-        self.data = np.genfromtxt(self.path, names=self.names)
+        self.data = np.genfromtxt(self.path, names=self.names) # will fail if haven't saved version of aneos_*_pt.dat with eight columns
       
         # this version of aneos.py loads tables already regularized to rectangular in P, T.
         # thus use PT as a basis so we can use RegularGridInterpolator (fast.)

@@ -317,7 +317,11 @@ class Evolver:
             if verbose: print '%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe')
             for k in np.arange(kbot, self.nz):
                 yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
-                tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
+                # should fix following line for the case where there is no core
+                try:
+                    tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
+                except:
+                    raise RuntimeError('equilibrium_y_profile fails when have rainout to core and no core. (fixable.)')
                 if verbose: print '%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe)
                 if tentative_total_he_mass >= self.mhe:
                     if verbose: print 'tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe
@@ -336,6 +340,7 @@ class Evolver:
 
 
     def staticModel(self, mtot=1., t10=300., yenv=0.27, zenv=0., mcore=0.,
+                    zenv_inner=None,
                     include_he_immiscibility=False,
                     phase_t_offset=0,
                     minimum_y_is_envelope_y=False,
@@ -371,6 +376,9 @@ class Evolver:
             self.teq = 81.3
         else:
             raise ValueError('model is neither Jupiter- nor Saturn- mass; implement a general model atmosphere option.')        
+        
+        self.zenv = zenv
+        self.zenv_inner = zenv_inner
         
         # t = np.linspace(0, np.pi / 2, self.nz)
         # self.m = mtot * const.mjup * self.mesh_func(t) # grams
@@ -432,12 +440,7 @@ class Evolver:
         
         self.y = np.zeros_like(self.p)
         self.y[kcore:] = yenv
-        
-        self.z[:kcore] = 1.
-        # self.z[kcore:] = zenv + zenv_remainder_from_core_misfit
-        assert zenv >= 0., 'got negative zenv %g' % zenv
-        self.z[kcore:] = zenv
-        
+                
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. must conserve when later adjusting Y distribution
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
                 
@@ -457,13 +460,25 @@ class Evolver:
         self.p[:] = np.cumsum(dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
         self.t = 10 ** self.logt_on_solar_isentrope((entropy_guess, np.log10(self.p)))
         self.t[:kcore] = self.t[kcore] # isothermal at temperature of core-mantle boundary
+        
+        # before look up density, set composition (z) information
+        self.z[:kcore] = 1.
+        assert zenv >= 0., 'got negative zenv %g' % zenv
+        self.z[kcore:] = zenv
+        
+        # identify molecular-metallic transition. tentatively 1 Mbar; might realistically be 0.8 to 2 Mbar.
+        ktrans = np.where(self.p >= 1e12)[0][-1]
 
-        # self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore]))) # core
+        if zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
+            assert zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
+            assert zenv_inner >= zenv, 'no z inversion allowed for now.'
+            self.z[kcore:ktrans] = zenv_inner
+
         self.rho[:kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) # core
         if self.z[-1] == 0.: # this check is only valid if envelope is homogeneous in Z
             self.rho[kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) # XY envelope
         else:
-            self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:], self.z[kcore:]) # XYZ envelope
+            self.rho[kcore:] = self.get_rho_xyz(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:], self.z[kcore:]) # XYZ envelope            
             
         # these used to be defined after iterations were completed, but need for calculation of brunt_b to allow superadiabatic
         # regions with grad-grada proportional to brunt_b
@@ -481,6 +496,15 @@ class Evolver:
             # hydrostatic equilibrium
             dp[1:] = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4.
             self.p[:] = np.cumsum(dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
+            
+            # identify molecular-metallic transition. tentatively 1 Mbar; might realistically be 0.8 to 2 Mbar.
+            ktrans = np.where(self.p >= 1e12)[0][-1]
+
+            if zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
+                assert zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
+                assert zenv_inner >= zenv, 'no z inversion allowed for now.'
+                self.z[kcore:ktrans] = zenv_inner
+                self.z[ktrans:] = zenv
             
             # compute temperature profile by integrating grad_ad from surface
             self.grada[:kcore] = 0.
@@ -701,7 +725,7 @@ class Evolver:
         self.t10 = 10 ** logt_[-1]
         
         # april 24: try integrating all the way down to 1 bar, starting from the t10 just obtained
-        npts_integrate = 10
+        npts_integrate = 20
         logp_ = np.linspace(7., 6., npts_integrate)
         logt_ = np.zeros_like(logp_)
         logt_[0] = np.log10(self.t10)
@@ -1104,7 +1128,9 @@ class Evolver:
                 if k == 0: continue
                 f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
                                        self.gradt[k], brunt_n2_for_gyre_model[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
-                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, omega))
+                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, 
+                                       dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, 
+                                       omega))
 
             print 'wrote %i zones to %s' % (k, outfile)
             
@@ -1114,18 +1140,21 @@ class Evolver:
                         
             # write scalars
             # these names should match attributes of the Evolver instance
-            scalar_names = 'nz', 'iters', 'rtot', 'tint', 'lint', 't10', 'teff', 'ysurf', 'nz_gradient', 'nz_shell', 'mz_env', 'mz', 'bulk_z', 'delta_nu', 'delta_nu_env'
+            scalar_names = 'nz', 'iters', 'mtot', 'rtot', 'tint', 'lint', 't1', 't10', 'teff', 'ysurf', 'nz_gradient', 'nz_shell', 'zenv', 'zenv_inner', 'mz_env', 'mz', 'bulk_z', 'delta_nu', 'delta_nu_env'
             n_scalars = len(scalar_names)
             scalar_header_fmt = '%20s ' * n_scalars
             f.write(scalar_header_fmt % scalar_names)
             f.write('\n')
             for name in scalar_names:
-                f.write('%20.10g ' % getattr(self, name))
+                value = getattr(self, name)
+                if value is None: # can't substitute None into a string. assign nonphysical numerical value -1.
+                    value = -1
+                f.write('%20.10g ' % value)
             f.write('\n')
             f.write('\n')
                         
             # write vectors
-            vector_names = 'p', 't', 'rho', 'y', 'entropy', 'r', 'm', 'g', 'gamma1', \
+            vector_names = 'p', 't', 'rho', 'y', 'z', 'entropy', 'r', 'm', 'g', 'gamma1', \
                 'csound', 'lamb_s12', 'brunt_n2', 'brunt_n2_direct', 'brunt_b', 'chirho', 'chit', 'gradt', 'grada', 'gradt_direct', 'rf', 'mf'
             n_vectors = len(vector_names)
             vector_header_fmt = '%20s ' * n_vectors
