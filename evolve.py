@@ -1049,7 +1049,7 @@ class Evolver:
                 res[k] = array[k]
         return res
         
-    def basic_profile(self, save_prefix=None):
+    def basic_profile_plot(self, save_prefix=None):
         import os
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'hspace':0.1})
@@ -1075,68 +1075,80 @@ class Evolver:
                 os.mkdir(outdir)
             plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')        
         
-    def save_gyre_model(self, outfile, 
+    def save_profile(self, outfile, save_gyre_model_with_profile=True,
                     smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False):
-        # outfile = 'output/%s%i.gyre' % (output_prefix, step)
-        with open(outfile, 'w') as f:
-            header_format = '%6i ' + '%19.12e '*3 + '%5i\n'
-            line_format = '%6i ' + '%26.16e '*18 + '\n'
-            ncols = 19
             
-            # gyre doesn't like the first zone to have zero enclosed mass, so we omit the center point when writing the gyre model.
+        # try to be smart about output filenames        
+        if '.profile' in outfile and '.gyre' in outfile:
+            print 'please pass save_profile an output path with either .gyre or .profile extensions, or neither. not both. please.'
+        elif '.profile' in outfile:
+            gyre_outfile = outfile.replace('.profile', '.gyre')
+        elif '.gyre' in outfile:
+            gyre_outfile = outfile
+            outfile = gyre_outfile.replace('.gyre', '.profile')
+        else:
+            gyre_outfile = '%s.gyre' % outfile
+            outfile = '%s.profile' % outfile
+                        
+        if save_gyre_model_with_profile:
+            with open(gyre_outfile, 'w') as f:
+                header_format = '%6i ' + '%19.12e '*3 + '%5i\n'
+                line_format = '%6i ' + '%26.16e '*18 + '\n'
+                ncols = 19
             
-            f.write(header_format % (self.nz - 1, self.mtot, self.rtot, self.lint, ncols))
-            w = np.zeros_like(self.m)
-            w[:-1] = self.m[:-1] / (self.mtot - self.m[:-1])
-            w[-1] = 1e10
-            # things we're not bothering to calculate in the interior (fill with zeros or ones):
-                # luminosity (column 4)
-                # opacity and its derivatives (columns 13, 14, 15)
-                # energy generation rate and its derivatives (columns 16, 17, 18)
-                # rotation (column 19)
+                # gyre doesn't like the first zone to have zero enclosed mass, so we omit the center point when writing the gyre model.
             
-            dummy_luminosity = 0.
-            dummy_kappa = 1.
-            dummy_kappa_t = 0.
-            dummy_kappa_rho = 0.
-            dummy_epsilon = 0.
-            dummy_epsilon_t = 0.
-            dummy_epsilon_rho = 0.
+                f.write(header_format % (self.nz - 1, self.mtot, self.rtot, self.lint, ncols))
+                w = np.zeros_like(self.m)
+                w[:-1] = self.m[:-1] / (self.mtot - self.m[:-1])
+                w[-1] = 1e10
+                # things we're not bothering to calculate in the interior (fill with zeros or ones):
+                    # luminosity (column 4)
+                    # opacity and its derivatives (columns 13, 14, 15)
+                    # energy generation rate and its derivatives (columns 16, 17, 18)
+                    # rotation (column 19)
             
-            brunt_n2_for_gyre_model = np.copy(self.brunt_n2)
+                dummy_luminosity = 0.
+                dummy_kappa = 1.
+                dummy_kappa_t = 0.
+                dummy_kappa_rho = 0.
+                dummy_epsilon = 0.
+                dummy_epsilon_t = 0.
+                dummy_epsilon_rho = 0.
             
-            if erase_y_discontinuity_from_brunt:
-                assert self.k_shell_top > 0, 'no helium-rich shell, and thus no y discontinuity to erase.'
-                brunt_n2_for_gyre_model[self.k_shell_top + 1] = self.brunt_n2[self.k_shell_top + 2]
+                brunt_n2_for_gyre_model = np.copy(self.brunt_n2)
             
-            if erase_z_discontinuity_from_brunt:
-                assert self.kcore > 0, 'no core, and thus no z discontinuity to erase.'
-                if self.kcore == 1:
-                    brunt_n2_for_gyre_model[self.kcore] = 0.
-                else:
-                    brunt_n2_for_gyre_model[self.kcore] = self.brunt_n2[self.kcore - 1]
+                if erase_y_discontinuity_from_brunt:
+                    assert self.k_shell_top > 0, 'no helium-rich shell, and thus no y discontinuity to erase.'
+                    brunt_n2_for_gyre_model[self.k_shell_top + 1] = self.brunt_n2[self.k_shell_top + 2]
             
-            if smooth_brunt_n2_std:
-                brunt_n2_for_gyre_model = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
+                if erase_z_discontinuity_from_brunt:
+                    assert self.kcore > 0, 'no core, and thus no z discontinuity to erase.'
+                    if self.kcore == 1:
+                        brunt_n2_for_gyre_model[self.kcore] = 0.
+                    else:
+                        brunt_n2_for_gyre_model[self.kcore] = self.brunt_n2[self.kcore - 1]
+            
+                if smooth_brunt_n2_std:
+                    brunt_n2_for_gyre_model = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
                 
-            if add_rigid_rotation:
-                omega = add_rigid_rotation
-            else:
-                omega = 0.
+                if add_rigid_rotation:
+                    omega = add_rigid_rotation
+                else:
+                    omega = 0.
             
-            for k in np.arange(self.nz):
-                if k == 0: continue
-                f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
-                                       self.gradt[k], brunt_n2_for_gyre_model[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
-                                       dummy_kappa, dummy_kappa_t, dummy_kappa_rho, 
-                                       dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, 
-                                       omega))
+                for k in np.arange(self.nz):
+                    if k == 0: continue
+                    f.write(line_format % (k, self.r[k], w[k], dummy_luminosity, self.p[k], self.t[k], self.rho[k], \
+                                           self.gradt[k], brunt_n2_for_gyre_model[k], self.gamma1[k], self.grada[k], -1. * self.dlogrho_dlogt_const_p[k], \
+                                           dummy_kappa, dummy_kappa_t, dummy_kappa_rho, 
+                                           dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho, 
+                                           omega))
 
-            print 'wrote %i zones to %s' % (k, outfile)
+                print 'wrote %i zones to %s' % (k, gyre_outfile)
             
         # also write more complete profile info
-        outfile_more = outfile.replace('.gyre', '.profile')
-        with open(outfile_more, 'w') as f:
+        with open(outfile, 'w') as f:
                         
             # write scalars
             # these names should match attributes of the Evolver instance
@@ -1169,6 +1181,6 @@ class Evolver:
                 f.write('\n')
             f.write('\n')
             
-            print 'wrote %i zones to %s' % (k, outfile_more)
+            print 'wrote %i zones to %s' % (k, outfile)
             
                                     
