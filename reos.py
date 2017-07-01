@@ -6,12 +6,19 @@ class eos:
     
     def __init__(self):
         path = '/Users/chris/Dropbox/planet_models/reos/reos_water_pt.dat'
+        
+        # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
         self.data = np.genfromtxt(path, names=self.names)
 
         self.logpvals = np.unique(self.data['logp'])
         self.logtvals = np.unique(self.data['logt'])
+        
+        self.logpmin = min(self.logpvals)
+        self.logpmax = max(self.logpvals)
+        self.logtmin = min(self.logtvals)
+        self.logtmax = max(self.logtvals)
                 
         self.nptsp = len(self.logpvals)
         self.nptst = len(self.logtvals)
@@ -35,30 +42,21 @@ class eos:
                 self.gamma1_on_pt[i, j] = data_this_logp_logt['gamma1']
 
         pt_basis = (self.logpvals, self.logtvals)
-        self._get_logrho = RegularGridInterpolator(pt_basis, self.logrho_on_pt)
+        self._get_logrho = RegularGridInterpolator(pt_basis, self.logrho_on_pt, bounds_error=False)
         self._get_logu = RegularGridInterpolator(pt_basis, self.logu_on_pt)
         self._get_logs = RegularGridInterpolator(pt_basis, self.logs_on_pt)        
         self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_pt)        
         self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_pt)        
         self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_pt)        
                 
-    def get_logrho(self, logp, logt):
-        if np.any(logt > max(self.logtvals)):
-            raise ValueError('logt above reos bounds. max available %f, got %f.' % (self.logtvals[-1], max(logt)))
-        elif np.any(logt < min(self.logtvals)):
-            raise ValueError('logt below reos bounds. min available %f, got %f.' % (self.logtvals[0], min(logt)))
-        elif np.any(logp > max(self.logpvals)):
-            raise ValueError('logp above reos bounds. max available %f, got %f' % (self.logpvals[-1], max(logp)))
-        elif np.any(logp < min(self.logpvals)):
-            raise ValueError('logp below reos bounds. min available %f, got %f' % (self.logtvals[0], min(logp)))
-
+    def get_logrho(self, logp, logt):        
         return self._get_logrho((logp, logt))
 
     def get_logu(self, logp, logt):
         return self._get_logu((logp, logt))
 
     def get_logs(self, logp, logt):
-        return self._get_logs((logp, logt))
+        return self._get_logs((logp, logt)) # + 10. # kJ/g/K to erg/g/K
         
     def get_chit(self, logp, logt):
         return self._get_chit((logp, logt))
@@ -77,7 +75,7 @@ class eos:
         return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
 
     def get_dlogrho_dlogt_const_p(self, logp, logt, f=8e-1):
-        logt_lo = logt - np.log10(1. - f)
+        logt_lo = logt + np.log10(1. - f)
         logt_hi = logt + np.log10(1. + f)
         logrho_lo = self.get_logrho(logp, logt_lo)
         logrho_hi = self.get_logrho(logp, logt_hi)

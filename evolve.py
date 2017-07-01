@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator, interp1d, splrep, splev
-from scipy.integrate import trapz, odeint
+from scipy.integrate import trapz, cumtrapz, odeint
 import sys
 import const
 import pickle
@@ -79,27 +79,9 @@ class Evolver:
         # model atmospheres are now initialized in self.staticModel, so that individual models
         # can be calculated with different model atmospheres within a single Evolver instance.
         # e.g., can run a Jupiter and then a Saturn without making a new Evolver instance.
+                           
+        self.mesh_func_type = mesh_func_type
         
-        # initialize structure mesh function
-        if mesh_func_type == 'sin':
-            self.mesh_func = lambda t: np.sin(t) ** 3
-        elif mesh_func_type == 'sin_alt':
-            self.mesh_func = lambda t: 1. - np.sin(np.pi / 2 - t) ** 3
-        elif mesh_func_type == 'tanh':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
-        elif mesh_func_type == 'tanh_9':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(9. * (t - np.pi / 4)))
-        elif mesh_func_type == 'tanh_8':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(8. * (t - np.pi / 4)))
-        elif mesh_func_type == 'tanh_7':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(7. * (t - np.pi / 4)))
-        elif mesh_func_type == 'tanh_5':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(5. * (t - np.pi / 4)))
-        elif mesh_func_type == 'tanh_3':
-            self.mesh_func = lambda t: 0.5 * (1. + np.tanh(3. * (t - np.pi / 4)))
-        else:
-            raise ValueError('mesh function type %s not recognized' % mesh_func_type)
-            
         # Initialize memory
         self.nz = self.nBins = nz
         self.workingMemory = np.zeros(self.nBins)
@@ -126,6 +108,28 @@ class Evolver:
         self.nz_shell = 0
         
         return
+    
+    # mesh function defining mass enclosed within a given zone number
+    def mesh_func(self, t):            
+        if self.mesh_func_type == 'sin':
+            return np.sin(t) ** 3
+        elif self.mesh_func_type == 'sin_alt':
+            return 1. - np.sin(np.pi / 2 - t) ** 3
+        elif self.mesh_func_type == 'tanh':
+            return 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
+        elif self.mesh_func_type == 'tanh_9':
+            return 0.5 * (1. + np.tanh(9. * (t - np.pi / 4)))
+        elif self.mesh_func_type == 'tanh_8':
+            return 0.5 * (1. + np.tanh(8. * (t - np.pi / 4)))
+        elif self.mesh_func_type == 'tanh_7':
+            return 0.5 * (1. + np.tanh(7. * (t - np.pi / 4)))
+        elif self.mesh_func_type == 'tanh_5':
+            return 0.5 * (1. + np.tanh(5. * (t - np.pi / 4)))
+        elif self.mesh_func_type == 'tanh_3':
+            return 0.5 * (1. + np.tanh(3. * (t - np.pi / 4)))
+        else:
+            raise ValueError('mesh function type %s not recognized' % self.mesh_func_type)
+    
 
     def getMixDensity_daniel(self, entropy, pressure, z):
         '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
@@ -346,6 +350,7 @@ class Evolver:
                     minimum_y_is_envelope_y=False,
                     rrho_where_have_helium_gradient=None,
                     erase_z_discontinuity_from_brunt=False,
+                    include_core_entropy=False,
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 10-bar temperature t10, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and ice/rock core mass mcore. returns the number of iterations taken before 
@@ -745,15 +750,21 @@ class Evolver:
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
-            print 'failed to get tint for converged model. g_mks = %f, t10 = %f' % (self.surface_g * 1e-2, self.t10)
-            print 'surface p, t', self.p[-1], self.t[-1]
+            print('failed to get tint for converged model.')
+            print('\tg_mks = %g' % self.surface_g*1e-2)
+            print('\t  t10 = %g' % self.t10)
+            print('\tpsurf = %g' % self.p[-1])
+            print('\ttsurf = %g' % self.t[-1])
             raise ValueError('atm limits')
-            self.tint = 1e20
-            self.teff = 1e20
-            self.lint = 1e50
         self.entropy = np.zeros_like(self.p)
         # self.entropy[:kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) * const.mp / const.kb # leave this out, unsure of units on aneos entropy
         # note -- in the envelope, ignoring any contribution that heavies make to the entropy.
+        # experimenting with including entropy of core material (don't bother with aneos, it's not a column)
+        if include_core_entropy:
+            if not self.z_eos_option == 'reos water':
+                raise NotImplementedError("including entropy of the core is only possible if z_eos_option == 'reos water'.")
+            else:
+                self.entropy[:kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:kcore]), np.log10(self.t[:kcore])) * const.mp / const.kb
         self.entropy[kcore:] = 10 ** self.hhe_eos.get_logs(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]) * const.mp / const.kb
 
         # core is isothermal at temperature of the base of the envelope
@@ -815,7 +826,9 @@ class Evolver:
         rho_hhe = np.zeros_like(self.p)
         # rho_z[self.z > 0.] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
         rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
+        rho_z[self.z == 0.] = 0
         rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
+        rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
         self.dlogrho_dlogz = np.zeros_like(self.p)
         # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
         self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
@@ -861,15 +874,24 @@ class Evolver:
         # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
         self.dlogrho_dlogt_const_p = np.zeros_like(self.p)
+        # print 'at time of calculating rho_t for final static model, log core temperature is %f' % np.log10(self.t[0])
         self.dlogrho_dlogt_const_p[:kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:kcore]), np.log10(self.t[:kcore]))
         if self.z_eos_option == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
             k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
-            self.dlogrho_dlogt_const_p[kcore:k_t_boundary+1] = self.rho[kcore:k_t_boundary+1] * \
-                (self.z[kcore:k_t_boundary+1] / rho_z[kcore:k_t_boundary+1] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[kcore:k_t_boundary+1]), np.log10(self.t[kcore:k_t_boundary+1])) + \
-                (1. - self.z[kcore:k_t_boundary+1]) / rho_hhe[kcore:k_t_boundary+1] * self.hhe_eos.get_rhot(np.log10(self.p[kcore:k_t_boundary+1]), np.log10(self.t[kcore:k_t_boundary+1]), self.y[kcore:k_t_boundary+1]))
-            self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.rho[k_t_boundary+1:] * (self.z[k_t_boundary+1:] / rho_z[k_t_boundary+1:] * \
-                self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), np.log10(self.t[k_t_boundary+1:])) + \
-                (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] * self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), np.log10(self.t[k_t_boundary+1:]), self.y[k_t_boundary+1:]))
+            try:
+                self.dlogrho_dlogt_const_p[kcore:k_t_boundary+1] = self.rho[kcore:k_t_boundary+1] * \
+                    (self.z[kcore:k_t_boundary+1] / rho_z[kcore:k_t_boundary+1] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[kcore:k_t_boundary+1]), np.log10(self.t[kcore:k_t_boundary+1])) + \
+                    (1. - self.z[kcore:k_t_boundary+1]) / rho_hhe[kcore:k_t_boundary+1] * self.hhe_eos.get_rhot(np.log10(self.p[kcore:k_t_boundary+1]), np.log10(self.t[kcore:k_t_boundary+1]), self.y[kcore:k_t_boundary+1]))
+            except:
+                print 'failed in dlogrho_dlogt_const_p for hi-T part of envelope'
+                raise
+            try:
+                self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.rho[k_t_boundary+1:] * (self.z[k_t_boundary+1:] / rho_z[k_t_boundary+1:] * \
+                    self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), np.log10(self.t[k_t_boundary+1:])) + \
+                    (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] * self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), np.log10(self.t[k_t_boundary+1:]), self.y[k_t_boundary+1:]))
+            except:
+                print 'failed in dlogrho_dlogt_const_p for lo-T part of envelope'
+                raise
 
         else: # no need to sweat low vs. high t
             self.dlogrho_dlogt_const_p[kcore:] = self.rho[kcore:] * (self.z[kcore:] / rho_z[kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[kcore:]), np.log10(self.t[kcore:])) + (1. - self.z[kcore:]) / rho_hhe[kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[kcore:]), np.log10(self.t[kcore:]), self.y[kcore:]))
@@ -886,11 +908,14 @@ class Evolver:
         
         # axial moment of inertia, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
         self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
+        
+        self.pressure_scale_height = self.p / self.rho / self.g
                         
         return self.iters
                 
     def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
-                include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None):
+                include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None,
+                max_age = None, include_core_entropy=False):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
             "invalid core mass %f for total mass %f" % (mcore, mtot * const.mjup / const.mearth)
@@ -900,64 +925,65 @@ class Evolver:
         target_t10s = np.logspace(np.log10(min_t10), np.log10(starting_t10), nsteps)[::-1]
 
         self.history = {}
-        self.history_columns = 'step', 'age', 'radius', 'tint', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', 'mz_env', 'mz', 'bulk_z'
+        self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
+            'mz_env', 'mz', 'bulk_z', 'dmcore_dt', 'int_dmcore_dt'
         for name in self.history_columns:
+            # allocate history arrays with the length of steps we expect.
+            # bad design because if the run terminates early, rest of history
+            # will be filled with zeroes.
             self.history[name] = np.zeros_like(target_t10s)
 
         keep_going = True
         previous_entropy = 0
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
-        columns = 'step', 'iters', 'tgt_t10', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
+        stdout_columns = 'step', 'iters', 'tgt_t10', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
         start_time = time.time()
-        print ('%12s ' * len(columns)) % columns
+        print ('%12s ' * len(stdout_columns)) % stdout_columns
         for step, target_t10 in enumerate(target_t10s):
-            self.staticModel(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, 
+            try:
+                self.staticModel(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, 
                                 include_he_immiscibility=include_he_immiscibility,
                                 phase_t_offset=phase_t_offset, 
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y, 
-                                rrho_where_have_helium_gradient=rrho_where_have_helium_gradient)
-            walltime = time.time() - start_time
-            if self.tint > 1e9:
-                print 'failed in atmospheric boundary condition. stopping.'
+                                rrho_where_have_helium_gradient=rrho_where_have_helium_gradient,
+                                include_core_entropy=include_core_entropy)
+                walltime = time.time() - start_time
+            except ValueError:
+                print('failed in building static model -- likely off eos or atm tables')
+                # don't update any history info; save history to this point if output_prefix is specified
                 if output_prefix:
-                    with open('output/%s.history' % output_prefix, 'wb') as fw:
+                    with open('%s.history' % output_prefix, 'wb') as fw:
                         pickle.dump(self.history, fw, 0)
-                    print 'wrote history data to output/%s.history' % output_prefix
+                    print 'wrote history data to %s.history' % output_prefix
                 return self.history
             dt_yr = 0.
-            if step > 0:
+            if step > 0: # have a timestep to speak of
                 delta_s = self.entropy - previous_entropy
                 delta_s *= const.kb / const.mp # now erg K^-1 g^-1
                 assert self.lint > 0, 'found negative intrinsic luminosity.'
                 int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
                 dt = -1. *  int_tdsdm / self.lint
-                if dt < 0:
-                    import matplotlib.pyplot as plt
-                    fig, ax = plt.subplots(2, 1, figsize=(6, 8), sharex=True)
-                    ax[0].plot(self.mf, self.y - self.ystart, 'k-', lw=1)
-                    ax[0].set_ylabel(r'$dY$')
-                    integrand = self.t * delta_s
-                    ax[1].plot(self.mf, delta_s / max(abs(delta_s)), '.', label=r'$\Delta s$')
-                    ax[1].plot(self.mf, integrand / max(abs(integrand)), '.', label=r'$T\,\Delta s$')
-                    partial_integral = -1. * np.cumsum(self.t[:-1] * delta_s[:-1] * self.dm)
-                    ax[1].plot(self.mf[:-1], partial_integral / max(abs(partial_integral)), '-', lw=1, label=r'$\propto \delta t$')
-                    ax[1].legend(fontsize=14, loc='best')
-                    print 'error: integral of t*(delta_s)*dm = %g, but should be negative.' % int_tdsdm
-                    print 'mean entropy %f' % np.mean(self.entropy[self.kcore:])
-                    print 'tint, lint', self.tint, self.lint
-                    print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
-                        (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
-                    keep_going = False
+                if dt < 0: raise RuntimeError('got negative timestep %f' % dt)
+                # now that have timestep based on total intrinsic luminosity, 
+                # calculate eps_grav to see distribution of energy generation
+                eps_grav = -1. * self.t * delta_s / dt
+                luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.) # inserting a zero at center point to match length of other profile quantities
                 dt_yr = dt / const.secyear
                 age_gyr += dt_yr * 1e-9
+                
+                self.delta_s = delta_s # erg K^-1 g^-1
+                self.eps_grav = eps_grav
+                self.luminosity = luminosity
 
                 self.history['step'][step] = step
                 self.history['iters'][step] = self.iters
                 self.history['age'][step] = age_gyr
+                self.history['dt_yr'][step] = dt_yr
                 self.history['radius'][step] = self.rtot
                 self.history['tint'][step] = self.tint
                 self.history['lint'][step] = self.lint
+                self.history['t1'][step] = self.t1
                 self.history['t10'][step] = self.t10
                 self.history['teff'][step] = self.teff
                 self.history['ysurf'][step] = self.y[-1]
@@ -966,6 +992,16 @@ class Evolver:
                 self.history['mz_env'][step] = self.mz_env
                 self.history['mz'][step] = self.mz
                 self.history['bulk_z'][step] = self.bulk_z
+                
+                # estimate of core erosion rate following Guillot+2003 chapter eq. 14
+                chi = 0.1
+                pomega = 0.3
+                hp_core_top = self.pressure_scale_height[self.kcore + 1]
+                r_first_convective_cell = self.r[self.kcore + 1] + hp_core_top # first convective cell extends ~ from core top to this radius
+                l1 = self.luminosity[self.r > r_first_convective_cell][0]
+                dmcore_dt = - chi / pomega * self.rtot * l1 / const.cgrav / self.mtot
+                self.history['dmcore_dt'][step] = dmcore_dt # g s^-1
+                self.history['int_dmcore_dt'][step] = trapz(self.history['dmcore_dt'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
                 
             # history and profile quantities go in dictionaries which are pickled
             if output_prefix:
@@ -981,6 +1017,7 @@ class Evolver:
                     self.profile['dy'] = self.y - self.ystart
                 except AttributeError: # no phase separation for this step
                     pass
+                self.profile['z'] = self.z
                 self.profile['entropy'] = self.entropy
                 self.profile['r'] = self.r
                 self.profile['m'] = self.m
@@ -997,6 +1034,13 @@ class Evolver:
                 self.profile['grada'] = self.grada
                 self.profile['rf'] = self.rf
                 self.profile['mf'] = self.mf
+                self.profile['pressure_scale_height'] = self.pressure_scale_height
+                
+                # these only work if step > 0
+                if step > 0:
+                    self.profile['delta_s'] = self.delta_s
+                    self.profile['eps_grav'] = self.eps_grav
+                    self.profile['luminosity'] = self.luminosity
                 
                 # profile scalars
                 self.profile['step'] = step
@@ -1006,8 +1050,8 @@ class Evolver:
                 self.profile['radius'] = self.rtot
                 self.profile['tint'] = self.tint
                 self.profile['lint'] = self.lint
-                self.profile['t10'] = self.t10
                 self.profile['t1'] = self.t1
+                self.profile['t10'] = self.t10
                 self.profile['teff'] = self.teff
                 self.profile['ysurf'] = self.y[-1]
                 self.profile['nz_gradient'] = self.nz_gradient
@@ -1017,7 +1061,7 @@ class Evolver:
                 self.profile['bulk_z'] = self.bulk_z
                 
 
-                with open('output/%s%i.profile' % (output_prefix, step), 'w') as f:
+                with open('%s%i.profile' % (output_prefix, step), 'w') as f:
                     pickle.dump(self.profile, f, 0) # 0 means dump as text
                                         
                 if not keep_going: 
@@ -1025,14 +1069,15 @@ class Evolver:
                     raise
                 
             if step % stdout_interval == 0 or step == nsteps - 1: 
-                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.kcore:]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
+                    (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
 
             previous_entropy = self.entropy
             
         if output_prefix:
-            with open('output/%s.history' % output_prefix, 'wb') as fw:
+            with open('%s.history' % output_prefix, 'wb') as fw:
                 pickle.dump(self.history, fw, 0)
-            print 'wrote history data to output/%s.history' % output_prefix
+            print 'wrote history data to %s.history' % output_prefix
             
         return self.history
         
