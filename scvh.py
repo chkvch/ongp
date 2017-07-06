@@ -187,7 +187,12 @@ class eos:
         
     def get_rhot(self, logp, logt, y):
         return self.get(logp, logt, y)['rhot']
+        
+    def get_cv(self, logp, logt, y):
+        return self.get(logp, logt, y)['cv']
 
+    def get_cp(self, logp, logt, y):
+        return self.get(logp, logt, y)['cp']
 
     def rhot_get(self, logrho, logt, y, logp_guess=None):
         # if want to use (rho, t, y) as basis.
@@ -600,8 +605,12 @@ class eos:
         res['chirho'] = res['rhop'] ** -1 # rhop = dlogrho/dlogp|t
         res['chit'] = dpdt_const_rho * 10 ** logt / 10 ** logp
         
-        # dlny_dlnp|rho = dlny_dlnt|p * dlnt_dlnp|rho + dlny_dlnp|t
-                
+        # from mesa's scvh in mesa/eos/eosPT_builder/src/scvh_eval.f
+        # 1005:      Cv = chiT * P / (rho * T * (gamma3 - 1)) ! C&G 9.93
+        # 1006:      Cp = Cv + P * chiT**2 / (Rho * T * chiRho) ! C&G 9.86
+        res['cv'] = res['chit'] * 10 ** logp / (10 ** res['logrho'] * 10 ** logt * (gamma3 - 1.)) # erg g^-1 K^-1
+        res['cp'] = res['cv'] + 10 ** logp * res['chit'] ** 2 / (10 ** res['logrho'] * 10 ** logt * res['chirho']) # erg g^-1 K^-1
+                        
         return res
     
     def plot_pt_coverage(self, ax, symbol, **kwargs):

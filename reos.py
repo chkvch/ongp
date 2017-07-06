@@ -66,7 +66,7 @@ class eos:
 
     def get_gamma1(self, logp, logt):
         return self._get_gamma1((logp, logt))
-        
+                
     def get_dlogrho_dlogp_const_t(self, logp, logt, f=8e-1):
         logp_lo = logp - np.log10(1. - f)
         logp_hi = logp + np.log10(1. + f)

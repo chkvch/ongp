@@ -915,18 +915,26 @@ class Evolver:
                 
     def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
                 include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None,
-                max_age = None, include_core_entropy=False):
+                max_age=None, include_core_entropy=False, sqrt_tau_erosion=1e-1, luminosity_erosion_option='first_convective_cell',
+                timesteps_ease_in=None):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
             "invalid core mass %f for total mass %f" % (mcore, mtot * const.mjup / const.mearth)
         menv = mtot * const.mjup - mcore * const.mearth
         assert 0. <= zenv <= 1., 'invalid envelope z %f' % zenv
 
-        target_t10s = np.logspace(np.log10(min_t10), np.log10(starting_t10), nsteps)[::-1]
+        if timesteps_ease_in:
+            # make the first steps_to_ease_in steps more gradual in terms of d(dt)/d(step).
+            i = np.arange(nsteps)
+            # target_t10s = 0.5 * (starting_t10 - min_t10) * (1. + np.tanh((i - nsteps / 2) / 2. / np.pi))[::-1] + min_t10
+            target_t10s = 0.5 * (starting_t10 - min_t10) * (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + min_t10
+        else:
+            target_t10s = np.logspace(np.log10(min_t10), np.log10(starting_t10), nsteps)[::-1]
+        # return target_t10s
 
         self.history = {}
         self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
-            'mz_env', 'mz', 'bulk_z', 'dmcore_dt', 'int_dmcore_dt'
+            'mz_env', 'mz', 'bulk_z', 'dmcore_dt_guillot', 'int_dmcore_dt_guillot', 'dmcore_dt_garaud', 'int_dmcore_dt_garaud'
         for name in self.history_columns:
             # allocate history arrays with the length of steps we expect.
             # bad design because if the run terminates early, rest of history
@@ -964,7 +972,7 @@ class Evolver:
                 assert self.lint > 0, 'found negative intrinsic luminosity.'
                 int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
                 dt = -1. *  int_tdsdm / self.lint
-                if dt < 0: raise RuntimeError('got negative timestep %f' % dt)
+                if dt < 0: raise RuntimeError('got negative timestep %f for step %i' % (dt, step))
                 # now that have timestep based on total intrinsic luminosity, 
                 # calculate eps_grav to see distribution of energy generation
                 eps_grav = -1. * self.t * delta_s / dt
@@ -994,14 +1002,24 @@ class Evolver:
                 self.history['bulk_z'][step] = self.bulk_z
                 
                 # estimate of core erosion rate following Guillot+2003 chapter eq. 14
-                chi = 0.1
-                pomega = 0.3
+                pomega = 0.3 # the order-unity factor from integration
                 hp_core_top = self.pressure_scale_height[self.kcore + 1]
                 r_first_convective_cell = self.r[self.kcore + 1] + hp_core_top # first convective cell extends ~ from core top to this radius
                 l1 = self.luminosity[self.r > r_first_convective_cell][0]
-                dmcore_dt = - chi / pomega * self.rtot * l1 / const.cgrav / self.mtot
-                self.history['dmcore_dt'][step] = dmcore_dt # g s^-1
-                self.history['int_dmcore_dt'][step] = trapz(self.history['dmcore_dt'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
+                l_core_top = self.luminosity[self.kcore]
+                leff = {'first_convective_cell':l1, 'core_top':l_core_top}
+
+                dmcore_dt_guillot = - sqrt_tau_erosion / pomega * self.rtot * leff[luminosity_erosion_option] / const.cgrav / self.mtot # g s^-1
+
+                alpha_core_top = - self.hhe_eos.get_rhot(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore]) / self.t[self.kcore] # K^-1
+                cp_core_top = self.hhe_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore]) # erg g^-1 K^-1
+                dmcore_dt_garaud = - sqrt_tau_erosion * alpha_core_top * leff[luminosity_erosion_option] / cp_core_top # g s^-1
+                
+                self.history['dmcore_dt_guillot'][step] = dmcore_dt_guillot # g s^-1
+                self.history['int_dmcore_dt_guillot'][step] = trapz(self.history['dmcore_dt_guillot'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
+                
+                self.history['dmcore_dt_garaud'][step] = dmcore_dt_garaud # g s^-1
+                self.history['int_dmcore_dt_garaud'][step] = trapz(self.history['dmcore_dt_garaud'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
                 
             # history and profile quantities go in dictionaries which are pickled
             if output_prefix:
