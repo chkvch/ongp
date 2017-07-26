@@ -67,19 +67,57 @@ class eos:
     def get_gamma1(self, logp, logt):
         return self._get_gamma1((logp, logt))
                 
-    def get_dlogrho_dlogp_const_t(self, logp, logt, f=8e-1):
+    def get_dlogrho_dlogp_const_t(self, logp, logt, f=1e-1):
         logp_lo = logp - np.log10(1. - f)
         logp_hi = logp + np.log10(1. + f)
         logrho_lo = self.get_logrho(logp_lo, logt)
         logrho_hi = self.get_logrho(logp_hi, logt)
         return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
 
-    def get_dlogrho_dlogt_const_p(self, logp, logt, f=8e-1):
+    def get_dlogrho_dlogt_const_p(self, logp, logt, f=1e-1):
         logt_lo = logt + np.log10(1. - f)
         logt_hi = logt + np.log10(1. + f)
         logrho_lo = self.get_logrho(logp, logt_lo)
         logrho_hi = self.get_logrho(logp, logt_hi)
         return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
+
+    def get_dlogs_dlogp_const_t(self, logp, logt, f=1e-1):
+        logp_lo = logp - np.log10(1. - f)
+        logp_hi = logp + np.log10(1. + f)
+        logs_lo = self.get_logs(logp_lo, logt)
+        logs_hi = self.get_logs(logp_hi, logt)
+        return (logs_hi - logs_lo) / (logp_hi - logp_lo)
+
+    def get_dlogs_dlogt_const_p(self, logp, logt, f=1e-1):
+        logt_lo = logt - np.log10(1. - f)
+        logt_hi = logt + np.log10(1. + f)
+        logs_lo = self.get_logs(logp, logt_lo)
+        logs_hi = self.get_logs(logp, logt_hi)
+        return (logs_hi - logs_lo) / (logt_hi - logt_lo)
+        
+    def get_cp(self, logp, logt):
+        rhop = self.get_dlogrho_dlogp_const_t(logp, logt)
+        rhot = self.get_dlogrho_dlogt_const_p(logp, logt)
+        rho = 10 ** self.get_logrho(logp, logt)
+        sp = self.get_dlogs_dlogp_const_t(logp, logt)
+        st = self.get_dlogs_dlogt_const_p(logp, logt)
+        s = 10 ** self.get_logs(logp, logt)
+        dpdt_const_rho = - 10 ** logp / 10 ** logt * rhot / rhop
+        dudt_const_rho = s * (st - sp * rhot / rhop)
+        dpdu_const_rho = dpdt_const_rho / rho / dudt_const_rho
+        gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
+        gamma1 = self.get_gamma1(logp, logt) # (gamma3 - 1.) / res['grada']
+        chirho = rhop ** -1
+        chit = dpdt_const_rho * 10 ** logt / 10 ** logp
+        cv = chit * 10 ** logp / (rho * 10 ** logt * (gamma3 - 1.))
+        cp = cv + 10 ** logp * chit ** 2 / (rho * 10 ** logt * chirho)
+        # print 'rhop, rhot, rho', rhop, rhot, rho
+        # print 'sp, st, s', sp, st, s
+        # print 'dpdt, dudt, dpdu const rho', dpdt_const_rho, dudt_const_rho, dpdu_const_rho
+        # print 'gamma3, gamma1, chirho, chit', gamma3, gamma1, chirho, chit
+        # print 'cp, cv', cp, cv
+        # print
+        return cp
 
     # def get_dlogrho_dlogt_const_p(self, logp, logt):
     #     return self.get_chit(logp, logt) / self.get_chirho(logp, logt)

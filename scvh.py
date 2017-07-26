@@ -14,12 +14,13 @@ class eos:
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06
         
+        module_dir = '/Users/chris/Dropbox/planet_models/ongp'
         if use_raw_tables:
-            path_to_h_data = 'data/scvh_h_original.dat'
-            path_to_he_data = 'data/scvh_he_original.dat'
+            path_to_h_data = '%s/data/scvh_h_original.dat' % module_dir
+            path_to_he_data = '%s/data/scvh_he_original.dat' % module_dir
         else: # use versions with two extra nodes in logp, logt, calculated by extrapolating on isotherms
-            path_to_h_data = 'data/scvh_h.dat'
-            path_to_he_data = 'data/scvh_he.dat'
+            path_to_h_data = '%s/data/scvh_h.dat' % module_dir
+            path_to_he_data = '%s/data/scvh_he.dat' % module_dir
         
         self.h_names = 'logp', 'xh2', 'xh', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.h_data = {}

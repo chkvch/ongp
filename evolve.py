@@ -29,11 +29,12 @@ class Evolver:
         z_eos_option='reos water',
         atm_option='f11_tables',
         nz=1024,
-        relative_radius_tolerance=1e-4,
+        relative_radius_tolerance=1e-6,
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
         mesh_func_type='tanh',
         extrapolate_phase_diagram_to_low_pressure=True):
+                
         # Load in the equations of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)
@@ -41,7 +42,7 @@ class Evolver:
                         
             # load isentrope tables so we can use isentropic P-T profiles at solar composition
             # as starting guesses before we tweak Y, Z distribution
-            solar_isentropes = np.load("data/scvhIsentropes.npz")
+            solar_isentropes = np.load("/Users/chris/Dropbox/planet_models/ongp/data/scvhIsentropes.npz")
             self.logrho_on_solar_isentrope = RegularGridInterpolator(
                 (solar_isentropes['entropy'], solar_isentropes['pressure']), solar_isentropes['density'])
             self.logt_on_solar_isentrope = RegularGridInterpolator(
@@ -385,6 +386,8 @@ class Evolver:
         self.zenv = zenv
         self.zenv_inner = zenv_inner
         
+        self.target_t10 = t10 # not really t10 in the end. think of it as an arbitrary (but one-to-one) proxy for t10 or entropy.
+        
         # t = np.linspace(0, np.pi / 2, self.nz)
         # self.m = mtot * const.mjup * self.mesh_func(t) # grams
         
@@ -473,6 +476,7 @@ class Evolver:
         
         # identify molecular-metallic transition. tentatively 1 Mbar; might realistically be 0.8 to 2 Mbar.
         ktrans = np.where(self.p >= 1e12)[0][-1]
+        self.ktrans = ktrans
 
         if zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
             assert zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
@@ -751,7 +755,7 @@ class Evolver:
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
             print('failed to get tint for converged model.')
-            print('\tg_mks = %g' % self.surface_g*1e-2)
+            print('\tg_mks = %g' % (self.surface_g * 1e-2))
             print('\t  t10 = %g' % self.t10)
             print('\tpsurf = %g' % self.p[-1])
             print('\ttsurf = %g' % self.t[-1])
@@ -868,8 +872,10 @@ class Evolver:
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
         
+        
         self.brunt_b = self.brunt_b_mhm
         self.brunt_n2 = self.brunt_n2_mhm
+        self.brunt_n2_thermal = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt)
                 
         # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
@@ -915,7 +921,7 @@ class Evolver:
                 
     def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
                 include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None,
-                max_age=None, include_core_entropy=False, sqrt_tau_erosion=1e-1, luminosity_erosion_option='first_convective_cell',
+                max_age=None, include_core_entropy=False, gammainv_erosion=1e-1, luminosity_erosion_option='first_convective_cell',
                 timesteps_ease_in=None):
         import time
         assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
@@ -934,7 +940,8 @@ class Evolver:
 
         self.history = {}
         self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
-            'mz_env', 'mz', 'bulk_z', 'dmcore_dt_guillot', 'int_dmcore_dt_guillot', 'dmcore_dt_garaud', 'int_dmcore_dt_garaud'
+            'mz_env', 'mz', 'bulk_z', 'dmcore_dt_guillot', 'int_dmcore_dt_guillot', 'dmcore_dt_garaud', 'int_dmcore_dt_garaud', \
+            'dmcore_dt_guillot_alternate', 'int_dmcore_dt_guillot_alternate'
         for name in self.history_columns:
             # allocate history arrays with the length of steps we expect.
             # bad design because if the run terminates early, rest of history
@@ -1007,16 +1014,24 @@ class Evolver:
                 r_first_convective_cell = self.r[self.kcore + 1] + hp_core_top # first convective cell extends ~ from core top to this radius
                 l1 = self.luminosity[self.r > r_first_convective_cell][0]
                 l_core_top = self.luminosity[self.kcore]
+                r_core_top = self.r[self.kcore]
+                m_core_top = self.m[self.kcore]
                 leff = {'first_convective_cell':l1, 'core_top':l_core_top}
 
-                dmcore_dt_guillot = - sqrt_tau_erosion / pomega * self.rtot * leff[luminosity_erosion_option] / const.cgrav / self.mtot # g s^-1
+                dmcore_dt_guillot = - gammainv_erosion / pomega * self.rtot * leff[luminosity_erosion_option] / const.cgrav / self.mtot # g s^-1
+                dmcore_dt_guillot_alternate = - gammainv_erosion / pomega * r_core_top * leff[luminosity_erosion_option] / const.cgrav / m_core_top # g s^-1
 
                 alpha_core_top = - self.hhe_eos.get_rhot(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore]) / self.t[self.kcore] # K^-1
-                cp_core_top = self.hhe_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore]) # erg g^-1 K^-1
-                dmcore_dt_garaud = - sqrt_tau_erosion * alpha_core_top * leff[luminosity_erosion_option] / cp_core_top # g s^-1
+                cp_hhe_core_top = self.hhe_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore])
+                cp_z_core_top = self.z_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+                cp_core_top = 0.5 *  cp_hhe_core_top + 0.5 * cp_z_core_top # erg g^-1 K^-1
+                # print 'cp for gas, z, 50/50 mix', cp_hhe_core_top, cp_z_core_top, cp_core_top
+                dmcore_dt_garaud = - gammainv_erosion * alpha_core_top * leff[luminosity_erosion_option] / cp_core_top # g s^-1
                 
                 self.history['dmcore_dt_guillot'][step] = dmcore_dt_guillot # g s^-1
                 self.history['int_dmcore_dt_guillot'][step] = trapz(self.history['dmcore_dt_guillot'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
+                self.history['dmcore_dt_guillot_alternate'][step] = dmcore_dt_guillot_alternate
+                self.history['int_dmcore_dt_guillot_alternate'][step] = trapz(self.history['dmcore_dt_guillot_alternate'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
                 
                 self.history['dmcore_dt_garaud'][step] = dmcore_dt_garaud # g s^-1
                 self.history['int_dmcore_dt_garaud'][step] = trapz(self.history['dmcore_dt_garaud'][:step], dx=self.history['dt_yr'][1:step]*const.secyear) # g
@@ -1139,7 +1154,8 @@ class Evolver:
             plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')        
         
     def save_profile(self, outfile, save_gyre_model_with_profile=True,
-                    smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False):
+                    smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False,
+                    omit_brunt_composition_term=False):
             
         # try to be smart about output filenames        
         if '.profile' in outfile and '.gyre' in outfile:
@@ -1179,7 +1195,13 @@ class Evolver:
                 dummy_epsilon_t = 0.
                 dummy_epsilon_rho = 0.
             
-                brunt_n2_for_gyre_model = np.copy(self.brunt_n2)
+                
+                if omit_brunt_composition_term:
+                    assert not erase_y_discontinuity_from_brunt, 'set omit_brunt_composition_term or erase_y_discontinuity_from_brunt, not both'
+                    assert not erase_z_discontinuity_from_brunt, 'set omit_brunt_composition_term or erase_z_discontinuity_from_brunt, not both'
+                    brunt_n2_for_gyre_model = np.copy(self.brunt_n2_thermal)
+                else:
+                    brunt_n2_for_gyre_model = np.copy(self.brunt_n2)                    
             
                 if erase_y_discontinuity_from_brunt:
                     assert self.k_shell_top > 0, 'no helium-rich shell, and thus no y discontinuity to erase.'
@@ -1187,13 +1209,14 @@ class Evolver:
             
                 if erase_z_discontinuity_from_brunt:
                     assert self.kcore > 0, 'no core, and thus no z discontinuity to erase.'
+                    brunt_n2_for_gyre_model = np.copy(self.brunt_n2)
                     if self.kcore == 1:
                         brunt_n2_for_gyre_model[self.kcore] = 0.
                     else:
                         brunt_n2_for_gyre_model[self.kcore] = self.brunt_n2[self.kcore - 1]
             
                 if smooth_brunt_n2_std:
-                    brunt_n2_for_gyre_model = self.smooth(self.brunt_n2, smooth_brunt_n2_std, type='gaussian')
+                    brunt_n2_for_gyre_model = self.smooth(brunt_n2_for_gyre_model, smooth_brunt_n2_std, type='gaussian')
                 
                 if add_rigid_rotation:
                     omega = add_rigid_rotation
