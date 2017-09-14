@@ -76,7 +76,6 @@ class Evolver:
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
         self.phase = lorenzen.hhe_phase_diagram(extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
-                                          
                            
         self.mesh_func_type = mesh_func_type
         
@@ -117,13 +116,7 @@ class Evolver:
             return 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
         else:
             raise ValueError('mesh function type %s not recognized' % self.mesh_func_type)
-    
-
-    def getMixDensity_daniel(self, entropy, pressure, z):
-        '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
-        return 1. / ((1. - z) / 10 ** self.logrho_on_solar_isentrope((entropy,np.log10(pressure))) +
-                   z / 10 ** self.getRockIceDensity((np.log10(pressure))))
-        
+            
     # when building non-isentropic models [for instance, a grad(P, T, Y, Z)=grada(P, T, Y, Z) model
     # with Y, Z functions of depth so that entropy is non-uniform], want to be able to get density 
     # as a function of these same independent variables P, T, Y, Z.
@@ -169,166 +162,6 @@ class Evolver:
         rho_z = self.get_rho_z(logp, logt)
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
-
-    def static_solar_adiabat(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
-        '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
-        # lagrangian grid
-        structure = self.workingMemory
-        self.m = mass = mtot * const.mjup * \
-            np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
-        kcore = coreBin = int(np.where(mcore * const.mearth <= mass)[0][0])
-        dm = dMass = np.diff(mass)
-        q = np.zeros(self.nz)        
-        # guess initial radius based on an isobar at a ballpark pressure of 1 Mbar
-        self.p[:] = 1e12
-        # density from eos
-        self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-        self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-        # continuity equation
-        q[0] = 0.
-        q[1:] = 3. * dm / 4 / np.pi / self.rho[1:] # something like the volume of a constant-density sphere - what is this again, daniel?
-        self.r = np.cumsum(q) ** (1. / 3)
-
-        # Get converged structure through relaxation method
-        something_like_dp = np.zeros_like(self.p)
-        oldRadii = (0, 0, 0)
-        for iteration in xrange(500):
-            # hydrostatic equilibrium
-            something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-            self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
-            self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-            self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-            q[0] = 0.
-            q[1:] = 3. * dm / 4 / np.pi / self.rho[1:]
-            self.r = np.cumsum(q) ** (1. / 3)
-            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
-                break
-            if not np.isfinite(self.r[-1]):
-                return (np.nan, np.nan)
-            oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
-        else:
-            return (np.nan, np.nan)
-                    
-        self.rtot = self.r[-1]
-        self.surface_g = const.cgrav * mtot * const.mjup / self.rtot ** 2.
-        something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-        self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6
-        self.t[:kcore] = 0.
-        self.t[kcore:] = 10 ** self.logt_on_solar_isentrope((entropy, np.log10(self.p[kcore:])))
-        
-        # linear extrapolate in logp to get a 10-bar temperature
-        f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
-        logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
-        self.t10 = 10 ** logt10   
-        self.entropy = entropy
-        
-        dSdE = 1. / trapz(self.t, dx=dm)
-        return self.r[-1], dSdE
-
-    def equilibrium_y_profile(self, phase_t_offset, verbose=False, show_timing=False, minimum_y_is_envelope_y=False, hydrogen_transition_pressure=None):
-        '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
-        may require a nearly pure-helium layer atop the core.'''
-        p = self.p * 1e-12 # Mbar
-        k1 = np.where(p > hydrogen_transition_pressure)[0][-1]
-        ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
-        
-        if np.isnan(ymax1) or self.y[k1] < ymax1:
-            if verbose: print 'first point at P > P_trans = %1.1f Mbar is stable to demixing. Y = %1.4f, Ymax = %1.4f' % (hydrogen_transition_pressure, self.y[k1], ymax1)
-            self.nz_gradient = 0
-            self.nz_shell = 0
-            return self.y
-            
-        self.ystart = np.copy(self.y)
-        yout = np.copy(self.y)
-        yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
-        if verbose: print 'demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1]
-                
-        t0 = time.time()
-        rainout_to_core = False
-        
-        # this can't go here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
-        # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
-        # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
-        # self.nz_gradient = 0 
-        # self.k_shell_top = 0
-        self.k_gradient_top = k1
-        for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > P_trans
-            t1 = time.time()
-            ymax = self.phase.ymax_lhs(p[k], self.t[k] - phase_t_offset) # April 12 2017: phase_t_offset here rather than in Lorenzen module
-            if np.isnan(ymax):
-                raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
-            if show_timing: print 'zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0)
-            if yout[k] < ymax:
-                if verbose: print 'stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1
-                break
-            self.nz_gradient = 0
-            self.k_shell_top = 0
-            ystart = yout[k]
-            yout[k] = ymax
-            
-            if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
-                yout[k:] = yout[k]
-            
-            # difference between initial he mass and current proposed he mass above and including this zone
-            # must be in the deeper interior.
-            he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
-            enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
-            if not enclosed_envelope_mass > 0: # at core boundary
-                rainout_to_core = True
-                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-                # assert this "should"
-                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: gradient reaches core'
-                kbot = k
-                break
-            y_interior = he_mass_missing_above / enclosed_envelope_mass
-            if y_interior > 1:
-                # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
-                # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
-                # the global helium mass.
-                msg = 'would need Y > 1 in inner homog region; rainout to core.'
-                if verbose: print msg
-                rainout_to_core = True
-                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-                # assert this "should"
-                # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
-                kbot = k
-                break
-            else:        
-                yout[self.kcore:k] = y_interior
-                self.nz_gradient += 1
-                
-        if verbose: print 'he gradient over %i zones. rainout to core %s' % (self.nz_gradient, rainout_to_core)
-        if show_timing: print 't0 + %f seconds' % (time.time() - t0)
-                
-        if verbose: print self.mhe, np.dot(yout[self.kcore:], self.dm[self.kcore-1:]), np.dot(yout[self.kcore:self.nz-1], self.dm[self.kcore:])
-                        
-        if rainout_to_core:
-            # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.  
-            # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
-            if verbose: print '%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe')
-            for k in np.arange(kbot, self.nz):
-                yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
-                # should fix following line for the case where there is no core
-                try:
-                    tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
-                except:
-                    raise RuntimeError('equilibrium_y_profile fails when have rainout to core and no core. (fixable.)')
-                if verbose: print '%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe)
-                if tentative_total_he_mass >= self.mhe:
-                    if verbose: print 'tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe
-                    rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
-                    if verbose: print 'satisfied he mass conservation to a relative precision of %f' % rel_mhe_error
-                    # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
-                    self.nz_shell = k - self.kcore
-                    self.k_shell_top = k
-                    break
-                    
-        self.have_rainout = self.nz_gradient > 0
-        self.have_rainout_to_core = rainout_to_core
-        if rainout_to_core: assert self.k_shell_top
-                 
-        return yout
-
 
     def static(self, mtot=1., t1=165., yenv=0.27, zenv=0., mcore=0.,
                     zenv_inner=None,
@@ -383,26 +216,22 @@ class Evolver:
         self.zenv_outer = self.zenv # in the three-layer case, zenv is effectively an alias for zenv_outer
         
         # initialize lagrangian mesh.
-        # hitch: self.mcore not necessarily mcore specified as argument. 
-        #       fix by putting remainder (typically ~tenth of an earth mass) into envelope?
+        # because of discretization, self.mcore not necessarily mcore specified as argument.
         #
-        # solution a: just move the nearest mesh point to the transition to the core mass exactly
-        #
-        # t = np.linspace(0, np.pi / 2, self.nz)
-        # self.m = mtot * const.mjup * self.mesh_func(t) # grams
-        # self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0]
-        # self.m[kcore] = mcore * const.mearth
-        # self.mcore = mcore
-        #
-        # solution b: add a new mesh point at mcore (total number of zones is now nz + 1).
+        # solution for now: add a new mesh point at mcore (total number of zones is now nz + 1).
         # note: structure arrays are initialized in Evolve.__init__ with length nz.
         # so initialize self.m with length < nz before adding zones such that total is nz.
         #
-        t = np.linspace(0, np.pi / 2, self.nz - 1)
-        self.m = mtot * const.mjup * self.mesh_func(t) # grams
-        self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
-        self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
-        self.kcore += 1
+        if mcore > 0.:
+            t = np.linspace(0, np.pi / 2, self.nz - 1)
+            self.m = mtot * const.mjup * self.mesh_func(t) # grams
+            self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
+            self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
+            self.kcore += 1
+        else:
+            t = np.linspace(0, np.pi / 2, self.nz)
+            self.m = mtot * const.mjup * self.mesh_func(t) # grams   
+            self.kcore = 0         
         self.mcore = mcore
         
         self.grada = np.zeros_like(self.m)
@@ -693,8 +522,7 @@ class Evolver:
         
         self.g = const.cgrav * self.m / self.r ** 2
 
-        # this is a structure derivative, not a thermodynamic one.
-        # wherever the profile is a perfect adiabat, this is also gamma1.
+        # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
         self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
 
         self.gamma1 = np.zeros_like(self.p)
@@ -789,7 +617,6 @@ class Evolver:
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
         
-        
         self.brunt_b = self.brunt_b_mhm
         self.brunt_n2 = self.brunt_n2_mhm
         self.brunt_n2_thermal = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt)
@@ -836,6 +663,110 @@ class Evolver:
 
                         
         return self.iters
+
+    def equilibrium_y_profile(self, phase_t_offset, verbose=False, show_timing=False, minimum_y_is_envelope_y=False, hydrogen_transition_pressure=None):
+        '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
+        may require a nearly pure-helium layer atop the core.'''
+        p = self.p * 1e-12 # Mbar
+        k1 = np.where(p > hydrogen_transition_pressure)[0][-1]
+        ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
+        
+        if np.isnan(ymax1) or self.y[k1] < ymax1:
+            if verbose: print 'first point at P > P_trans = %1.1f Mbar is stable to demixing. Y = %1.4f, Ymax = %1.4f' % (hydrogen_transition_pressure, self.y[k1], ymax1)
+            self.nz_gradient = 0
+            self.nz_shell = 0
+            return self.y
+            
+        self.ystart = np.copy(self.y)
+        yout = np.copy(self.y)
+        yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
+        if verbose: print 'demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1]
+                
+        t0 = time.time()
+        rainout_to_core = False
+        
+        # this can't go here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
+        # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
+        # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
+        # self.nz_gradient = 0 
+        # self.k_shell_top = 0
+        self.k_gradient_top = k1
+        for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > P_trans
+            t1 = time.time()
+            ymax = self.phase.ymax_lhs(p[k], self.t[k] - phase_t_offset) # April 12 2017: phase_t_offset here rather than in Lorenzen module
+            if np.isnan(ymax):
+                raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
+            if show_timing: print 'zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0)
+            if yout[k] < ymax:
+                if verbose: print 'stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1
+                break
+            self.nz_gradient = 0
+            self.k_shell_top = 0
+            ystart = yout[k]
+            yout[k] = ymax
+            
+            if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
+                yout[k:] = yout[k]
+            
+            # difference between initial he mass and current proposed he mass above and including this zone
+            # must be in the deeper interior.
+            he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
+            enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
+            if not enclosed_envelope_mass > 0: # at core boundary
+                rainout_to_core = True
+                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
+                # assert this "should"
+                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: gradient reaches core'
+                kbot = k
+                break
+            y_interior = he_mass_missing_above / enclosed_envelope_mass
+            if y_interior > 1:
+                # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
+                # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
+                # the global helium mass.
+                msg = 'would need Y > 1 in inner homog region; rainout to core.'
+                if verbose: print msg
+                rainout_to_core = True
+                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
+                # assert this "should"
+                # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
+                kbot = k
+                break
+            else:        
+                yout[self.kcore:k] = y_interior
+                self.nz_gradient += 1
+                
+        if verbose: print 'he gradient over %i zones. rainout to core %s' % (self.nz_gradient, rainout_to_core)
+        if show_timing: print 't0 + %f seconds' % (time.time() - t0)
+                
+        if verbose: print self.mhe, np.dot(yout[self.kcore:], self.dm[self.kcore-1:]), np.dot(yout[self.kcore:self.nz-1], self.dm[self.kcore:])
+                        
+        if rainout_to_core:
+            # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.  
+            # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
+            if verbose: print '%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe')
+            for k in np.arange(kbot, self.nz):
+                yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
+                # should fix following line for the case where there is no core
+                try:
+                    tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
+                except:
+                    raise RuntimeError('equilibrium_y_profile fails when have rainout to core and no core. (fixable.)')
+                if verbose: print '%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe)
+                if tentative_total_he_mass >= self.mhe:
+                    if verbose: print 'tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe
+                    rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
+                    if verbose: print 'satisfied he mass conservation to a relative precision of %f' % rel_mhe_error
+                    # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
+                    self.nz_shell = k - self.kcore
+                    self.k_shell_top = k
+                    break
+                    
+        self.have_rainout = self.nz_gradient > 0
+        self.have_rainout_to_core = rainout_to_core
+        if rainout_to_core: assert self.k_shell_top
+                 
+        return yout
                 
     def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
                 include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None,
@@ -1188,3 +1119,62 @@ class Evolver:
             print 'wrote %i zones to %s' % (k, outfile)
             
                                     
+    def getMixDensity_daniel(self, entropy, pressure, z):
+        '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
+        return 1. / ((1. - z) / 10 ** self.logrho_on_solar_isentrope((entropy,np.log10(pressure))) +
+                   z / 10 ** self.getRockIceDensity((np.log10(pressure))))
+
+    def static_solar_adiabat(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
+        '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
+        # lagrangian grid
+        structure = self.workingMemory
+        self.m = mass = mtot * const.mjup * \
+            np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
+        kcore = coreBin = int(np.where(mcore * const.mearth <= mass)[0][0])
+        dm = dMass = np.diff(mass)
+        q = np.zeros(self.nz)        
+        # guess initial radius based on an isobar at a ballpark pressure of 1 Mbar
+        self.p[:] = 1e12
+        # density from eos
+        self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
+        self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
+        # continuity equation
+        q[0] = 0.
+        q[1:] = 3. * dm / 4 / np.pi / self.rho[1:] # something like the volume of a constant-density sphere - what is this again, daniel?
+        self.r = np.cumsum(q) ** (1. / 3)
+
+        # Get converged structure through relaxation method
+        something_like_dp = np.zeros_like(self.p)
+        oldRadii = (0, 0, 0)
+        for iteration in xrange(500):
+            # hydrostatic equilibrium
+            something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
+            self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
+            self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
+            self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
+            q[0] = 0.
+            q[1:] = 3. * dm / 4 / np.pi / self.rho[1:]
+            self.r = np.cumsum(q) ** (1. / 3)
+            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
+                break
+            if not np.isfinite(self.r[-1]):
+                return (np.nan, np.nan)
+            oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
+        else:
+            return (np.nan, np.nan)
+                    
+        self.rtot = self.r[-1]
+        self.surface_g = const.cgrav * mtot * const.mjup / self.rtot ** 2.
+        something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
+        self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6
+        self.t[:kcore] = 0.
+        self.t[kcore:] = 10 ** self.logt_on_solar_isentrope((entropy, np.log10(self.p[kcore:])))
+        
+        # linear extrapolate in logp to get a 10-bar temperature
+        f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
+        logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
+        self.t10 = 10 ** logt10   
+        self.entropy = entropy
+        
+        dSdE = 1. / trapz(self.t, dx=dm)
+        return self.r[-1], dSdE
