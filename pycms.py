@@ -114,9 +114,6 @@ def run_cms_for_model(ev, nz, rot=None, output_folder=None, relax_qrot=True):
     # CMSPlanet wants descending radii
     si = si[::-1]
     rhoi = rhoi[::-1]
-    # print '%10s' % 'si', ('%10g ' * nz) % tuple(si)
-    # print '%10s' % 'rhoi', ('%10g ' * nz) % tuple(rhoi)
-    # print
 
     # pretend si are equatorial radii for the initial relaxation
     ai = matlab.double(list(si))
