@@ -5,7 +5,7 @@ from scipy.interpolate import RegularGridInterpolator
 class eos:
     
     def __init__(self):
-        path = '/Users/chris/Dropbox/planet_models/reos/reos_water_pt.dat'
+        path = 'data/reos_water_pt.dat'
         
         # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 
@@ -118,27 +118,3 @@ class eos:
         # print 'cp, cv', cp, cv
         # print
         return cp
-
-    # def get_dlogrho_dlogt_const_p(self, logp, logt):
-    #     return self.get_chit(logp, logt) / self.get_chirho(logp, logt)
-    #
-    # def get_dlogrho_dlogp_const_t(self, logp, logt):
-    #     return 1. / self.get_chirho(logp, logt)
-
-
-        
-    # def get_gamma1(self, logp, logt, f=5e-1):
-    #     '''take centered differences to compute dlogp/dlogrho at constant entropy.
-    #     uses the version of this module that takes rho, s as the thermodynamic basis.'''
-    #     logrho = self.get_logrho(logp, logt)
-    #     logs = self.get_logs(logp, logt)
-    #     import reos_rhos
-    #     rhos_eos = reos_rhos.eos()
-    #
-    #     logrho_hi = logrho + np.log10(1. + f)
-    #     logrho_lo = logrho + np.log10(1. - f)
-    #     logp_hi = rhos_eos.get_logp(logrho_hi, logs)
-    #     logp_lo = rhos_eos.get_logp(logrho_lo, logs)
-    #
-    #     return (logp_hi - logp_lo) / (logrho_hi - logrho_lo)
-    #

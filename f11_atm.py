@@ -8,8 +8,7 @@ class atm:
         assert planet not in ['u', 'n'], 'Uranus and Neptune not implemented yet.'
         self.planet = planet
         names = 'g', 'teff', 't10', 'teff_dim_sun', 't10_dim_sun', 'tint'
-        module_dir = '/Users/chris/Dropbox/planet_models/ongp'
-        self.data = np.genfromtxt('%s/data/f11_atm_%s.dat' % (module_dir, self.planet), delimiter='&', names=names)
+        self.data = np.genfromtxt('data/f11_atm_%s.dat' % self.planet, delimiter='&', names=names)
         for i in np.arange(0, 96, 12):
             self.data['g'][i+1:i+12] = self.data['g'][i]
             

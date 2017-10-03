@@ -9,18 +9,25 @@ import time
 
 # this module is adapted from Daniel P. Thorngren's general-purpose giant planet
 # modelling code circa 2016ApJ...831...64T. 
+#
 # the main modifications were the implementation of
+#
 # (1) the complete Saumon, Chabrier, & van Horn (SCvH-i; 1995ApJS...99..713S) 
 #     equation of state for hydrogen and helium, rather than just solar-Y adiabats;
+#
 # (2) the Fortney+2011 model atmospheres for Jupiter and Saturn (todo: implement
 #     the Uranus and Neptune tables also);
+#
 # (3) the Lorenzen+2011 ab initio phase diagram for hydrogen and helium, obtained
 #     courtesy of Nadine Nettelmann;
+#
 # (4) the Thompson ANEOS for heavy elements, including water, water ice, iron, 
 #     serpentine, and dunite;
+#
 # (5) the Rostock eos (REOS) for water, also obtained courtesy of Nadine Nettelmann.
 #     at present won't work for cool planet models since it only covers T > 1000 K; 
 #     blends with aneos water at low T. references: 2008ApJ...683.1217N, 2009PhRvB..79e4107F
+#     warn that the entropies 
 
 
 class evol:
@@ -50,6 +57,7 @@ class evol:
                 (solar_isentropes['entropy'], solar_isentropes['pressure']), np.log10(solar_isentropes['temperature']))
                           
         elif eos == 'militzer':
+            # this would only be good for a jupiter-like helium fraction anyway
             raise NotImplementedError('no militzer EOS yet.')
         else:
             raise NotImplementedError("this EOS name is not recognized.")
@@ -113,6 +121,7 @@ class evol:
         elif self.mesh_func_type == 'sin_alt':
             return 1. - np.sin(np.pi / 2 - t) ** 3
         elif self.mesh_func_type == 'tanh':
+            # only choice among these that gives decent resolution closer to surface
             return 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
         else:
             raise ValueError('mesh function type %s not recognized' % self.mesh_func_type)
@@ -127,7 +136,7 @@ class evol:
         
         if self.z_eos_option == 'reos water':
             # if using reos water, extend down to T < 1000 K using aneos water.
-            # for this, mask to find the low T part.            
+            # for this, mask to find the low-T part.            
             logp_high_t = logp[logt >= 3.]
             logt_high_t = logt[logt >= 3.]
 
@@ -163,20 +172,20 @@ class evol:
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
 
-    def static(self, mtot=1., t1=165., yenv=0.27, zenv=0., mcore=0.,
-                    zenv_inner=None,
-                    yenv_inner=None,
-                    include_he_immiscibility=False,
-                    phase_t_offset=0,
-                    minimum_y_is_envelope_y=False,
-                    rrho_where_have_helium_gradient=None,
-                    erase_z_discontinuity_from_brunt=False,
-                    include_core_entropy=False,
-					hydrogen_transition_pressure=1., # Mbar
-                    core_prho_relation=None,
+    def static(self, mtot=1., t1=165., yenv=0.27, zenv=0., mcore=0., # mtot specified in Jupiter masses; mcore in Earth masses. yenv and zenv are mass fractions for helium and heavies respectively.
+                    zenv_inner=None, # if None, envelope has uniform Z equal to zenv
+                    yenv_inner=None, # if None, envelope has uniform Y equal to yenv
+                    include_he_immiscibility=False, # whether to move helium around according to a H-He phase diagram
+                    phase_t_offset=0, # temperature offset for the phase diagram, only used if include_he_immiscibility
+                    minimum_y_is_envelope_y=False, # hack for dealing with non-monotone Y profiles resulting from phase diagram, only used if include_he_immiscibility
+                    rrho_where_have_helium_gradient=None, # superadiabaticity (parameterized as the density ratio R_rho) to assume wherever there's a stabilizing composition gradient
+                    erase_z_discontinuity_from_brunt=False, # ignore Z discontinuity when calculating buoyancy frequency's composition term
+                    include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important for every problem
+					hydrogen_transition_pressure=1., # pressure to assume for the molecular-metallic interface (where Y or Z discontinuities might exist, or where helium gradient might start)
+                    core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a newer Z eos
                     verbose=False):
-        '''build a hydrostatic model with a given total mass mtot, 10-bar temperature t10, envelope helium mass fraction yenv,
-            envelope heavy element mass fraction zenv, and ice/rock core mass mcore. returns the number of iterations taken before 
+        '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
+            envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before 
             convergence, or -1 for failure to converge.'''
                     
         if type(mtot) is str:
@@ -185,7 +194,7 @@ class evol:
             elif mtot[0] == 's':
                 mtot = const.msat / const.mjup
             else:
-                raise ValueError("if type(mtot) is str, first element must be j or s")
+                raise ValueError("if type(mtot) is str, first element must be j, s")
         
         # model atmospheres
         if 0.9 <= mtot <= 1.1:
@@ -211,7 +220,7 @@ class evol:
                 raise ValueError('atm_option %s not recognized.' % self.atm_option)
             self.teq = 81.3
         else:
-            raise ValueError('model is not within 10 percent of either Jupiter- or Saturn- mass; implement a general model atmosphere option.')        
+            raise ValueError('model is not within 10 percent of either Jupiter- or Saturn- mass; surface is bound to run off J or S tables. implement a general model atmosphere option.')
         
         self.core_prho_relation = core_prho_relation # if None (default), use z_eos_option
         
@@ -223,7 +232,6 @@ class evol:
         self.yenv_inner = yenv_inner
         self.yenv_outer = self.yenv
         
-        
         # initialize lagrangian mesh.
         # because of discretization, self.mcore not necessarily mcore specified as argument.
         #
@@ -231,13 +239,14 @@ class evol:
         # note: structure arrays are initialized in Evolve.__init__ with length nz.
         # so initialize self.m with length < nz before adding zones such that total is nz.
         #
+        assert mcore * const.mearth < mtot * const.mjup, 'core mass must be < total mass.'
         if mcore > 0.:
             t = np.linspace(0, np.pi / 2, self.nz - 1)
             self.m = mtot * const.mjup * self.mesh_func(t) # grams
             self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
             self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
             self.kcore += 1
-        else:
+        else: # no need for extra precautions
             t = np.linspace(0, np.pi / 2, self.nz)
             self.m = mtot * const.mjup * self.mesh_func(t) # grams   
             self.kcore = 0         
@@ -274,8 +283,7 @@ class evol:
             self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
         self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), yenv) # for first pass, no Z in envelope
         
-                                        
-        self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. must conserve when later adjusting Y distribution
+        self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. for reference if later adjusting Y distribution
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
                 
         # continuity equation
@@ -289,9 +297,9 @@ class evol:
         dp = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4
         self.p[-1] = 1e6
         self.p[:-1] = np.cumsum(dp[::-1])[::-1] + 1e6
-                                
-        self.t[-1] = t1
-                                
+                       
+        # set surface temperature and integrate the adiabat inward to get temperature         
+        self.t[-1] = t1         
         self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
         for k in np.arange(self.nz)[::-1]:
             if k == self.nz - 1: continue
@@ -302,8 +310,7 @@ class evol:
 
         self.t[:self.kcore] = self.t[self.kcore] # isothermal at temperature of core-mantle boundary
         
-                        
-        # identify molecular-metallic transition
+        # identify molecular-metallic transition. not relevant for U, N
         self.ktrans = np.where(self.p >= hydrogen_transition_pressure * 1e12)[0][-1]
 
         if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope.
@@ -350,8 +357,6 @@ class evol:
             dp = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4
             self.p[-1] = 1e6
             self.p[:-1] = self.p[-1] + np.cumsum(dp[::-1])[::-1]
-
-            # print iteration, self.p[0], self.r[-1]
                         
             # identify molecular-metallic transition
             self.ktrans = np.where(self.p >= hydrogen_transition_pressure * 1e12)[0][-1]
@@ -445,7 +450,7 @@ class evol:
                         
         if verbose: print 'converged homogeneous model after %i iterations.' % self.iters
 
-        if include_he_immiscibility: # repeat iterations, now including the phase diagram calculation
+        if include_he_immiscibility: # repeat iterations, now including the phase diagram calculation (if modeling helium rain)
             oldRadii = (0, 0, 0)
             for iteration in xrange(self.max_iters_for_static_model):
                 self.iters_immiscibility = iteration + 1
@@ -485,7 +490,6 @@ class evol:
                     assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform 
                                         
                     self.gradt += rrho_where_have_helium_gradient * self.brunt_b
-                    # self.gradt[kcore:] = self.grada[kcore:] + rrho_where_have_helium_gradient * self.brunt_b[kcore:]
                                                 
                 # print 'integrating for T profile'
                 self.dlogp = -1. * np.diff(np.log10(self.p))
@@ -500,8 +504,8 @@ class evol:
                         raise RuntimeError('got infinite temperature in integration of gradT.')
                     self.t[k] = 10 ** logt
 
-                print 'WARNING: calling equilibrium_y_profile. check to see that this routine sees the correct total helium abundance.'
-                print 'changes were made to support a Y jump at the transition; initial total he mass not necessarily stored correctly.'
+                print 'WARNING: calling equilibrium_y_profile. check to see that this routine sees the correct total helium mass.'
+                print 'changes were made c. september 2017 to support a Y jump at the transition; initial total he mass not necessarily stored correctly.'
                 self.y = self.equilibrium_y_profile(phase_t_offset, minimum_y_is_envelope_y=minimum_y_is_envelope_y, hydrogen_transition_pressure=hydrogen_transition_pressure)
 
                 # set density in core
@@ -735,11 +739,18 @@ class evol:
         self.mf = self.m / self.mtot
         self.rf = self.r / self.rtot  
         
-        # this is written assuming two-layer constant Z: Z uniform in envelope, Z=1 in core. 
-        self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
-        self.mz = self.mz_env + self.mcore * const.mearth
-        self.bulk_z = self.mz / self.mtot
+                
+        if self.zenv_inner: # two-layer envelope in terms of Z
+            self.mz_env_outer = np.dot(self.z[ktrans:], self.dm[ktrans:])
+            self.mz_env_inner = np.dot(self.z[kcore:ktrans], self.dm[kcore:ktrans])
+            self.mz_core = np.dot(self.z[:kcore], self.dm[:kcore])
+            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+        else:
+            # Z uniform in envelope, Z=1 in core. 
+            self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
+            self.mz = self.mz_env + self.mcore * const.mearth
         
+        self.bulk_z = self.mz / self.mtot
         self.ysurf = self.y[-1]
         
         # axial moment of inertia, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
@@ -750,6 +761,8 @@ class evol:
                         
         return self.iters
         
+    # these implement the analytic p(rho) relations for "rock" and "ice" mixtures from Hubbard & Marley 1989
+
     def p_of_rho_hm89_rock(self, rho):
         return rho ** 4.406 * np.exp(-6.579 - 0.176 * rho + 0.00202 * rho ** 2.) # Mbar
 
@@ -874,24 +887,37 @@ class evol:
                  
         return yout
                 
-    def run(self,mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t10=3e3, min_t10=200., nsteps=100, stdout_interval=1,
-                include_he_immiscibility=False, phase_t_offset=0., output_prefix=None, minimum_y_is_envelope_y=False, rrho_where_have_helium_gradient=None,
-                max_age=None, include_core_entropy=False, gammainv_erosion=1e-1, luminosity_erosion_option='first_convective_cell',
+    def run(self, mtot=1., yenv=0.27, zenv=0., mcore=10., starting_t1=2e3, min_t1=160., nsteps=100,
+                stdout_interval=1, # output controls
+                output_prefix=None,
+                include_he_immiscibility=False, # helium rain 
+                phase_t_offset=0., 
+                minimum_y_is_envelope_y=False, 
+                rrho_where_have_helium_gradient=None,
+                max_age=None, # general
+                include_core_entropy=False, 
+                gammainv_erosion=1e-1, # for core erosion rate estimates
+                luminosity_erosion_option='first_convective_cell',
                 timesteps_ease_in=None):
+                
+        '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
+        using the energy equation dL/dm = -T * ds/dt where L is the intrinsic luminosity, m is the mass coordinate, T is the temperature,
+        s is the specific entropy, and t is time.
+        important inputs are starting_t1 (say 1, 2, 3 thousand K) and min_t1 (put just beneath a realistic t1 for J/S/U/N or else it'll run off F11 atm tables.)
+        for now ignores the possibility of having two-layer envelope in terms of Y or Z'''
+                
         import time
-        assert 0. <= mcore*const.mearth <= mtot*const.mjup,\
-            "invalid core mass %f for total mass %f" % (mcore, mtot * const.mjup / const.mearth)
-        menv = mtot * const.mjup - mcore * const.mearth
         assert 0. <= zenv <= 1., 'invalid envelope z %f' % zenv
 
+        # set vector of t1s to compute
         if timesteps_ease_in:
             # make the first steps_to_ease_in steps more gradual in terms of d(dt)/d(step).
+            # only important if you're interested in resolving evolution at very early times (1e3 or 1e4 years).
             i = np.arange(nsteps)
-            # target_t10s = 0.5 * (starting_t10 - min_t10) * (1. + np.tanh((i - nsteps / 2) / 2. / np.pi))[::-1] + min_t10
-            target_t10s = 0.5 * (starting_t10 - min_t10) * (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + min_t10
+            t1s = 0.5 * (starting_t1 - min_t1) * (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + min_t1
         else:
-            target_t10s = np.logspace(np.log10(min_t10), np.log10(starting_t10), nsteps)[::-1]
-        # return target_t10s
+            t1s = np.logspace(np.log10(min_t1), np.log10(starting_t1), nsteps)[::-1]
+        # return t1s
 
         self.history = {}
         self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
@@ -900,19 +926,19 @@ class evol:
         for name in self.history_columns:
             # allocate history arrays with the length of steps we expect.
             # bad design because if the run terminates early, rest of history
-            # will be filled with zeroes.
-            self.history[name] = np.zeros_like(target_t10s)
+            # will be filled with zeroes. keep in mind.
+            self.history[name] = np.zeros_like(t1s)
 
         keep_going = True
         previous_entropy = 0
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 'tgt_t10', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
+        stdout_columns = 'step', 'iters', 't1', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
         start_time = time.time()
         print ('%12s ' * len(stdout_columns)) % stdout_columns
-        for step, target_t10 in enumerate(target_t10s):
+        for step, t1 in enumerate(t1s):
             try:
-                self.static(mtot=mtot, t10=target_t10, yenv=yenv, zenv=zenv, mcore=mcore, 
+                self.static(mtot=mtot, t1=t1, yenv=yenv, zenv=zenv, mcore=mcore, 
                                 include_he_immiscibility=include_he_immiscibility,
                                 phase_t_offset=phase_t_offset, 
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y, 
@@ -928,7 +954,8 @@ class evol:
                     print 'wrote history data to %s.history' % output_prefix
                 return self.history
             dt_yr = 0.
-            if step > 0: # have a timestep to speak of
+            # this is the piece daniel now uses scipy.integrate.odeint to integrate instead
+            if step > 0: # there is a timestep to speak of
                 delta_s = self.entropy - previous_entropy
                 delta_s *= const.kb / const.mp # now erg K^-1 g^-1
                 assert self.lint > 0, 'found negative intrinsic luminosity.'
@@ -963,7 +990,7 @@ class evol:
                 self.history['mz'][step] = self.mz
                 self.history['bulk_z'][step] = self.bulk_z
                 
-                # estimate of core erosion rate following Guillot+2003 chapter eq. 14
+                # estimate of core erosion rate following Guillot+2003 chapter eq. 14. see Moll, Garaud, Mankovich, Fortney ApJ 2017
                 pomega = 0.3 # the order-unity factor from integration
                 hp_core_top = self.pressure_scale_height[self.kcore + 1]
                 r_first_convective_cell = self.r[self.kcore + 1] + hp_core_top # first convective cell extends ~ from core top to this radius
@@ -1057,8 +1084,8 @@ class evol:
                     raise
                 
             if step % stdout_interval == 0 or step == nsteps - 1: 
-                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
-                    (step, self.iters, target_t10, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+                print '%12i %12i %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
+                    (step, self.iters, self.t1, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
 
             previous_entropy = self.entropy
             
@@ -1070,6 +1097,7 @@ class evol:
         return self.history
         
     def smooth(self, array, std, type='flat'):
+        '''moving gaussian filter to smooth an array. wrote this to artificially smooth brunt composition term for seismology purposes.'''
         width = 10 * std
         from scipy.signal import gaussian
         weights = gaussian(width, std=std)
@@ -1224,63 +1252,64 @@ class evol:
             
             print 'wrote %i zones to %s' % (k, outfile)
             
+    # routines from daniel's version using solar-Y isentropes
                                     
-    def getMixDensity_daniel(self, entropy, pressure, z):
-        '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
-        return 1. / ((1. - z) / 10 ** self.logrho_on_solar_isentrope((entropy,np.log10(pressure))) +
-                   z / 10 ** self.getRockIceDensity((np.log10(pressure))))
-
-    def static_solar_adiabat(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
-        '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
-        # lagrangian grid
-        structure = self.workingMemory
-        self.m = mass = mtot * const.mjup * \
-            np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
-        kcore = coreBin = int(np.where(mcore * const.mearth <= mass)[0][0])
-        dm = dMass = np.diff(mass)
-        q = np.zeros(self.nz)        
-        # guess initial radius based on an isobar at a ballpark pressure of 1 Mbar
-        self.p[:] = 1e12
-        # density from eos
-        self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-        self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-        # continuity equation
-        q[0] = 0.
-        q[1:] = 3. * dm / 4 / np.pi / self.rho[1:] # something like the volume of a constant-density sphere - what is this again, daniel?
-        self.r = np.cumsum(q) ** (1. / 3)
-
-        # Get converged structure through relaxation method
-        something_like_dp = np.zeros_like(self.p)
-        oldRadii = (0, 0, 0)
-        for iteration in xrange(500):
-            # hydrostatic equilibrium
-            something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-            self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
-            self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-            self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-            q[0] = 0.
-            q[1:] = 3. * dm / 4 / np.pi / self.rho[1:]
-            self.r = np.cumsum(q) ** (1. / 3)
-            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
-                break
-            if not np.isfinite(self.r[-1]):
-                return (np.nan, np.nan)
-            oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
-        else:
-            return (np.nan, np.nan)
-                    
-        self.rtot = self.r[-1]
-        self.surface_g = const.cgrav * mtot * const.mjup / self.rtot ** 2.
-        something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-        self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6
-        self.t[:kcore] = 0.
-        self.t[kcore:] = 10 ** self.logt_on_solar_isentrope((entropy, np.log10(self.p[kcore:])))
-        
-        # linear extrapolate in logp to get a 10-bar temperature
-        f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
-        logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
-        self.t10 = 10 ** logt10   
-        self.entropy = entropy
-        
-        dSdE = 1. / trapz(self.t, dx=dm)
-        return self.r[-1], dSdE
+    # def getMixDensity_daniel(self, entropy, pressure, z):
+    #     '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
+    #     return 1. / ((1. - z) / 10 ** self.logrho_on_solar_isentrope((entropy,np.log10(pressure))) +
+    #                z / 10 ** self.getRockIceDensity((np.log10(pressure))))
+    #
+    # def static_solar_adiabat(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
+    #     '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
+    #     # lagrangian grid
+    #     structure = self.workingMemory
+    #     self.m = mass = mtot * const.mjup * \
+    #         np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
+    #     kcore = coreBin = int(np.where(mcore * const.mearth <= mass)[0][0])
+    #     dm = dMass = np.diff(mass)
+    #     q = np.zeros(self.nz)
+    #     # guess initial radius based on an isobar at a ballpark pressure of 1 Mbar
+    #     self.p[:] = 1e12
+    #     # density from eos
+    #     self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
+    #     self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
+    #     # continuity equation
+    #     q[0] = 0.
+    #     q[1:] = 3. * dm / 4 / np.pi / self.rho[1:] # something like the volume of a constant-density sphere - what is this again, daniel?
+    #     self.r = np.cumsum(q) ** (1. / 3)
+    #
+    #     # Get converged structure through relaxation method
+    #     something_like_dp = np.zeros_like(self.p)
+    #     oldRadii = (0, 0, 0)
+    #     for iteration in xrange(500):
+    #         # hydrostatic equilibrium
+    #         something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
+    #         self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
+    #         self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
+    #         self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
+    #         q[0] = 0.
+    #         q[1:] = 3. * dm / 4 / np.pi / self.rho[1:]
+    #         self.r = np.cumsum(q) ** (1. / 3)
+    #         if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
+    #             break
+    #         if not np.isfinite(self.r[-1]):
+    #             return (np.nan, np.nan)
+    #         oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
+    #     else:
+    #         return (np.nan, np.nan)
+    #
+    #     self.rtot = self.r[-1]
+    #     self.surface_g = const.cgrav * mtot * const.mjup / self.rtot ** 2.
+    #     something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
+    #     self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6
+    #     self.t[:kcore] = 0.
+    #     self.t[kcore:] = 10 ** self.logt_on_solar_isentrope((entropy, np.log10(self.p[kcore:])))
+    #
+    #     # linear extrapolate in logp to get a 10-bar temperature
+    #     f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
+    #     logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
+    #     self.t10 = 10 ** logt10
+    #     self.entropy = entropy
+    #
+    #     dSdE = 1. / trapz(self.t, dx=dm)
+    #     return self.r[-1], dSdE

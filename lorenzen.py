@@ -26,9 +26,8 @@ class hhe_phase_diagram:
     
     def __init__(self, order=3, smooth=0., t_offset=0., extrapolate_to_low_pressure=True):
         
-        module_dir = '/Users/chris/Dropbox/planet_models/ongp'
-        self.path_to_lhs_data = '%s/data/lorenzen_lhs.dat' % module_dir
-        self.path_to_rhs_data = '%s/data/lorenzen_rhs.dat' % module_dir
+        self.path_to_lhs_data = 'data/lorenzen_lhs.dat'
+        self.path_to_rhs_data = 'data/lorenzen_rhs.dat'
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         self.lhs_data = np.genfromtxt(self.path_to_lhs_data, names=self.columns)
         self.rhs_data = np.genfromtxt(self.path_to_rhs_data, names=self.columns)
