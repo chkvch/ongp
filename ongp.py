@@ -50,7 +50,7 @@ class evol:
                         
             # load isentrope tables so we can use isentropic P-T profiles at solar composition
             # as starting guesses before we tweak Y, Z distribution
-            solar_isentropes = np.load("/Users/chris/Dropbox/planet_models/ongp/data/scvhIsentropes.npz")
+            solar_isentropes = np.load("data/scvhIsentropes.npz")
             self.logrho_on_solar_isentrope = RegularGridInterpolator(
                 (solar_isentropes['entropy'], solar_isentropes['pressure']), solar_isentropes['density'])
             self.logt_on_solar_isentrope = RegularGridInterpolator(
