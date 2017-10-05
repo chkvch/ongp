@@ -6,22 +6,24 @@ from scipy.optimize import brentq
 
 class eos:
     
-    def __init__(self, use_raw_tables=False):
+    def __init__(self, path_to_data, use_raw_tables=False):
         '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
+        
+        self.path_to_data = path_to_data
         
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06
         
         if use_raw_tables:
-            path_to_h_data = 'data/scvh_h_original.dat'
-            path_to_he_data = 'data/scvh_he_original.dat'
+            path_to_h_data = '%s/scvh_h_original.dat' % self.path_to_data
+            path_to_he_data = '%s/scvh_he_original.dat' % self.path_to_data
         else:
             # use versions with two extra nodes in logp, logt, calculated by extrapolating on isotherms.
             # I tended to run just too low in logT near logP=11.4, 11.6 for Saturn models.
-            path_to_h_data = 'data/scvh_h.dat'
-            path_to_he_data = 'data/scvh_he.dat'
+            path_to_h_data = '%s/scvh_h.dat' % self.path_to_data
+            path_to_he_data = '%s/scvh_he.dat' % self.path_to_data
         
         self.h_names = 'logp', 'xh2', 'xh', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.h_data = {}

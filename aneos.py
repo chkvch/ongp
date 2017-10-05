@@ -4,12 +4,12 @@ from scipy.interpolate import RegularGridInterpolator
 
 class eos:
     
-    def __init__(self, material='ice'):
+    def __init__(self, path_to_data, material='serpentine'):
         
         self.material = material
         available_materials = 'ice', 'iron', 'serpentine', 'water'
         assert self.material in available_materials, 'material must be one of %s, %s, %s, %s' % available_materials
-        self.path = '/Users/chris/Dropbox/planet_models/aneos/aneos_%s_pt.dat' % self.material
+        self.path = '%s/aneos_%s_pt.dat' % (path_to_data, self.material)
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
         self.data = np.genfromtxt(self.path, names=self.names) # will fail if haven't saved version of aneos_*_pt.dat with eight columns
       

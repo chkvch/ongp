@@ -41,16 +41,19 @@ class evol:
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
         mesh_func_type='tanh',
-        extrapolate_phase_diagram_to_low_pressure=True):
+        extrapolate_phase_diagram_to_low_pressure=True,
+        path_to_data='/Users/chris/Dropbox/planet_models/ongp/data'):
+        
+        self.path_to_data = path_to_data
                 
         # initialize hydrogen-helium equation of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)
-            self.hhe_eos = scvh.eos()
+            self.hhe_eos = scvh.eos(self.path_to_data)
                         
             # load isentrope tables so we can use isentropic P-T profiles at solar composition
             # as starting guesses before we tweak Y, Z distribution
-            solar_isentropes = np.load("data/scvhIsentropes.npz")
+            solar_isentropes = np.load('%s/scvhIsentropes.npz' % self.path_to_data)
             self.logrho_on_solar_isentrope = RegularGridInterpolator(
                 (solar_isentropes['entropy'], solar_isentropes['pressure']), solar_isentropes['density'])
             self.logt_on_solar_isentrope = RegularGridInterpolator(
@@ -66,11 +69,11 @@ class evol:
         import aneos; reload(aneos)
         import reos; reload(reos)
         if z_eos_option == 'reos water':
-            self.z_eos = reos.eos()
-            self.z_eos_low_t = aneos.eos('water')
+            self.z_eos = reos.eos(self.path_to_data)
+            self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
         elif 'aneos' in z_eos_option:
             material = z_eos_option.split()[1]
-            self.z_eos = aneos.eos(material)
+            self.z_eos = aneos.eos(self.path_to_data, material)
             self.z_eos_low_t = None
         else:
             raise ValueError("z eos option '%s' not recognized." % z_eos_option)
@@ -83,7 +86,7 @@ class evol:
 
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
-        self.phase = lorenzen.hhe_phase_diagram(extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
+        self.phase = lorenzen.hhe_phase_diagram(self.path_to_data, extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
                            
         self.mesh_func_type = mesh_func_type
         
@@ -201,10 +204,10 @@ class evol:
             if verbose: print 'using jupiter atmosphere tables'
             if self.atm_option is 'f11_tables':
                 import f11_atm
-                atm = f11_atm.atm('jup')
+                atm = f11_atm.atm(self.path_to_data, 'jup')
             elif self.atm_option is 'f11_fit':
                 import f11_atm_fit
-                atm = f11_atm_fit.atm('jup')
+                atm = f11_atm_fit.atm(self.path_to_data, 'jup')
             else:
                 raise ValueError('atm_option %s not recognized.' % self.atm_option)
             self.teq = 109.0
@@ -212,7 +215,7 @@ class evol:
             if verbose: print 'using saturn atmosphere tables'
             if self.atm_option is 'f11_tables':
                 import f11_atm
-                atm = f11_atm.atm('sat')
+                atm = f11_atm.atm(self.path_to_data, 'sat')
             elif self.atm_option is 'f11_fit':
                 import f11_atm_fit
                 atm = f11_atm_fit.atm('sat')

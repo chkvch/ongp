@@ -4,8 +4,9 @@ from scipy.interpolate import RegularGridInterpolator
 
 class eos:
     
-    def __init__(self):
-        path = 'data/reos_water_pt.dat'
+    def __init__(self, path_to_data):
+
+        path = '%s/reos_water_pt.dat' % path_to_data
         
         # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 

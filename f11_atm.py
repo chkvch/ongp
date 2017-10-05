@@ -3,12 +3,15 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 
 class atm:
-    def __init__(self, planet='jup', print_table=False):
+    
+    def __init__(self, path_to_data, planet='jup', print_table=False):
+        
         assert planet in ['jup', 'sat', 'u', 'n'], 'planet label %s not recognized. choose from jup, sat, u, n.' % planet
         assert planet not in ['u', 'n'], 'Uranus and Neptune not implemented yet.'
         self.planet = planet
+        
         names = 'g', 'teff', 't10', 'teff_dim_sun', 't10_dim_sun', 'tint'
-        self.data = np.genfromtxt('data/f11_atm_%s.dat' % self.planet, delimiter='&', names=names)
+        self.data = np.genfromtxt('%s/f11_atm_%s.dat' % (path_to_data, self.planet), delimiter='&', names=names)
         for i in np.arange(0, 96, 12):
             self.data['g'][i+1:i+12] = self.data['g'][i]
             
