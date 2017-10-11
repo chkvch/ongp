@@ -1,6 +1,5 @@
 import numpy as np
 import const; reload(const)
-from utils import minmax
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 

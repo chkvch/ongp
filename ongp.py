@@ -4,7 +4,6 @@ from scipy.integrate import trapz, cumtrapz
 import sys
 import const
 import pickle
-import utils
 import time
 
 # this module is adapted from Daniel P. Thorngren's general-purpose giant planet
