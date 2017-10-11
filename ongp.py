@@ -6,8 +6,8 @@ import const
 import pickle
 import time
 
-# this module is adapted from Daniel P. Thorngren's general-purpose giant planet
-# modelling code circa 2016ApJ...831...64T. 
+# this module is adapted from Daniel P. Thorngren's giant planet evolutionary
+# code circa 2016ApJ...831...64T. 
 #
 # the main modifications were the implementation of
 #
@@ -740,12 +740,11 @@ class evol:
             
         self.mf = self.m / self.mtot
         self.rf = self.r / self.rtot  
-        
                 
         if self.zenv_inner: # two-layer envelope in terms of Z
-            self.mz_env_outer = np.dot(self.z[ktrans:], self.dm[ktrans:])
-            self.mz_env_inner = np.dot(self.z[kcore:ktrans], self.dm[kcore:ktrans])
-            self.mz_core = np.dot(self.z[:kcore], self.dm[:kcore])
+            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
+            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
+            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
             self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
         else:
             # Z uniform in envelope, Z=1 in core. 
