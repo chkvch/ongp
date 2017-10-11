@@ -1,7 +1,6 @@
 from scipy import interpolate
 from scipy.optimize import brentq
 import numpy as np
-import utils
 import time
 import sys
 
