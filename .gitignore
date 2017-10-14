@@ -1,0 +1,7 @@
+*.tar
+*.gz
+data
+.ipynb_checkpoints
+*.ipynb
+*.pyc
+
