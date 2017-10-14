@@ -174,7 +174,7 @@ class evol:
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
 
-    def static(self, mtot=1., t1=165., yenv=0.27, zenv=0., mcore=0., # mtot specified in Jupiter masses; mcore in Earth masses. yenv and zenv are mass fractions for helium and heavies respectively.
+    def static(self, mtot=const.mjup, t1=165., yenv=0.27, zenv=0., mcore=0., # mtot specified in Jupiter masses; mcore in Earth masses. yenv and zenv are mass fractions for helium and heavies respectively.
                     zenv_inner=None, # if None, envelope has uniform Z equal to zenv
                     yenv_inner=None, # if None, envelope has uniform Y equal to yenv
                     include_he_immiscibility=False, # whether to move helium around according to a H-He phase diagram
@@ -189,17 +189,19 @@ class evol:
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before 
             convergence, or -1 for failure to converge.'''
-                    
+
         if type(mtot) is str:
             if mtot[0] == 'j':
-                mtot = 1.
+                mtot = const.mjup
             elif mtot[0] == 's':
-                mtot = const.msat / const.mjup
+                mtot = const.msat
             else:
-                raise ValueError("if type(mtot) is str, first element must be j, s")
+                raise ValueError("if type(mtot) is str, first element must be j, s") # or u and n, later
+        
+        self.mtot = mtot
         
         # model atmospheres
-        if 0.9 <= mtot <= 1.1:
+        if 0.9 <= self.mtot / const.mjup <= 1.1:
             if verbose: print 'using jupiter atmosphere tables'
             if self.atm_option is 'f11_tables':
                 import f11_atm
@@ -209,8 +211,8 @@ class evol:
                 atm = f11_atm_fit.atm(self.path_to_data, 'jup')
             else:
                 raise ValueError('atm_option %s not recognized.' % self.atm_option)
-            self.teq = 109.0
-        elif 0.9 <= mtot * const.mjup / const.msat <= 1.1:
+            self.teq = 109.0 # make this free parameter!
+        elif 0.9 <= self.mtot / const.msat <= 1.1:
             if verbose: print 'using saturn atmosphere tables'
             if self.atm_option is 'f11_tables':
                 import f11_atm
@@ -220,7 +222,7 @@ class evol:
                 atm = f11_atm_fit.atm('sat')
             else:
                 raise ValueError('atm_option %s not recognized.' % self.atm_option)
-            self.teq = 81.3
+            self.teq = 81.3 # make this free parameter!
         else:
             raise ValueError('model is not within 10 percent of either Jupiter- or Saturn- mass; surface is bound to run off J or S tables. implement a general model atmosphere option.')
         
@@ -238,28 +240,28 @@ class evol:
         # because of discretization, self.mcore not necessarily mcore specified as argument.
         #
         # solution for now: add a new mesh point at mcore (total number of zones is now nz + 1).
-        # note: structure arrays are initialized in Evolve.__init__ with length nz.
+        # note: structure arrays are initialized in evol.__init__ with length nz.
         # so initialize self.m with length < nz before adding zones such that total is nz.
         #
-        assert mcore * const.mearth < mtot * const.mjup, 'core mass must be < total mass.'
+        assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
         if mcore > 0.:
             t = np.linspace(0, np.pi / 2, self.nz - 1)
-            self.m = mtot * const.mjup * self.mesh_func(t) # grams
+            self.m = self.mtot * self.mesh_func(t) # grams
             self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
             self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
-            self.kcore += 1
+            self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
         else: # no need for extra precautions
             t = np.linspace(0, np.pi / 2, self.nz)
-            self.m = mtot * const.mjup * self.mesh_func(t) # grams   
+            self.m = self.mtot * self.mesh_func(t) # grams   
             self.kcore = 0         
         self.mcore = mcore
         
         self.grada = np.zeros_like(self.m)
 
         self.dm = np.diff(self.m)
-        if abs(np.sum(self.dm) - mtot * const.mjup) / const.mearth > 0.001:
+        if abs(np.sum(self.dm) - self.mtot) / const.mearth > 0.001:
             print 'warning: total mass is different from requested by more than 0.001 earth masses.', \
-                abs(np.sum(self.dm) - mtot * const.mjup) / const.mearth         
+                abs(np.sum(self.dm) - self.mtot) / const.mearth         
                 
         # first guess where densities will be calculable
         self.p[:] = 1e12
@@ -387,19 +389,17 @@ class evol:
                 
                 if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < 20:
                     '''early in iterations and fewer than 20 nans; attempt to coax grada along'''
+                    print 'warning: some nans in grada. does this still happen?'
                     # always always iteration 2.
                     # print '%i nans in grada for iteration %i, attempt to continue' % (num_nans, iteration)
                     where_nans = np.where(np.isnan(self.grada))
                     k_first_nan = where_nans[0][0]
                     k_last_nan = where_nans[0][-1]
-                    # print self.grada[k_first_nan-5:k_last_nan+5]
                     last_good_grada = self.grada[k_first_nan - 1]
                     first_good_grada = self.grada[k_last_nan + 1]
                     self.grada[k_first_nan:k_last_nan+1] = (self.r[k_first_nan:k_last_nan+1] - self.r[k_first_nan]) \
                                                             / (self.r[k_last_nan+1] - self.r[k_first_nan]) \
                                                             * (first_good_grada - last_good_grada) + last_good_grada
-                    # print self.grada[k_first_nan-5:k_last_nan+5]
-                    # assert False
                 else: # abort                
                     print '%i nans in grada for iteration %i, stopping' % (num_nans, iteration)
                     with open('grada_nans.dat', 'w') as fw:
@@ -407,7 +407,7 @@ class evol:
                             if np.isnan(val):
                                 fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
                     print 'saved problematic logp, logt, y to grada_nans.dat'
-                    raise ValueError('eos limits')
+                    raise EosError('nans in grada.')
 
             self.dlogp = -1. * np.diff(np.log10(self.p))
             for k in np.arange(self.nz-2, self.kcore-1, -1):
@@ -432,8 +432,8 @@ class evol:
                 self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:]) # XYZ envelope
             
             if np.any(np.isnan(self.rho)):
-                print 'have one or more nans in rho after eos call'
-                return (np.nan, np.nan, np.nan)
+                raise EOSError('have one or more nans in rho after eos call.')
+                
             
             # continuity
             q[0] = 0.
@@ -443,8 +443,8 @@ class evol:
             if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance) and iteration >= self.min_iters_for_static_model:
                 break
             if not np.isfinite(self.r[-1]):
-                print 'found infinite total radius'
-                return (np.nan, np.nan, np.nan)
+                raise HydroError('found infinite total radius.')
+                
             oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
                         
         else:
@@ -593,13 +593,13 @@ class evol:
         assert self.t1 > 0., 'negative t1 %g' % self.t1
         
         # calculate the gravity and get intrinsic temperature from the model atmospheres.
-        self.surface_g = const.cgrav * mtot * const.mjup / self.r[-1] ** 2
+        self.surface_g = const.cgrav * mtot / self.r[-1] ** 2
         try:
             self.tint = atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
-            raise ValueError('off atm tables: g_mks %5.2f, t10 %5.2f, logpsurf %5.2f, logtsurf %5.2f' % (self.surface_g*1e-2, self.t10, np.log10(self.p[-1]), np.log10(self.t[-1])))
+            raise AtmError('off atm tables: g_mks = %5.2f, t10 = %5.2f, logpsurf = %5.2f, logtsurf = %5.2f' % (self.surface_g*1e-2, self.t10, np.log10(self.p[-1]), np.log10(self.t[-1])))
         self.entropy = np.zeros_like(self.p)
         # experimenting with including entropy of core material (don't bother with aneos, it's not a column).
         if include_core_entropy:
@@ -1253,64 +1253,12 @@ class evol:
             
             print 'wrote %i zones to %s' % (k, outfile)
             
-    # routines from daniel's version using solar-Y isentropes
-                                    
-    # def getMixDensity_daniel(self, entropy, pressure, z):
-    #     '''assumes isentropes at solar Y, and an aneos rock/ice blend for the Z component.'''
-    #     return 1. / ((1. - z) / 10 ** self.logrho_on_solar_isentrope((entropy,np.log10(pressure))) +
-    #                z / 10 ** self.getRockIceDensity((np.log10(pressure))))
-    #
-    # def static_solar_adiabat(self,mtot=1.,entropy=7.,zenv=0.,mcore=0.):
-    #     '''constructs an isentropic model of specified total mass, entropy (kb per baryon), envelope Z == 1 - fHHe, and dense core mass (earth masses).'''
-    #     # lagrangian grid
-    #     structure = self.workingMemory
-    #     self.m = mass = mtot * const.mjup * \
-    #         np.sin(np.linspace(0, np.pi / 2, self.nz)) ** 5 # this grid gives pretty crummy resolution at low pressure
-    #     kcore = coreBin = int(np.where(mcore * const.mearth <= mass)[0][0])
-    #     dm = dMass = np.diff(mass)
-    #     q = np.zeros(self.nz)
-    #     # guess initial radius based on an isobar at a ballpark pressure of 1 Mbar
-    #     self.p[:] = 1e12
-    #     # density from eos
-    #     self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-    #     self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-    #     # continuity equation
-    #     q[0] = 0.
-    #     q[1:] = 3. * dm / 4 / np.pi / self.rho[1:] # something like the volume of a constant-density sphere - what is this again, daniel?
-    #     self.r = np.cumsum(q) ** (1. / 3)
-    #
-    #     # Get converged structure through relaxation method
-    #     something_like_dp = np.zeros_like(self.p)
-    #     oldRadii = (0, 0, 0)
-    #     for iteration in xrange(500):
-    #         # hydrostatic equilibrium
-    #         something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-    #         self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6 # hydrostatic balance
-    #         self.rho[:kcore] = 10 ** self.getRockIceDensity((np.log10(self.p[:kcore])))
-    #         self.rho[kcore:] = self.getMixDensity_daniel(entropy, self.p[kcore:], zenv)
-    #         q[0] = 0.
-    #         q[1:] = 3. * dm / 4 / np.pi / self.rho[1:]
-    #         self.r = np.cumsum(q) ** (1. / 3)
-    #         if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
-    #             break
-    #         if not np.isfinite(self.r[-1]):
-    #             return (np.nan, np.nan)
-    #         oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
-    #     else:
-    #         return (np.nan, np.nan)
-    #
-    #     self.rtot = self.r[-1]
-    #     self.surface_g = const.cgrav * mtot * const.mjup / self.rtot ** 2.
-    #     something_like_dp[1:] = const.cgrav * self.m[1:] * dm / 4. / np.pi / self.r[1:] ** 4.
-    #     self.p[:] = np.cumsum(something_like_dp[::-1])[::-1] + 10 * 1e6
-    #     self.t[:kcore] = 0.
-    #     self.t[kcore:] = 10 ** self.logt_on_solar_isentrope((entropy, np.log10(self.p[kcore:])))
-    #
-    #     # linear extrapolate in logp to get a 10-bar temperature
-    #     f = ((np.log10(1e7) - np.log10(self.p[-2]))) / (np.log10(self.p[-1]) - np.log10(self.p[-2]))
-    #     logt10 = f * np.log10(self.t[-1]) + (1. - f) * np.log10(self.t[-2])
-    #     self.t10 = 10 ** logt10
-    #     self.entropy = entropy
-    #
-    #     dSdE = 1. / trapz(self.t, dx=dm)
-    #     return self.r[-1], dSdE
+            
+class EOSError(Exception):
+    pass
+    
+class AtmError(Exception):
+    pass
+    
+class HydroError(Exception):
+    pass
