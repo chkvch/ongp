@@ -39,7 +39,10 @@ class evol:
         relative_radius_tolerance=1e-6, # better than 1 km for a Jupiter radius
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
-        mesh_func_type='tanh',
+        mesh_func_type='hybrid',
+        amplitude_transition_mesh_boost=0.1,
+        kf_transition_mesh_boost=None,
+        width_transition_mesh_boost=0.06,
         extrapolate_phase_diagram_to_low_pressure=True,
         path_to_data='/Users/chris/Dropbox/planet_models/ongp/data'):
         
@@ -86,13 +89,9 @@ class evol:
         # h-he phase diagram
         import lorenzen; reload(lorenzen)
         self.phase = lorenzen.hhe_phase_diagram(self.path_to_data, extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
-                           
-        self.mesh_func_type = mesh_func_type
-        
-        # Initialize memory
-        self.nz = self.nBins = nz
-        self.workingMemory = np.zeros(self.nBins)
-        
+                                   
+        # initialize structure variables
+        self.nz = nz
         self.k = np.arange(self.nz)
         self.p = np.zeros(self.nz)
         self.m = np.zeros(self.nz)
@@ -101,6 +100,19 @@ class evol:
         self.t = np.zeros(self.nz)
         self.y = np.zeros(self.nz)
         self.z = np.zeros(self.nz)
+        
+        # mesh
+        self.mesh_func_type = mesh_func_type
+        if not kf_transition_mesh_boost: # sets k / nz where 
+            self.kf_transition_mesh_boost = 0.
+        else:
+            self.kf_transition_mesh_boost = kf_transition_mesh_boost
+            if not amplitude_transition_mesh_boost:
+                self.amplitude_transition_mesh_boost = 20 * self.nz
+            else:
+                self.amplitude_transition_mesh_boost = amplitude_transition_mesh_boost
+        self.width_transition_mesh_boost = width_transition_mesh_boost
+        
         
         # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
         # relative_radius_tolerance over both of the last two iterations.
@@ -117,16 +129,57 @@ class evol:
         return
     
     # mesh function defining mass enclosed within a given zone number
-    def mesh_func(self, t):            
-        if self.mesh_func_type == 'sin':
-            return np.sin(t) ** 3
-        elif self.mesh_func_type == 'sin_alt':
-            return 1. - np.sin(np.pi / 2 - t) ** 3
-        elif self.mesh_func_type == 'tanh':
-            # only choice among these that gives decent resolution closer to surface
-            return 0.5 * (1. + np.tanh(10. * (t - np.pi / 4)))
+    def mesh_func(self, t):
+        # assumes t runs from 0 at center to 1 at surface
+        if self.mesh_func_type == 'tanh': # old type
+            return 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
+        # elif self.mesh_func_type == 'new': # specify "density of samples" by hand and turn it into the mesh function
+        #     assert self.amplitude_transition_mesh_boost, 'must specify amplitude amplitude_transition_mesh_boost if mesh_func_type is new.'
+        #     assert self.t_transition_mesh_boost, 'must specify fractional mass t_transition_mesh_boost if mesh_func_type is new.'
+        #     assert self.width_transition_mesh_boost, 'must specify width width_transition_mesh_boost if mesh_func_type is new.'
+        #
+        #     assert self.amplitude_surface_mesh_boost, 'must specify amplitude amplitude_surface_mesh_boost if mesh_func_type is new.'
+        #     assert self.width_surface_mesh_boost, 'must specify width width_surface_mesh_boost if mesh_func_type is new.'
+        #
+        #     assert self.amplitude_center_mesh_boost, 'must specify amplitude amplitude_center_mesh_boost if mesh_func_type is new.'
+        #     assert self.width_center_mesh_boost, 'must specify width width_center_mesh_boost if mesh_func_type is new.'
+        #
+        #     dens = self.amplitude_center_mesh_boost * np.exp(-self.width_center_mesh_boost * t) \
+        #             + self.amplitude_surface_mesh_boost * np.exp(-self.width_surface_mesh_boost * (1. - t)) \
+        #             + self.amplitude_transition_mesh_boost \
+        #                 * np.exp(-(t - self.t_transition_mesh_boost) ** 2 \
+        #                 / (2 * self.width_transition_mesh_boost ** 2))
+        #     out = np.cumsum(1. / dens)
+        #     out -= out[0]
+        #     out /= out[-1]
+        #     return out
+        elif self.mesh_func_type == 'hybrid': # start with tanh and add extra resolution around some k/nz
+            assert self.amplitude_transition_mesh_boost, 'must specify amplitude amplitude_transition_mesh_boost if mesh_func_type is hybrid.'
+            assert self.kf_transition_mesh_boost, 'must specify fractional zone number kf_transition_mesh_boost if mesh_func_type is hybrid.'
+            assert self.width_transition_mesh_boost, 'must specify width width_transition_mesh_boost if mesh_func_type is hybrid.'
+            
+            a = self.amplitude_transition_mesh_boost # nominally 1
+            b = self.kf_transition_mesh_boost
+            c = self.width_transition_mesh_boost
+            
+            # our typical tanh mesh for good resolution near surface
+            f0 = 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
+            # convert to density of samples in zone number space
+            density_f0 = 1. / np.diff(f0)
+            # duplicate inner density to match original length
+            density_f0 = np.insert(density_f0, 0, density_f0[0])
+            # at present symmetric across middle zone. instead give less weight to inner parts than surface.
+            density_f0 *= np.exp(t / 0.1)
+            # add a gaussian bump in sample density at k/nz = b = self.kf_transition_mesh_boost
+            density_f0 += a * density_f0[0] * np.exp(-(t - b) ** 2 / 2 / c ** 2)
+            # flip back into a cumulative fraction in mass space
+            out = np.cumsum(1. / density_f0)
+            out -= out[0]
+            out /= out[-1]
+            return out
         else:
-            raise ValueError('mesh function type %s not recognized' % self.mesh_func_type)
+            raise ValueError('mesh type %s not recognized.' % self.mesh_func_type)
+            
             
     # when building non-isentropic models [for instance, a grad(P, T, Y, Z)=grada(P, T, Y, Z) model
     # with Y, Z functions of depth so that entropy is non-uniform], want to be able to get density 
@@ -245,14 +298,16 @@ class evol:
         #
         assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
         if mcore > 0.:
-            t = np.linspace(0, np.pi / 2, self.nz - 1)
+            t = np.linspace(0, 1, self.nz - 1)
             self.m = self.mtot * self.mesh_func(t) # grams
+            self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
             self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
             self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
             self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
         else: # no need for extra precautions
-            t = np.linspace(0, np.pi / 2, self.nz)
+            t = np.linspace(0, 1, self.nz)
             self.m = self.mtot * self.mesh_func(t) # grams   
+            self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
             self.kcore = 0         
         self.mcore = mcore
         
@@ -261,8 +316,8 @@ class evol:
         self.dm = np.diff(self.m)
         if abs(np.sum(self.dm) - self.mtot) / const.mearth > 0.001:
             print 'warning: total mass is different from requested by more than 0.001 earth masses.', \
-                abs(np.sum(self.dm) - self.mtot) / const.mearth         
-                
+                abs(np.sum(self.dm) - self.mtot) / const.mearth  
+                                
         # first guess where densities will be calculable
         self.p[:] = 1e12
         self.t[:] = 1e4       
@@ -386,10 +441,14 @@ class evol:
             # the right-hand side "knee" of available data.
             if np.any(np.isnan(self.grada)):
                 num_nans = len(self.grada[np.isnan(self.grada)])
+
+                # raise EOSError('%i nans in grada. first (logT, logP)=(%f, %f); last (logT, logP) = (%f, %f)' % \
+                #     (num_nans, np.log10(self.t[np.isnan(self.grada)][0]), np.log10(self.p[np.isnan(self.grada)][0]), \
+                #     np.log10(self.t[np.isnan(self.grada)][-1]), np.log10(self.p[np.isnan(self.grada)][-1])))
                 
                 if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < 20:
                     '''early in iterations and fewer than 20 nans; attempt to coax grada along'''
-                    print 'warning: some nans in grada. does this still happen?'
+                    print 'warning: some nans in grada on static iteration %i. does this still happen?' % iteration
                     # always always iteration 2.
                     # print '%i nans in grada for iteration %i, attempt to continue' % (num_nans, iteration)
                     where_nans = np.where(np.isnan(self.grada))
@@ -407,7 +466,7 @@ class evol:
                             if np.isnan(val):
                                 fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
                     print 'saved problematic logp, logt, y to grada_nans.dat'
-                    raise EosError('nans in grada.')
+                    raise EOSError('nans in grada.')
 
             self.dlogp = -1. * np.diff(np.log10(self.p))
             for k in np.arange(self.nz-2, self.kcore-1, -1):
@@ -599,7 +658,11 @@ class evol:
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError:
-            raise AtmError('off atm tables: g_mks = %5.2f, t10 = %5.2f, logpsurf = %5.2f, logtsurf = %5.2f' % (self.surface_g*1e-2, self.t10, np.log10(self.p[-1]), np.log10(self.t[-1])))
+            if self.zenv_inner:
+                print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
+            else:
+                print 'zenv = ', self.zenv
+            raise AtmError('off atm tables: g_mks = %5.2f, t10 = %5.2f. rtot = %10.5g' % (self.surface_g*1e-2, self.t10, self.rtot))
         self.entropy = np.zeros_like(self.p)
         # experimenting with including entropy of core material (don't bother with aneos, it's not a column).
         if include_core_entropy:
@@ -612,6 +675,7 @@ class evol:
         # core is isothermal at temperature of the base of the envelope.
         self.t[:self.kcore] = self.t[self.kcore]
         
+        self.r[0] = 1. # 1 cm central radius to keep these things calculable at center zone
         self.g = const.cgrav * self.m / self.r ** 2
 
         # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
@@ -621,7 +685,6 @@ class evol:
         self.csound = np.zeros_like(self.p)
         self.gradt_direct = np.zeros_like(self.p)
         
-        self.r[0] = 1. # 1 cm central radius to keep these things calculable at center zone
         self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
         self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
@@ -658,7 +721,7 @@ class evol:
             (self.dlogp_dlogrho[self.kcore:] ** -1. - self.gamma1[self.kcore+1:] ** -1.) # Unno 13.102
         
         # terms needed for calculation of the composition term brunt_B.
-        self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p)) # structure derivative
+        self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative
         # this is the thermodynamic derivative (const P and T), for H-He.
         self.dlogrho_dlogy = np.zeros_like(self.p)
         self.dlogrho_dlogy[self.kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
