@@ -41,8 +41,8 @@ class evol:
         min_iters_for_static_model=12,
         mesh_func_type='tanh',
         extrapolate_phase_diagram_to_low_pressure=True,
-        path_to_data='/Users/chris/Dropbox/planet_models/ongp/data'):
-        
+        path_to_data='data'):    # RS: this varies depending on how someone's environment is configured. 
+                                 # will talk to chris about having this live in on_GP root. this directory has been added to .gitignore to prevent accidental commit.
         self.path_to_data = path_to_data
                 
         # initialize hydrogen-helium equation of state
@@ -185,7 +185,7 @@ class evol:
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important for every problem
 					hydrogen_transition_pressure=1., # pressure to assume for the molecular-metallic interface (where Y or Z discontinuities might exist, or where helium gradient might start)
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a newer Z eos
-                    verbose=False):
+                    verbose=True):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before 
             convergence, or -1 for failure to converge.'''
