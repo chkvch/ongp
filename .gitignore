@@ -3,5 +3,5 @@
 data
 .ipynb_checkpoints
 *.ipynb
-*.pyc
+*.swp
 
