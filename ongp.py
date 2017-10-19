@@ -185,7 +185,7 @@ class evol:
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important for every problem
 					hydrogen_transition_pressure=1., # pressure to assume for the molecular-metallic interface (where Y or Z discontinuities might exist, or where helium gradient might start)
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a newer Z eos
-                    verbose=True):
+                    verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before 
             convergence, or -1 for failure to converge.'''
