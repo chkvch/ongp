@@ -41,8 +41,8 @@ class evol:
         min_iters_for_static_model=12,
         mesh_func_type='tanh',
         extrapolate_phase_diagram_to_low_pressure=True,
-        path_to_data='data'):    # RS: this varies depending on how someone's environment is configured. 
-                                 # will talk to chris about having this live in on_GP root. this directory has been added to .gitignore to prevent accidental commit.
+        path_to_data='data'):     
+                                 
         self.path_to_data = path_to_data
                 
         # initialize hydrogen-helium equation of state
