@@ -5,3 +5,4 @@ data
 *.ipynb
 *.swp
 .DS_Store
+run.py
