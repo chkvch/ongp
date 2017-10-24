@@ -1,5 +1,5 @@
 # An environment for making one-dimensional static and evolutionary models of giant planets. 
-The code is adapted from Daniel P. Thorngren's evolutionary program evolve.py, but extended to include a more general equation of state for H-He-Z mixtures, a H-He phase diagram for the purposes of modelling H-He phase separation, and model atmospheres specific to Jupiter and Saturn. The code depends on data (equations of state, etc.) from various other researchers that I'm not at liberty to distribute, but if you'd like to use the code contact me to be put in touch.
+The code is adapted from Daniel P. Thorngren's evolutionary program evolve.py [2016ApJ...831...64T], but extended to include a more general equation of state for H-He-Z mixtures, a H-He phase diagram for the purposes of modelling H-He phase separation, and model atmospheres specific to Jupiter and Saturn. The code depends on data (equations of state, etc.) from various other researchers that I'm not at liberty to distribute, but if you'd like to use the code contact me to be put in touch.
 
 ### Getting started
 A simple instantiation of the ongp.evol class and calculation of a static model in Python 2.7 might look like
