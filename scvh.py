@@ -5,12 +5,14 @@ from scipy.optimize import brentq
 
 class eos:
     
-    def __init__(self, path_to_data, use_raw_tables=False):
+    def __init__(self, path_to_data, use_raw_tables=False, fac_for_numerical_partials=1e-10):
         '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
         
         self.path_to_data = path_to_data
+        
+        self.fac_for_numerical_partials = fac_for_numerical_partials
         
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06
@@ -236,8 +238,11 @@ class eos:
 
         return res
 
-    def get_chiy(self, logp, logt, y, f=5e-3):
+    def get_chiy(self, logp, logt, y):
         """dlogrho/dlogY at const p, t"""
+        
+        f = self.fac_for_numerical_partials
+        
         y_lo = y * (1. - f)
         y_hi = y * (1. + f)
         if np.any(y_lo < 0.) or np.any(y_hi > 1.):
@@ -256,7 +261,7 @@ class eos:
         
         
         
-    # def get_dlogrho_dlogy_numerical(self, logp, logt, y, f=5e-3):
+    # def get_dlogrho_dlogy_numerical(self, logp, logt, y, f=fac_for_numerical_partials):
     #     y_lo = y * (1. - f)
     #     y_hi = y * (1. + f)
     #     if np.any(y_lo <= 0.) or np.any(y_hi >= 1.):
@@ -329,9 +334,8 @@ class eos:
             
         def get_delta(y, xh, xh2, xhe, xhep):
             '''eq. 56 of SCvH95.
-            input parameters are as for the functions beta and gamma.
-            prefactor is corrected as pointed out in footnote 4 of Baraffe et al. 2008;
-            flipped relative to how it appears in SCvH95 eq. 56.'''
+            input parameters are as for the functions beta and gamma.prefactor is corrected as pointed out in 
+            footnote 4 of Baraffe et al. 2008, namely it is flipped relative to how it appears in SCvH95 eq. 56.'''
                         
             species_num = (2. - 2. * xhe - xhep) # proportional to the abundance of free electrons assuming pure He
             species_den = (1. - xh2 - xh) # proportional to the abundance of free electrons assuming pure H
@@ -345,7 +349,8 @@ class eos:
                 assert type(species_num) is np.ndarray, 'species are ndarray, but delta numerator is not.'
                 assert type(species_den) is np.ndarray, 'species are ndarray, but delta denominator is not.'
                 # number density of free e- for one of the pure species is sometimes a tiny negative number.
-                # in cases where there are no free electrons, delta does not matter (prefactor vanishes), it's just crucial that it's > 0 and not a nan.
+                # in cases where there are no free electrons, delta does not matter (prefactor vanishes); 
+                # it's just crucial that it's > 0 and not a nan.
                 species_num[species_num <= 0.] = 1.
                 species_den[species_den <= 0.] = 1.
             elif type(xh) is np.float64:
@@ -378,12 +383,12 @@ class eos:
                 + beta * gamma * (np.log(1. + 1. / beta / gamma) \
                 - xehe * np.log(1. + 1. / delta)))
                 
-        def species_partials(pair, y, f=5e-3): 
+        def species_partials(pair, y, f): 
             # f is a dimensionless factor by which we perturb logp, logt to compute centered differences for numerical partials.
             # returns pair (d*_dlogp, d*_dlogt) of quadruples (dxh2_dlog*, dxh_dlog*, dhe_dlog*, dhep_dlog*)
             
             logp, logt = pair
-            
+                        
             if np.any(logp * (1. + f) > self.logpmax): return ((0., 0., 0., 0.,), (0., 0., 0., 0.))
             if np.any(logp * (1. - f) < self.logpmax): return ((0., 0., 0., 0.,), (0., 0., 0., 0.))
             if np.any(logt * (1. + f) > self.logtmax): return ((0., 0., 0., 0.,), (0., 0., 0., 0.))
@@ -426,8 +431,8 @@ class eos:
             
             return d_dlogp, d_dlogt
             
-        def y_partials(pair, y, f=5e-3):
-
+        def y_partials(pair, y): # never called?
+            
             logp, logt = pair
 
             pair_p_plus = logp * (1. + f), logt
@@ -514,7 +519,7 @@ class eos:
         # of the four independent species (see CM notes 11/29/2016). the derivatives of each abundance with respect to logp and logt are computed 
         # numerically with centered finite differences. equations with alphanumeric labels (A*) are in the handwritten notes.
 
-        dxi_dlogp, dxi_dlogt = species_partials(pair, y, f=1e-10)
+        dxi_dlogp, dxi_dlogt = species_partials(pair, y, f=self.fac_for_numerical_partials)
         dxh2_dlogp, dxh_dlogp, dxhe_dlogp, dxhep_dlogp = dxi_dlogp
         dxh2_dlogt, dxh_dlogt, dxhe_dlogt, dxhep_dlogt = dxi_dlogt
         

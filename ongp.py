@@ -103,14 +103,12 @@ class evol:
         
         # mesh
         self.mesh_func_type = mesh_func_type
-        if not kf_transition_mesh_boost: # sets k / nz where 
+        if not kf_transition_mesh_boost: # sets k / nz where give a boost to resolution (e.g. at the mol-met transition)
             self.kf_transition_mesh_boost = 0.
+            self.amplitude_transition_mesh_boost = 0.
         else:
             self.kf_transition_mesh_boost = kf_transition_mesh_boost
-            if not amplitude_transition_mesh_boost:
-                self.amplitude_transition_mesh_boost = 20 * self.nz
-            else:
-                self.amplitude_transition_mesh_boost = amplitude_transition_mesh_boost
+            self.amplitude_transition_mesh_boost = amplitude_transition_mesh_boost
         self.width_transition_mesh_boost = width_transition_mesh_boost
         
         
@@ -154,8 +152,8 @@ class evol:
         #     out /= out[-1]
         #     return out
         elif self.mesh_func_type == 'hybrid': # start with tanh and add extra resolution around some k/nz
-            assert self.amplitude_transition_mesh_boost, 'must specify amplitude amplitude_transition_mesh_boost if mesh_func_type is hybrid.'
-            assert self.kf_transition_mesh_boost, 'must specify fractional zone number kf_transition_mesh_boost if mesh_func_type is hybrid.'
+            assert self.amplitude_transition_mesh_boost is not None, 'must specify amplitude amplitude_transition_mesh_boost if mesh_func_type is hybrid.'
+            assert self.kf_transition_mesh_boost is not None, 'must specify fractional zone number kf_transition_mesh_boost if mesh_func_type is hybrid.'
             assert self.width_transition_mesh_boost, 'must specify width width_transition_mesh_boost if mesh_func_type is hybrid.'
             
             a = self.amplitude_transition_mesh_boost # nominally 1
@@ -446,10 +444,14 @@ class evol:
                 #     (num_nans, np.log10(self.t[np.isnan(self.grada)][0]), np.log10(self.p[np.isnan(self.grada)][0]), \
                 #     np.log10(self.t[np.isnan(self.grada)][-1]), np.log10(self.p[np.isnan(self.grada)][-1])))
                 
-                if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < 20:
-                    '''early in iterations and fewer than 20 nans; attempt to coax grada along'''
-                    print 'warning: some nans in grada on static iteration %i. does this still happen?' % iteration
-                    # always always iteration 2.
+                if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < self.nz / 4:
+                    '''early in iterations and fewer than nz/4 nans; attempt to coax grada along.
+                    
+                    always always always always iteration 2.
+                    
+                    really not a big deal if we invent some values for grada this early in iterations since
+                    many more will follow.
+                    '''
                     # print '%i nans in grada for iteration %i, attempt to continue' % (num_nans, iteration)
                     where_nans = np.where(np.isnan(self.grada))
                     k_first_nan = where_nans[0][0]
@@ -721,7 +723,10 @@ class evol:
             (self.dlogp_dlogrho[self.kcore:] ** -1. - self.gamma1[self.kcore+1:] ** -1.) # Unno 13.102
         
         # terms needed for calculation of the composition term brunt_B.
-        self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative
+        if self.kcore > 0:
+            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative
+        else:
+            self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
         # this is the thermodynamic derivative (const P and T), for H-He.
         self.dlogrho_dlogy = np.zeros_like(self.p)
         self.dlogrho_dlogy[self.kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
