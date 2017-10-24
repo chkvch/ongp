@@ -1,0 +1,8 @@
+*.tar
+*.gz
+data
+.ipynb_checkpoints
+*.ipynb
+*.swp
+.DS_Store
+run.py

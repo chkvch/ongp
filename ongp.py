@@ -44,8 +44,8 @@ class evol:
         kf_transition_mesh_boost=None,
         width_transition_mesh_boost=0.06,
         extrapolate_phase_diagram_to_low_pressure=True,
-        path_to_data='/Users/chris/Dropbox/planet_models/ongp/data'):
-        
+        path_to_data='data'):     
+                                 
         self.path_to_data = path_to_data
                 
         # initialize hydrogen-helium equation of state
