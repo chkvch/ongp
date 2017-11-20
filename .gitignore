@@ -1,8 +1,12 @@
 *.tar
 *.gz
 data
+output
+figures
 .ipynb_checkpoints
 *.ipynb
 *.swp
 .DS_Store
 run.py
+*.pyc
+*~
