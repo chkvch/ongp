@@ -33,8 +33,9 @@ class evol:
     
     def __init__(self,
         hhe_eos_option='scvh', 
-        z_eos_option='reos water',
+        z_eos_option=None,
         atm_option='f11_tables',
+        hhe_phase_diagram=None,
         nz=1024,
         relative_radius_tolerance=1e-6, # better than 1 km for a Jupiter radius
         max_iters_for_static_model=500, 
@@ -72,18 +73,19 @@ class evol:
         else:
             raise NotImplementedError("this EOS name is not recognized.")
         
-        # initialize z equation of state        
-        import aneos; reload(aneos)
-        import reos; reload(reos)
-        if z_eos_option == 'reos water':
-            self.z_eos = reos.eos(self.path_to_data)
-            self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
-        elif 'aneos' in z_eos_option:
-            material = z_eos_option.split()[1]
-            self.z_eos = aneos.eos(self.path_to_data, material)
-            self.z_eos_low_t = None
-        else:
-            raise ValueError("z eos option '%s' not recognized." % z_eos_option)
+        if z_eos_option:
+            # initialize z equation of state        
+            import aneos; reload(aneos)
+            import reos; reload(reos)
+            if z_eos_option == 'reos water':
+                self.z_eos = reos.eos(self.path_to_data)
+                self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
+            elif 'aneos' in z_eos_option:
+                material = z_eos_option.split()[1]
+                self.z_eos = aneos.eos(self.path_to_data, material)
+                self.z_eos_low_t = None
+            else:
+                raise ValueError("z eos option '%s' not recognized." % z_eos_option)
         self.z_eos_option = z_eos_option
                     
         # model atmospheres are now initialized in self.static, so that individual models
@@ -91,9 +93,13 @@ class evol:
         # e.g., can run a Jupiter and then a Saturn without making a new Evolver instance.
         self.atm_option = atm_option
 
-        # h-he phase diagram
-        import lorenzen; reload(lorenzen)
-        self.phase = lorenzen.hhe_phase_diagram(self.path_to_data, extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
+        if hhe_phase_diagram:
+            if hhe_phase_diagram == 'lorenzen':
+                import lorenzen; reload(lorenzen)
+                self.phase = lorenzen.hhe_phase_diagram(self.path_to_data, extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
+            else:
+                raise ValueError('lorenzen is the only available h/he phase diagram at this time.')
+        self.hhe_phase_diagram = hhe_phase_diagram
                                    
         # initialize structure variables
         self.nz = nz
@@ -220,6 +226,8 @@ class evol:
         '''helper function to get rho of just the z component. different from self.z_eos.get_logrho because
         this does the switching to aneos water at low T if using reos water as the z eos.'''
         
+        assert self.z_eos_option, 'cannot calculate rho_z with no z eos specified.'
+        
         if self.z_eos_option == 'reos water':
             # if using reos water, extend down to T < 1000 K using aneos water.
             # for this, mask to find the low-T part.            
@@ -286,6 +294,9 @@ class evol:
         
         self.hydrogen_transition_pressure = hydrogen_transition_pressure
         
+        if include_he_immiscibility:
+            assert self.hhe_phase_diagram, 'cannot include h/he immiscibility without specifying hhe_phase_diagram.'
+        
         # model atmospheres
         if 0.9 <= self.mtot / const.mjup <= 1.1:
             if verbose: print 'using jupiter atmosphere tables'
@@ -351,7 +362,7 @@ class evol:
             print 'warning: total mass is different from requested by more than 0.001 earth masses.', \
                 abs(np.sum(self.dm) - self.mtot) / const.mearth  
                                 
-        # first guess where densities will be calculable
+        # first guess, values chosen just so that densities will be calculable
         self.p[:] = 1e12
         self.t[:] = 1e4       
         
@@ -363,17 +374,20 @@ class evol:
         assert zenv >= 0., 'got negative zenv %g' % zenv
         self.z[self.kcore:] = self.zenv_outer
 
-        if self.core_prho_relation:
-            self.rho[:self.kcore] = 8 # just an initial guess for root find of hubbard + marley p-rho relations
-            if self.core_prho_relation == 'hm89 rock':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-            elif self.core_prho_relation == 'hm89 ice':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+        if self.kcore > 0:
+            if self.core_prho_relation:
+                if self.core_prho_relation == 'hm89 rock':
+                    self.rho[:self.kcore] = 8 # initial guess for root find
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
+                elif self.core_prho_relation == 'hm89 ice':
+                    self.rho[:self.kcore] = 8 
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+                else:
+                    raise ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
             else:
-                assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-        else:
-            self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), yenv) # for first pass, no Z in envelope
+                assert self.z_eos_option, 'cannot calculate rho_z if no z_eos_option specified'
+                self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+        self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), yenv) # for first pass, ignore Z in envelope
         
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass. for reference if later adjusting Y distribution
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
@@ -390,7 +404,8 @@ class evol:
         self.p[-1] = 1e6
         self.p[:-1] = np.cumsum(dp[::-1])[::-1] + 1e6
                        
-        # set surface temperature and integrate the adiabat inward to get temperature         
+        # set surface temperature and integrate the adiabat inward to get temperature.
+        # adiabatic gradient here (as well as later) is ignoring any z contribution.      
         self.t[-1] = t1         
         self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
         for k in np.arange(self.nz)[::-1]:
@@ -400,11 +415,12 @@ class evol:
             dlnt = self.grada[k] * dlnp
             self.t[k] = self.t[k+1] * (1. + dlnt)
 
-        self.t[:self.kcore] = self.t[self.kcore] # isothermal at temperature of core-mantle boundary
+        self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at temperature of core-mantle boundary
         
         # identify molecular-metallic transition. not relevant for U, N
         self.ktrans = np.where(self.p >= self.hydrogen_transition_pressure * 1e12)[0][-1]
 
+        # set y, z of inner envelope if indeed we have three layers
         if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope.
             assert zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
             assert zenv_inner >= zenv, 'no z inversion allowed.'
@@ -415,25 +431,26 @@ class evol:
             self.y[self.kcore:self.ktrans] = self.yenv_inner
 
         # set density in core
-        if self.core_prho_relation:
-            if self.core_prho_relation == 'hm89 rock':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-            elif self.core_prho_relation == 'hm89 ice':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+        if self.kcore > 0:
+            if self.core_prho_relation:
+                if self.core_prho_relation == 'hm89 rock':
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
+                elif self.core_prho_relation == 'hm89 ice':
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+                else:
+                    assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
             else:
-                assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-        else:
-            self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                assert self.z_eos_option, 'cannot calculate rho_z if no z_eos_option specified'
+                self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
 
         # set density in envelope
         if self.z[-1] == 0.: # XY envelope
             self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) # XY envelope
         else: # XYZ envelope
             self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:]) # XYZ envelope            
-            
-                        
-        # these used to be defined after iterations were completed, but need for calculation of brunt_b to allow superadiabatic
-        # regions with grad-grada proportional to brunt_b
+
+        # these used to be defined after iterations were completed, but they are needed for calculation
+        # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
         self.gradt = np.zeros_like(self.p)
         self.brunt_b = np.zeros_like(self.p)
         self.chirho = np.zeros_like(self.p)
@@ -482,10 +499,10 @@ class evol:
                 if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < self.nz / 4:
                     '''early in iterations and fewer than nz/4 nans; attempt to coax grada along.
                     
-                    always always always always iteration 2.
+                    always always always iteration 2.
                     
                     really not a big deal if we invent some values for grada this early in iterations since
-                    many more will follow.
+                    many more iterations will follow.
                     '''
                     # print '%i nans in grada for iteration %i, attempt to continue' % (num_nans, iteration)
                     where_nans = np.where(np.isnan(self.grada))
@@ -512,16 +529,17 @@ class evol:
                 
             self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at core-mantle boundary temperature
 
-            # set density in core
-            if self.core_prho_relation:
-                if self.core_prho_relation == 'hm89 rock':
-                    self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-                elif self.core_prho_relation == 'hm89 ice':
-                    self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+            if self.kcore > 0:
+                # set density in core
+                if self.core_prho_relation:
+                    if self.core_prho_relation == 'hm89 rock':
+                        self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
+                    elif self.core_prho_relation == 'hm89 ice':
+                        self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+                    else:
+                        assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
                 else:
-                    assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-            else:
-                self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                    self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
             if self.z[-1] == 0.: # again, this check is only valid if envelope is homogeneous in Z
                 self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) # XY envelope
             else:
@@ -616,11 +634,11 @@ class evol:
                         assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
                 else:
                     self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-                    # set density in envelope
-                    if zenv == 0.:
-                        self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    else:
-                        self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:])
+                # set density in envelope
+                if zenv == 0.:
+                    self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                else:
+                    self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:])
             
                 q[0] = 0.
                 q[1:] = 3. * self.dm / 4 / np.pi / self.rho[1:]
@@ -658,16 +676,17 @@ class evol:
         self.p[-1] = 1e6
         self.p[:-1] = np.cumsum(dp[::-1])[::-1] + self.p[-1]
         # update density for the last time
-        # set density in core
-        if self.core_prho_relation:
-            if self.core_prho_relation == 'hm89 rock':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-            elif self.core_prho_relation == 'hm89 ice':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+        if self.kcore > 0:
+            # set density in core
+            if self.core_prho_relation:
+                if self.core_prho_relation == 'hm89 rock':
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
+                elif self.core_prho_relation == 'hm89 ice':
+                    self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
+                else:
+                    assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
             else:
-                assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-        else:
-            self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
         if zenv == 0.:
             self.rho[self.kcore:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) # XY envelope
         else:
@@ -723,7 +742,8 @@ class evol:
         self.csound = np.zeros_like(self.p)
         self.gradt_direct = np.zeros_like(self.p)
         
-        self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+        if self.kcore > 0 and self.z_eos_option: # compute gamma1 in core
+            self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
         self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
         self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
@@ -734,14 +754,15 @@ class evol:
         dlnp_dlnr = np.diff(np.log(self.p)) / np.diff(np.log(self.r))
         dlnrho_dlnr = np.diff(np.log(self.rho)) / np.diff(np.log(self.r))
         
-        try:
-            self.chirho[:self.kcore] = self.z_eos.get_chirho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-            self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-            self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
-        except AttributeError:
-            print "warning: z eos option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option
-            print 'cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.'
-            pass
+        if self.kcore > 0:
+            try:
+                self.chirho[:self.kcore] = self.z_eos.get_chirho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
+            except AttributeError:
+                print "warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option
+                print 'cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.'
+                pass
         
         # ignoring the envelope z component when it comes to calculating chirho and chit
         self.chirho[self.kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
@@ -769,9 +790,8 @@ class evol:
         
         rho_z = np.zeros_like(self.p)
         rho_hhe = np.zeros_like(self.p)
-        # rho_z[self.z > 0.] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
-        rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
-        rho_z[self.z == 0.] = 0
+        if np.any(self.z > 0.) and self.z_eos_option:
+            rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
         rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
         rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
         self.dlogrho_dlogz = np.zeros_like(self.p)
@@ -794,10 +814,14 @@ class evol:
             
         # akin to mike montgomery's form for brunt_B, which is how mesa does it by default (Paxton+2013)
         rho_this_pt_next_comp = np.zeros_like(self.p)
-        rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
+        if np.all(self.z[self.kcore:-1] > 0.):
+            rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
+        else:
+            rho_this_pt_next_comp[self.kcore+1:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1])            
         # core-mantle point must be treated separately since next cell down is pure Z, and get_rho_xyz is not designed for pure Z. 
         # call z_eos.get_logrho directly instead.
-        rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+        if self.kcore > 0 and self.z_eos_option:
+            rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
         # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
         if erase_z_discontinuity_from_brunt:
             rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
@@ -821,7 +845,7 @@ class evol:
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
         self.dlogrho_dlogt_const_p = np.zeros_like(self.p)
         # print 'at time of calculating rho_t for final static model, log core temperature is %f' % np.log10(self.t[0])
-        if self.kcore > 0:
+        if self.kcore > 0 and self.z_eos_option:
             self.dlogrho_dlogt_const_p[:self.kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
         if self.z_eos_option == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
             k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
@@ -862,7 +886,11 @@ class evol:
                 raise
 
         else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
-            self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * (self.z[self.kcore:] / rho_z[self.kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]))
+            if self.z_eos_option:
+                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * (self.z[self.kcore:] / rho_z[self.kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]))
+            else:
+                assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
+                self.dlogrho_dlogt_const_p[self.kcore:] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             
         self.mf = self.m / self.mtot
         self.rf = self.r / self.rtot  
