@@ -820,20 +820,33 @@ class evol:
             rho_this_pt_next_comp[self.kcore+1:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1])            
         # core-mantle point must be treated separately since next cell down is pure Z, and get_rho_xyz is not designed for pure Z. 
         # call z_eos.get_logrho directly instead.
-        if self.kcore > 0 and self.z_eos_option:
-            rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+        if self.kcore > 0:
+            if self.z_eos_option:
+                rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+            elif self.core_prho_relation:
+                if self.core_prho_relation == 'hm89 rock':
+                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_rock(self.p[self.kcore], self.rho[self.kcore])
+                elif self.core_prho_relation == 'hm89 ice':
+                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_ice(self.p[self.kcore], self.rho[self.kcore])
+                else:
+                    raise ValueError ('if using core_prho_relation, only options are hm89 rock and hm89 ice.')
+            else:
+                raise ValueError('cannot include a core unless either z_eos_option or core_prho_relation are set.')
         # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
         if erase_z_discontinuity_from_brunt:
             rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
         else:
-            rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]            
+            rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]     
+            
+        self.asdf = rho_this_pt_next_comp
 
         # ignore Y discontinuity at surface of he-rich layer
         # if self.k_shell_top > 0:
             # rho_this_pt_next_comp[self.k_shell_top + 1] = self.rho[self.k_shell_top + 1]
         
         self.brunt_b_mhm = np.zeros_like(self.p)
-        self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
+        self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[1:]) - np.log(self.rho[:-1])) / (np.log(self.rho[1:]) - np.log(self.rho[:-1])) / self.chit[:-1]
+        # self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
         
