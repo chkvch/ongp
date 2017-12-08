@@ -40,20 +40,12 @@ class evol:
         relative_radius_tolerance=1e-6, # better than 1 km for a Jupiter radius
         max_iters_for_static_model=500, 
         min_iters_for_static_model=12,
-        mesh_func_type='flat_with_surface_exponential_core_gaussian',
-        amplitude_transition_mesh_boost=0.1,
-        kf_transition_mesh_boost=None,
-        width_transition_mesh_boost=0.06,
-        amplitude_surface_mesh_boost=1e5,
-        width_surface_mesh_boost=1e-2,
-        amplitude_core_mesh_boost=5.,
-        width_core_mesh_boost=6e-3,
-        fmean_core_bdy_mesh_boost=1./10,
         extrapolate_phase_diagram_to_low_pressure=True,
-        path_to_data='/Users/chris/Dropbox/planet_models/ongp/data'):     
+        path_to_data='/Users/chris/Dropbox/planet_models/ongp/data',
+        **mesh_params):     
                                  
         self.path_to_data = path_to_data
-                
+                        
         # initialize hydrogen-helium equation of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)
@@ -71,7 +63,7 @@ class evol:
             # this would only be good for a jupiter-like helium fraction anyway
             raise NotImplementedError('no militzer EOS yet.')
         else:
-            raise NotImplementedError("this EOS name is not recognized.")
+            raise NotImplementedError('this EOS name is not recognized.')
         
         if z_eos_option:
             # initialize z equation of state        
@@ -113,21 +105,19 @@ class evol:
         self.z = np.zeros(self.nz)
         
         # mesh
-        self.mesh_func_type = mesh_func_type
-        if not kf_transition_mesh_boost: # sets k / nz where give a boost to resolution (e.g. at the mol-met transition)
-            self.kf_transition_mesh_boost = 0.
-            self.amplitude_transition_mesh_boost = 0.
-        else:
-            self.kf_transition_mesh_boost = kf_transition_mesh_boost
-            self.amplitude_transition_mesh_boost = amplitude_transition_mesh_boost
-        self.width_transition_mesh_boost = width_transition_mesh_boost
+        self.mesh_params = {
+            'mesh_func_type':'flat_with_surface_exponential_core_gaussian',
+            'width_transition_mesh_boost':6e-2,
+            'amplitude_transition_mesh_boost':0.1,
+            'amplitude_surface_mesh_boost':1e5,
+            'width_surface_mesh_boost':1e-2,
+            'amplitude_core_mesh_boost':1e1,
+            'width_core_mesh_boost':1e-2,
+            'fmean_core_bdy_mesh_boost':2e-1
+        }
         
-        self.amplitude_surface_mesh_boost = amplitude_surface_mesh_boost
-        self.width_surface_mesh_boost = width_surface_mesh_boost
-        
-        self.amplitude_core_mesh_boost = amplitude_core_mesh_boost
-        self.width_core_mesh_boost = width_core_mesh_boost
-        self.fmean_core_bdy_mesh_boost = fmean_core_bdy_mesh_boost
+        for key, value in mesh_params.iteritems():
+            self.mesh_params[key] = value
         
         # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
         # relative_radius_tolerance over both of the last two iterations.
@@ -140,63 +130,97 @@ class evol:
         
         self.nz_gradient = 0
         self.nz_shell = 0
-        
-        return
     
     # mesh function defining mass enclosed within a given zone number
-    def mesh_func(self, t):
+    def mesh_func(self, t, mcore=None):
         # assumes t runs from 0 at center to 1 at surface
-        if self.mesh_func_type == 'tanh': # old type
+        if self.mesh_params['mesh_func_type'] == 'tanh': # old type
             return 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
-        elif self.mesh_func_type == 'flat':
+        elif self.mesh_params['mesh_func_type'] == 'flat':
             return t
-        elif self.mesh_func_type == 'flat_with_surface_exponential':
-            assert self.amplitude_surface_mesh_boost is not None, 'must specify amplitude_surface_mesh_boost for this mesh option'
-            assert self.width_surface_mesh_boost is not None, 'must specify width_surface_mesh_boost for this mesh option'
+        elif self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential':
             f0 = t
             density_f0 = 1. / np.diff(f0)
             density_f0 = np.insert(density_f0, 0, density_f0[0])
-            density_f0 += self.amplitude_surface_mesh_boost * f0 * np.exp((f0 - 1.) / self.width_surface_mesh_boost) * np.mean(density_f0)
+            density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * np.mean(density_f0)
             out = np.cumsum(1. / density_f0)
             out -= out[0]
             out /= out[-1]
             return out
-        elif self.mesh_func_type == 'flat_with_surface_exponential_core_gaussian':
-            assert self.amplitude_surface_mesh_boost is not None, 'must specify amplitude_surface_mesh_boost for this mesh option'
-            assert self.width_surface_mesh_boost is not None, 'must specify width_surface_mesh_boost for this mesh option'
-            assert self.amplitude_core_mesh_boost is not None, 'must specify amplitude_core_mesh_boost for this mesh option'
-            assert self.width_core_mesh_boost is not None, 'must specify width_core_mesh_boost for this mesh option'
-            assert self.fmean_core_bdy_mesh_boost is not None, 'must specify fmean_core_bdy_mesh_boost for this mesh option'
-            f0 = t
-            density_f0 = 1. / np.diff(f0)
-            density_f0 = np.insert(density_f0, 0, density_f0[0])
-            norm = np.mean(density_f0)
-            density_f0 += self.amplitude_surface_mesh_boost * f0 * np.exp((f0 - 1.) / self.width_surface_mesh_boost) * norm
-            # self.fmean_core_bdy_mesh_boost = 1. / 3
-            density_f0 += self.amplitude_core_mesh_boost * np.exp(-(f0 - self.fmean_core_bdy_mesh_boost) ** 2 / self.width_core_mesh_boost) * norm
-            out = np.cumsum(1. / density_f0)
-            out -= out[0]
-            out /= out[-1]
-            return out
-        elif self.mesh_func_type == 'tanh_with_surface_exponential':
-            assert self.amplitude_surface_mesh_boost is not None, 'must specify amplitude_surface_mesh_boost for this mesh option'
-            assert self.width_surface_mesh_boost is not None, 'must specify width_surface_mesh_boost for this mesh option'
+        elif self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
+            if mcore is None:
+                f0 = t
+                density_f0 = 1. / np.diff(f0)
+                density_f0 = np.insert(density_f0, 0, density_f0[0])
+                norm = np.mean(density_f0)
+                density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * norm
+                density_f0 += self.mesh_params['amplitude_core_mesh_boost'] * np.exp(-(f0 - self.mesh_params['fmean_core_bdy_mesh_boost']) ** 2 / self.mesh_params['width_core_mesh_boost']) * norm
+                out = np.cumsum(1. / density_f0)
+                out -= out[0]
+                out /= out[-1]
+                return out
+            else:
+                surf_amp = self.mesh_params['amplitude_surface_mesh_boost']
+                surf_width = self.mesh_params['width_surface_mesh_boost']
+                core_amp = self.mesh_params['amplitude_core_mesh_boost']
+                core_width = self.mesh_params['width_core_mesh_boost']
+            
+                cdf = t
+
+                def mesh_func(core_mean):
+                    pdf = 1. / np.diff(cdf)
+                    pdf = np.insert(pdf, 0, pdf[0])
+
+                    norm = np.mean(pdf) # ~nz
+
+                    pdf += surf_amp * cdf * np.exp((cdf - 1.) / surf_width) * norm # add exponential boost near surface
+                    pdf += core_amp * np.exp(-(cdf - core_mean) ** 2 / core_width) * norm # add gaussian boost hopefully near core boundary
+
+                    # turn the distribution function back into a cumulative function
+                    out = np.cumsum(1. / pdf)
+                    # stretch and slide to map onto (0,1)
+                    out -= out[0]
+                    out /= out[-1]
+                    return out        
+
+                def zero_me(core_mean):    
+    
+                    mass = mesh_func(core_mean) * self.mtot
+
+                    k_mesh_boost = int(core_mean * self.nz)
+                    try:
+                        m_mesh_boost = mass[k_mesh_boost] / const.mearth # in earth masses
+                    except IndexError:
+                        return np.inf
+                    
+                    # print core_mean[0], (m_mesh_boost - mcore)
+                        
+                    return (m_mesh_boost - mcore) / mcore
+    
+                t0 = time.time()
+                import scipy.optimize
+                sol = scipy.optimize.root(zero_me, np.array([0.2]), tol=1e-3)
+                if not sol.success:
+                    print sol
+                    raise RuntimeError('failed in root find for fmean for mesh flat_with_surface_exponential_core_gaussian')
+
+                self.fmean_core_bdy_mesh_boost = sol.x
+                return mesh_func(sol.x)
+            
+        elif self.mesh_params['mesh_func_type'] == 'tanh_with_surface_exponential':
             f0 = 0.5 * (1. + np.tanh(5. * (t * np.pi / 2 - np.pi / 4)))
             density_f0 = 1. / np.diff(f0)
             density_f0 = np.insert(density_f0, 0, density_f0[0])
-            density_f0 += self.amplitude_surface_mesh_boost * f0 * np.exp((f0 - 1.) / self.width_surface_mesh_boost) * np.mean(density_f0)
+            density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * np.mean(density_f0)
             out = np.cumsum(1. / density_f0)
             out -= out[0]
             out /= out[-1]
             return out
-        elif self.mesh_func_type == 'hybrid': # start with tanh and add extra resolution around some k/nz
-            assert self.amplitude_transition_mesh_boost is not None, 'must specify amplitude amplitude_transition_mesh_boost if mesh_func_type is hybrid.'
-            assert self.kf_transition_mesh_boost is not None, 'must specify fractional zone number kf_transition_mesh_boost if mesh_func_type is hybrid.'
-            assert self.width_transition_mesh_boost, 'must specify width width_transition_mesh_boost if mesh_func_type is hybrid.'
+        elif self.mesh_params['mesh_func_type'] == 'hybrid': # start with tanh and add extra resolution around some k/nz
             
-            a = self.amplitude_transition_mesh_boost # nominally 1
-            b = self.kf_transition_mesh_boost
-            c = self.width_transition_mesh_boost
+            a = self.mesh_params['amplitude_transition_mesh_boost']
+            b = self.mesh_params['kf_transition_mesh_boost']
+            c = self.mesh_params['width_transition_mesh_boost']
             
             # our typical tanh mesh for good resolution near surface
             f0 = 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
@@ -215,7 +239,7 @@ class evol:
             out /= out[-1]
             return out
         else:
-            raise ValueError('mesh type %s not recognized.' % self.mesh_func_type)
+            raise ValueError('mesh type %s not recognized.' % self.mesh_params['mesh_func_type'])
             
             
     # when building non-isentropic models [for instance, a grad(P, T, Y, Z)=grada(P, T, Y, Z) model
@@ -298,30 +322,26 @@ class evol:
             assert self.hhe_phase_diagram, 'cannot include h/he immiscibility without specifying hhe_phase_diagram.'
         
         # model atmospheres
-        if 0.9 <= self.mtot / const.mjup <= 1.1:
-            if verbose: print 'using jupiter atmosphere tables'
-            if self.atm_option is 'f11_tables':
-                import f11_atm
-                atm = f11_atm.atm(self.path_to_data, 'jup')
-            elif self.atm_option is 'f11_fit':
-                import f11_atm_fit
-                atm = f11_atm_fit.atm(self.path_to_data, 'jup')
+        try:
+            atm_type, atm_planet = self.atm_option.split()
+        except ValueError: # decide J or S based on total mass
+            atm_type = self.atm_option
+            if 0.9 < mtot / const.mjup < 1.1:
+                atm_planet = 'jup'
+            elif 0.9 < mtot / const.msat < 1.1:
+                atm_planet = 'sat'
             else:
-                raise ValueError('atm_option %s not recognized.' % self.atm_option)
-            self.teq = 109.0 # make this free parameter!
-        elif 0.9 <= self.mtot / const.msat <= 1.1:
-            if verbose: print 'using saturn atmosphere tables'
-            if self.atm_option is 'f11_tables':
-                import f11_atm
-                atm = f11_atm.atm(self.path_to_data, 'sat')
-            elif self.atm_option is 'f11_fit':
-                import f11_atm_fit
-                atm = f11_atm_fit.atm('sat')
-            else:
-                raise ValueError('atm_option %s not recognized.' % self.atm_option)
-            self.teq = 81.3 # make this free parameter!
+                raise ValueError('mass is too far from jup or sat to use their model atmospheres.')
+        teq = {'jup':109., 'sat':81.3}
+        if atm_type == 'f11_tables':
+            import f11_atm
+            atm = f11_atm.atm(self.path_to_data, atm_planet)
+        elif atm_type is 'f11_fit':
+            import f11_atm_fit
+            atm = f11_atm_fit.atm(self.path_to_data, atm_planet)
         else:
-            raise ValueError('model is not within 10 percent of either Jupiter- or Saturn- mass; surface is bound to run off J or S tables. implement a general model atmosphere option.')
+            raise ValueError('atm_option %s not recognized.' % self.atm_option)
+        self.teq = teq[atm_planet] # make this free parameter!
         
         self.core_prho_relation = core_prho_relation # if None (default), use z_eos_option
         
@@ -343,7 +363,10 @@ class evol:
         assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
         if mcore > 0.:
             t = np.linspace(0, 1, self.nz - 1)
-            self.m = self.mtot * self.mesh_func(t) # grams
+            if self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
+                self.m = self.mtot * self.mesh_func(t, mcore=mcore) # passes mcore so that core-boundary-mesh-boost coincides with core boundary.
+            else:
+                self.m = self.mtot * self.mesh_func(t)
             self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
             self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
             self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
@@ -418,7 +441,12 @@ class evol:
         self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at temperature of core-mantle boundary
         
         # identify molecular-metallic transition. not relevant for U, N
-        self.ktrans = np.where(self.p >= self.hydrogen_transition_pressure * 1e12)[0][-1]
+        try:
+            self.ktrans = np.where(self.p >= self.hydrogen_transition_pressure * 1e12)[0][-1]
+        except IndexError:
+            # might fail to find this transition if current pressure guess is still poor.
+            # not too important where it goes; hydro iterations will take care of actual location.
+            self.ktrans = int(2. * self.nz / 3)
 
         # set y, z of inner envelope if indeed we have three layers
         if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope.
@@ -468,7 +496,15 @@ class evol:
             self.p[:-1] = self.p[-1] + np.cumsum(dp[::-1])[::-1]
                         
             # identify molecular-metallic transition
-            self.ktrans = np.where(self.p >= hydrogen_transition_pressure * 1e12)[0][-1]
+            try:
+                self.ktrans = np.where(self.p >= hydrogen_transition_pressure * 1e12)[0][-1]
+            except IndexError:
+                # sometimes happens early in iterations if trying larger transition pressures.
+                if iteration < 2:
+                    self.ktrans = int(2. * self.nz / 3)
+                else:
+                    print 'failed to locate molecular-metallic transition in hydro iteration %i. max p = %g.' % (iteration, max(self.p))
+                    raise HydroError('found no molecular-metallic transition. ptrans, max p', hydrogen_transition_pressure*1e12, max(self.p))
 
             if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
                 assert zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
@@ -709,6 +745,10 @@ class evol:
         
         # calculate the gravity and get intrinsic temperature from the model atmospheres.
         self.surface_g = const.cgrav * mtot / self.r[-1] ** 2
+        if self.surface_g * 1e-2 > max(atm.g_grid):
+            raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, max(atm.g_grid)))
+        elif self.surface_g * 1e-2 < min(atm.g_grid):
+            raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, min(atm.g_grid)))
         try:
             self.tint = atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
@@ -718,7 +758,7 @@ class evol:
                 print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
             else:
                 print 'zenv = ', self.zenv
-            raise AtmError('off atm tables: g_mks = %5.2f, t10 = %5.2f. rtot = %10.5g' % (self.surface_g*1e-2, self.t10, self.rtot))
+            raise AtmError('unspecified ValueError from atmosphere grid. g_mks=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
         self.entropy = np.zeros_like(self.p)
         # experimenting with including entropy of core material (don't bother with aneos, it's not a column).
         if include_core_entropy:
@@ -781,7 +821,7 @@ class evol:
         
         # terms needed for calculation of the composition term brunt_B.
         if self.kcore > 0:
-            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative
+            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative # throws divide by zero encountered in log; fix
         else:
             self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
         # this is the thermodynamic derivative (const P and T), for H-He.
@@ -1263,130 +1303,7 @@ class evol:
             print 'wrote history data to %s.history' % output_prefix
             
         return self.history
-        
-    def adjust_rho_given_updated_p(self):
-        
-        """recompute full density profile given that self.p has changed. used for tof after 
-        non-spherical hydro integration gives an adjusted pressure profile."""
-                
-        # set density within the core
-        if self.core_prho_relation:
-            self.rho[:self.kcore] = 8 # just an initial guess for root find of hubbard + marley p-rho relations
-            if self.core_prho_relation == 'hm89 rock':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-            elif self.core_prho_relation == 'hm89 ice':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
-            else:
-                assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-        else:
-            self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
             
-        # identify molecular-metallic transition and set Z, Y
-        self.ktrans = np.where(self.p >= self.hydrogen_transition_pressure * 1e12)[0][-1]
-        if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
-            assert self.zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
-            assert self.zenv_inner >= self.zenv_outer, 'no z inversion allowed.'
-            self.z[self.kcore:self.ktrans] = self.zenv_inner
-            self.z[self.ktrans:] = self.zenv_outer
-        else:
-            self.z[self.kcore:] = self.zenv
-        self.z[:self.kcore] = 1.
-        
-        if self.yenv_inner:
-            assert self.yenv_inner > 0, 'if you want a Y-free envelope, no need to specify yenv_inner.'
-            assert self.yenv_inner >= self.yenv_outer, 'no y inversion allowed.'
-            self.y[self.kcore:self.ktrans] = self.yenv_inner
-            self.y[self.ktrans:] = self.yenv_outer
-        else:
-            self.y[self.kcore:] = self.yenv
-        self.y[:self.kcore] = 0.
-
-        # set density in XYZ envelope
-        self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:]) # XYZ envelope
-        
-    def adjust_mcore(self, mcore):
-        
-        """recompute full density profile to satisfy a new value for the core mass. does what the above function does and more."""
-        
-        if mcore == self.mcore: 
-            print 'same mcore, do nothing'
-            return
-        
-        mcore_grows = mcore > self.mcore
-        
-        self.mcore_old = self.mcore # in case we want to check later
-        self.kcore_old = self.kcore
-
-        # create a slightly different mass grid so that core boundary is at right place to satisfy desired core mass
-        assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
-        if mcore > 0.:
-            t = np.linspace(0, 1, self.nz - 1)
-            self.m = self.mtot * self.mesh_func(t) # grams
-            self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
-            self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
-            self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
-            self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
-        else: # no need for extra precautions
-            t = np.linspace(0, 1, self.nz)
-            self.m = self.mtot * self.mesh_func(t) # grams   
-            self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
-            self.kcore = 0 # lets a slice like [kcore:ktrans] still make sense
-
-        self.mcore = mcore
-        
-        # before we evaluate density in core, we need to know the right temperature. if our core is becoming
-        # larger, then this is trivial; the isothermal core is now cooler because it fits a point farther
-        # out on the envelope adiabat.
-        if mcore_grows:
-            self.t[:self.kcore] = self.t[self.kcore]
-        else:
-            # core is hotter because the envelope adiabat goes deeper before we reach core material.
-            for k in np.arange(self.kcore_old + 1)[::-1]:
-                self.y[k] = self.y[k+1]
-                if k == self.kcore - 1:
-                    break
-                self.grada[k] = self.hhe_eos.get_grada(np.log10(self.p[k]), np.log10(self.t[k]), self.y[k])
-                dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
-                dlnt = self.grada[k] * dlnp
-                self.t[k] = self.t[k+1] * (1. + dlnt)
-                
-            self.t[:self.kcore] = self.t[self.kcore]
-        
-        # set density within the core
-        if self.core_prho_relation:
-            self.rho[:self.kcore] = 8 # just an initial guess for root find of hubbard + marley p-rho relations
-            if self.core_prho_relation == 'hm89 rock':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_rock(self.p[:self.kcore], self.rho[:self.kcore])
-            elif self.core_prho_relation == 'hm89 ice':
-                self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
-            else:
-                assert ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
-        else:
-            self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-            
-        # identify molecular-metallic transition and set Z, Y
-        self.ktrans = np.where(self.p >= self.hydrogen_transition_pressure * 1e12)[0][-1]
-        if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
-            assert self.zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
-            assert self.zenv_inner >= self.zenv_outer, 'no z inversion allowed.'
-            self.z[self.kcore:self.ktrans] = self.zenv_inner
-            self.z[self.ktrans:] = self.zenv_outer
-        else:
-            self.z[self.kcore:] = self.zenv
-        self.z[:self.kcore] = 1.
-        
-        if self.yenv_inner:
-            assert self.yenv_inner > 0, 'if you want a Y-free envelope, no need to specify yenv_inner.'
-            assert self.yenv_inner >= self.yenv_outer, 'no y inversion allowed.'
-            self.y[self.kcore:self.ktrans] = self.yenv_inner
-            self.y[self.ktrans:] = self.yenv_outer
-        else:
-            self.y[self.kcore:] = self.yenv
-        self.y[:self.kcore] = 0.
-
-        # set density in XYZ envelope
-        self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:]) # XYZ envelope
-    
         
     def smooth(self, array, std, type='flat'):
         '''moving gaussian filter to smooth an array. wrote this to artificially smooth brunt composition term for seismology purposes.'''

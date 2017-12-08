@@ -111,23 +111,6 @@ class atm:
         
         min_tint = max(min_tint_g_lo, min_tint_g_hi)
         max_tint = min(max_tint_g_lo, max_tint_g_hi)
-                                
-        # try:
-        #     tint = brentq(zero_me, min_tint, max_tint)
-        # except ValueError:
-        #     print
-        #     print 'inadequate brackets for brent solve.'
-        #     print 'g, t10', g, t10
-        #     print 'g_lo, g_hi', g_lo, g_hi
-        #     print 'min_tint_g_lo, min_tint_g_hi', min_tint_g_lo, min_tint_g_hi
-        #     print 'max_tint_g_lo, max_tint_g_hi', max_tint_g_lo, max_tint_g_hi
-        #     print 'min_tint', min_tint
-        #     print 'max_tint', max_tint
-        #     print 't10(min_tint)', self.get_t10((g, min_tint))
-        #     print 't10(max_tint)', self.get_t10((g, max_tint))
-        #     print
-        #     raise
-        # return tint
-        
+                                        
         return brentq(zero_me, min_tint, max_tint)
         
