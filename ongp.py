@@ -371,11 +371,13 @@ class evol:
             self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
             self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
             self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
-        else: # no need for extra precautions
+        elif mcore == 0.: # no need for extra precautions
             t = np.linspace(0, 1, self.nz)
             self.m = self.mtot * self.mesh_func(t) # grams   
             self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
             self.kcore = 0         
+        else:
+            raise UnphysicalParameterError('bad core mass %g' % mcore)
         self.mcore = mcore
         
         self.grada = np.zeros_like(self.m)
@@ -1469,4 +1471,7 @@ class AtmError(Exception):
     pass
     
 class HydroError(Exception):
+    pass
+    
+class UnphysicalParameterError(Exception):
     pass

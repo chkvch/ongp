@@ -148,9 +148,11 @@ class eos:
         pair = (logp, logt)
         res = {}
         if type(y) is np.ndarray:
-            assert np.all(0. <= y) and np.all(y <= 1.), 'invalid helium mass fraction'
+            if not np.all(0. <= y) and np.all(y <= 1.):
+                raise ValueError('invalid helium mass fraction(s)')
         elif type(y) is np.float64:
-            assert 0. <= y <= 1., 'invalid helium mass fraction %f' % y
+            if not 0. <= y <= 1.:
+                raise ValueError('invalid helium mass fraction %f' % y)
         try:
             res = self.get_hhe(pair, y)
         except ValueError:
