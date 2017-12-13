@@ -534,11 +534,11 @@ class evol:
                 #     (num_nans, np.log10(self.t[np.isnan(self.grada)][0]), np.log10(self.p[np.isnan(self.grada)][0]), \
                 #     np.log10(self.t[np.isnan(self.grada)][-1]), np.log10(self.p[np.isnan(self.grada)][-1])))
                 
-                if iteration < 5 and len(self.grada[np.isnan(self.grada)]) < self.nz / 4:
+                if iteration < 10 and len(self.grada[np.isnan(self.grada)]) < self.nz / 4:
                     '''early in iterations and fewer than nz/4 nans; attempt to coax grada along.
                     
-                    always always always iteration 2.
-                    
+                    seems more of a problem with large hydrogen_transition_pressure.
+                                        
                     really not a big deal if we invent some values for grada this early in iterations since
                     many more iterations will follow.
                     '''
@@ -584,7 +584,17 @@ class evol:
                 self.rho[self.kcore:] = self.get_rho_xyz(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:], self.z[self.kcore:]) # XYZ envelope
             
             if np.any(np.isnan(self.rho)):
-                raise EOSError('have one or more nans in rho after eos call.')
+                if iteration < 5: # try and coax along
+                    where_nans = np.where(np.isnan(self.rho))
+                    k_first_nan = where_nans[0][0]
+                    k_last_nan = where_nans[0][-1]
+                    last_good_rho = self.rho[k_first_nan - 1]
+                    first_good_rho = self.rho[k_last_nan + 1]
+                    self.rho[k_first_nan:k_last_nan+1] = (self.r[k_first_nan:k_last_nan+1] - self.r[k_first_nan]) \
+                                                            / (self.r[k_last_nan+1] - self.r[k_first_nan]) \
+                                                            * (first_good_rho - last_good_rho) + last_good_rho
+                else:
+                    raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), iteration))
                 
             
             # continuity
