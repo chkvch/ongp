@@ -2,6 +2,13 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 
+'''
+this module interpolates in the tabulated model atmospheres of
+Fortney, Ikoma, Nettelmann, Guillot, and Marley 2011 for J, S, U, N.
+ApJ 729:32
+doi:10.1088/0004-637X/729/1/32
+'''
+
 class atm:
     
     def __init__(self, path_to_data, planet='jup', print_table=False):

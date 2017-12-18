@@ -64,7 +64,7 @@ uranus_semimajor_axis = 30.1 * au
 neptune_incident_flux = lsun / 4. / np.pi / neptune_semimajor_axis ** 2
 uranus_incident_flux = lsun / 4. / np.pi / uranus_semimajor_axis ** 2
 
-uranus_mass = 86.813e27
+uranus_mass = mura = 86.813e27
 uranus_gm = 5.794e6 * 1e15 # G*M. conversion is for km^3 to cm^3
 uranus_req = 25559e5
 uranus_rpol = 24973e5
@@ -74,7 +74,7 @@ uranus_rotation_period = 17.24 * 60 * 60
 uranus_omega_rot = 2. * np.pi / uranus_rotation_period
 uranus_omega_dyn = np.sqrt(uranus_gm / uranus_rvol ** 3)
 
-neptune_mass = 102.413e27
+neptune_mass = mnep = 102.413e27
 neptune_gm = 6.8351e6 * 1e15
 neptune_req = 24764e5
 neptune_rpol = 24341e5
