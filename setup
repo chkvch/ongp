@@ -1,0 +1,8 @@
+#!/usr/bin/python
+# Run this script from your on_GP root directory.
+import os
+
+# creates a directory for storing on_GP config files.
+os.system("git clone https://github.com/rschroder/gp_configs")
+os.system("mkdir output")
+
