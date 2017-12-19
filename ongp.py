@@ -44,7 +44,8 @@ class evol:
 
     def __init__(self,
         hhe_eos_option='scvh',
-        z_eos_option=None,
+        z_eos_option='reos water',
+        z_eos=None,
         atm_option='f11_tables',
         hhe_phase_diagram=None,
         nz=1024,
@@ -315,6 +316,7 @@ class evol:
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important
 					transition_pressure=1., # pressure to assume for some kind of discontinuity for y or z
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a tabular Z eos
+                    z_eos_option=None,
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before
@@ -334,6 +336,7 @@ class evol:
 
         self.mtot = mtot
         self.t1 = t1
+        self.z_eos_option=z_eos_option
 
         self.transition_pressure = transition_pressure
 
