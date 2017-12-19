@@ -44,7 +44,8 @@ class evol:
 
     def __init__(self,
         hhe_eos_option='scvh',
-        z_eos_option=None,
+        z_eos_option='reos water',
+        z_eos=None,
         atm_option='f11_tables',
         hhe_phase_diagram=None,
         nz=1024,
@@ -113,7 +114,7 @@ class evol:
         self.t = np.zeros(self.nz)
         self.y = np.zeros(self.nz)
         self.z = np.zeros(self.nz)
-        
+
         # default mesh
         self.mesh_params = {
             'mesh_func_type':'flat_with_surface_exponential_core_gaussian',
@@ -327,6 +328,7 @@ class evol:
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important
 					transition_pressure=1., # pressure to assume for some kind of discontinuity for y or z
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a tabular Z eos
+                    z_eos_option=None,
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before
@@ -346,6 +348,7 @@ class evol:
 
         self.mtot = mtot
         self.t1 = t1
+        self.z_eos_option=z_eos_option
 
         self.transition_pressure = transition_pressure
 
@@ -361,9 +364,13 @@ class evol:
                 atm_planet = 'jup'
             elif 0.9 < mtot / const.msat < 1.1:
                 atm_planet = 'sat'
+            elif 0.9 < mtot / const.mura < 1.1:
+                atm_planet = 'u'
+            elif 0.9 < mtot / const.mnep < 1.1:
+                atm_planet = 'n'
             else:
                 raise ValueError('mass is too far from jup or sat to use their model atmospheres.')
-        teq = {'jup':109., 'sat':81.3}
+        teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}  # uranus: pearl, hanel 1990 icarus. uranus: pearl, conrath 1991 journal of geophys. research
         if atm_type == 'f11_tables':
             import f11_atm
             reload(f11_atm)
@@ -420,9 +427,9 @@ class evol:
         self.z[:self.kcore] = 1.
         assert zenv >= 0., 'got negative zenv %g' % zenv
         self.z[self.kcore:] = self.zenv_outer
-        
+
         self.iters = 0
-        
+
         # get density everywhere based on primitive guesses
         self.set_core_density()
         self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
@@ -457,7 +464,7 @@ class evol:
         oldRadii = (0, 0, 0)
         for iteration in xrange(self.max_iters_for_static_model):
             self.iters += 1
-            
+
             self.integrate_hydrostatic()
             self.locate_transition_pressure()
             self.set_yz()
@@ -763,7 +770,7 @@ class evol:
         self.bulk_z = self.mz / self.mtot
         self.ysurf = self.y[-1]
         self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
-        
+
         # axial moment of inertia if spherical, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
         self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
 
@@ -936,8 +943,8 @@ class evol:
 
         if np.any(np.isnan(self.p)):
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
-        
-    
+
+
     def integrate_temperature(self, adiabatic=True):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
@@ -967,10 +974,10 @@ class evol:
                     raise RuntimeError('got infinite temperature in integration of non-ad gradt. k %i, gradt[k+1] %i, brunt_b[k] %g' % (k, self.gradt[k+1], self.brunt_b[k]))
 
         self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at temperature of core-mantle boundary
-        
+
         if np.any(np.isnan(self.t)):
             raise EOSError('%i nans in temperature after integrate gradt on static iteration %i.' % (len(self.t[np.isnan(self.t)]), self.iters))
-    
+
     def locate_transition_pressure(self):
         '''
         identify some transition pressure.
@@ -1013,10 +1020,10 @@ class evol:
             assert self.yenv_inner >= self.yenv, 'no y inversion allowed.'
             self.y[self.kcore:self.ktrans] = self.yenv_inner
             self.y[self.ktrans:] = self.yenv_outer
-            
+
         self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
-            
-            
+
+
     def grada_check_nans(self):
         # a nan might appear in grada if a p, t point is just outside the original tables.
         # e.g., this was happening at logp, logt = 11.4015234804 3.61913879612, just under
@@ -1027,12 +1034,12 @@ class evol:
             # raise EOSError('%i nans in grada. first (logT, logP)=(%f, %f); last (logT, logP) = (%f, %f)' % \
             #     (num_nans, np.log10(self.t[np.isnan(self.grada)][0]), np.log10(self.p[np.isnan(self.grada)][0]), \
             #     np.log10(self.t[np.isnan(self.grada)][-1]), np.log10(self.p[np.isnan(self.grada)][-1])))
-        
+
             if self.iters < 5 and len(self.grada[np.isnan(self.grada)]) < self.nz / 4:
                 '''early in iterations and fewer than nz/4 nans; attempt to coax grada along.
-            
+
                 seems more of a problem with large transition_pressure.
-                                
+
                 really not a big deal if we invent some values for grada this early in iterations since
                 many more iterations will follow.
                 '''
@@ -1045,7 +1052,7 @@ class evol:
                 self.grada[k_first_nan:k_last_nan+1] = (self.r[k_first_nan:k_last_nan+1] - self.r[k_first_nan]) \
                                                         / (self.r[k_last_nan+1] - self.r[k_first_nan]) \
                                                         * (first_good_grada - last_good_grada) + last_good_grada
-            else: # abort                
+            else: # abort
                 print '%i nans in grada for iteration %i, stopping' % (num_nans, self.iters)
                 with open('grada_nans.dat', 'w') as fw:
                     for k, val in enumerate(self.grada):
@@ -1053,7 +1060,7 @@ class evol:
                             fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
                 print 'saved problematic logp, logt, y to grada_nans.dat'
                 raise EOSError('%i nans in grada after eos call on static iteration %i.' % (len(self.grada[np.isnan(self.grada)]), self.iters))
-    
+
     def rho_check_nans(self):
         if np.any(np.isnan(self.rho)):
             if self.iters < 5: # try and coax along by connecting the dots
@@ -1084,6 +1091,7 @@ class evol:
                 include_core_entropy=False,
                 gammainv_erosion=1e-1, # for core erosion rate estimates
                 luminosity_erosion_option=None,
+                z_eos_option=None,
                 timesteps_ease_in=None):
 
         '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
@@ -1129,6 +1137,7 @@ class evol:
                                 phase_t_offset=phase_t_offset,
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y,
                                 rrho_where_have_helium_gradient=rrho_where_have_helium_gradient,
+                                z_eos_option=z_eos_option,
                                 include_core_entropy=include_core_entropy)
                 walltime = time.time() - start_time
             except ValueError:
