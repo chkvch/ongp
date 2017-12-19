@@ -1,6 +1,6 @@
 *.tar
 *.gz
-data
+*data*
 output
 figures
 .ipynb_checkpoints
@@ -9,4 +9,7 @@ figures
 .DS_Store
 run.py
 *.pyc
+*config*
 *~
+*.log
+
