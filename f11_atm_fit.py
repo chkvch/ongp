@@ -17,7 +17,7 @@ class atm:
         assert planet in ['jup', 'sat'], 'planet label %s not recognized. choose from jup, sat' % planet
         self.planet = planet
         
-        if planet is 'jup':
+        if self.planet == 'jup':
             self.clo = 78.4e0
             self.klo = 0.0055e0
             self.t0lo = -122e0
@@ -32,7 +32,7 @@ class atm:
 
             self.tmid = 224e0
             self.dt = 25e0
-        elif planet is 'sat':
+        elif self.planet == 'sat':
 			self.clo = 62.7e0
 			self.klo = 0.00202e0
 			self.t0lo = -97.1e0
