@@ -1,11 +1,11 @@
 import numpy as np
 import const; reload(const)
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, splrep, splev
 from scipy.optimize import brentq
 
 class eos:
     
-    def __init__(self, path_to_data, use_raw_tables=False, fac_for_numerical_partials=1e-10):
+    def __init__(self, path_to_data, fac_for_numerical_partials=1e-10):
         '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
@@ -17,15 +17,15 @@ class eos:
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06
         
-        if use_raw_tables:
-            path_to_h_data = '%s/scvh_h_original.dat' % self.path_to_data
-            path_to_he_data = '%s/scvh_he_original.dat' % self.path_to_data
-        else:
-            # use versions with two extra nodes in logp, logt, calculated by extrapolating on isotherms.
-            # I tended to run just too low in logT near logP=11.4, 11.6 for Saturn models.
-            path_to_h_data = '%s/scvh_h.dat' % self.path_to_data
-            path_to_he_data = '%s/scvh_he.dat' % self.path_to_data
+        path_to_h_data = '%s/scvh_h.dat' % self.path_to_data
+        path_to_he_data = '%s/scvh_he.dat' % self.path_to_data
         
+        # for logt = 3.38, 3.46, 3.54, extrapolate up to logp = 11.6, 11.8, 12.0
+        # on isotherms. necessary to have these points for some Saturn models.
+        logpvals_to_fill = np.array([11.6, 11.8, 12.0])
+        logtvals_to_fill = np.array([3.38, 3.46, 3.54])
+        npts_extrap = 5
+
         self.h_names = 'logp', 'xh2', 'xh', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.h_data = {}
         logtvals_h = np.array([])
@@ -35,12 +35,24 @@ class eos:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
-                    # print 'reading %i rows for logT = %f' % (nrows, logt)
-                    data = np.genfromtxt(path_to_h_data, skip_header=i+1, max_rows=nrows, 
-                        names=self.h_names)
+                    _data = np.genfromtxt(path_to_h_data, skip_header=i+1, max_rows=nrows, names=self.h_names)
+
+                    # this ndarray is too annoying, convert data for this logt to a dict
+                    data = {}
+                    for name in self.h_names:
+                        data[name] = _data[name]
+                   
+                    if logt in logtvals_to_fill:
+                        for name in self.h_names:
+                            if name == 'logp': continue
+                            tck = splrep(data['logp'][-npts_extrap:], data[name][-npts_extrap:], k=1)
+                            new = splev(logpvals_to_fill, tck)
+                            data[name] = np.append(data[name], new)
+                        data['logp'] = np.append(data['logp'], logpvals_to_fill)
                     self.h_data[logt] = data
-                    logtvals_h = np.append(logtvals_h, logt)
                     
+                    logtvals_h = np.append(logtvals_h, logt)
+                                                            
         self.he_names = 'logp', 'xhe', 'xhep', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.he_data = {}
         logtvals_he = np.array([])
@@ -50,10 +62,22 @@ class eos:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
-                    # print 'reading %i rows for logT = %f' % (nrows, logt)
-                    data = np.genfromtxt(path_to_he_data, skip_header=i+1, max_rows=nrows, 
-                        names=self.he_names)
+                    _data = np.genfromtxt(path_to_he_data, skip_header=i+1, max_rows=nrows, names=self.he_names)
+
+                    # this ndarray is too annoying, convert data for this logt to a dict
+                    data = {}
+                    for name in self.he_names:
+                        data[name] = _data[name]
+                   
+                    if logt in logtvals_to_fill:
+                        for name in self.he_names:
+                            if name == 'logp': continue
+                            tck = splrep(data['logp'][-npts_extrap:], data[name][-npts_extrap:], k=1)
+                            new = splev(logpvals_to_fill, tck)
+                            data[name] = np.append(data[name], new)
+                        data['logp'] = np.append(data['logp'], logpvals_to_fill)
                     self.he_data[logt] = data
+                    
                     logtvals_he = np.append(logtvals_he, logt)
                     
         assert np.all(logtvals_h == logtvals_he) # verify H an He are on the same temperature grid
@@ -290,7 +314,8 @@ class eos:
         qty is a string corresponding to any one of the dependent variables, e.g., 'logs'.'''
         data_for_this_logt = self.h_data[logt]
         try:
-            return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            # return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            return data_for_this_logt[qty][data_for_this_logt['logp'] == logp][0]
         except IndexError: # off tables
             return np.nan
         
@@ -299,7 +324,8 @@ class eos:
         qty is a string corresponding to any one of the dependent variables, e.g., 'logs'.'''
         data_for_this_logt = self.he_data[logt]
         try:
-            return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            # return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            return data_for_this_logt[qty][data_for_this_logt['logp'] == logp][0]
         except IndexError: # off tables
             return np.nan
 
@@ -626,14 +652,11 @@ class eos:
     def plot_pt_coverage(self, ax, symbol, **kwargs):
         for logt in self.logtvals:
             logp = self.h_data[logt]['logp']
-            ax.plot(10 ** logp, np.ones_like(logp) * 10 ** logt, symbol, **kwargs)
+            ax.plot(logp, np.ones_like(logp) * logt, symbol, **kwargs)
     
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        ax.set_xlim(3e-2, 5e19)
-        ax.set_ylim(ymin=3e1)
-        ax.set_xlabel(r'$P$')
-        ax.set_ylabel(r'$T$')
+        ax.set_xlim(-1.5, 19.5)
+        ax.set_xlabel(r'$\log\ P$')
+        ax.set_ylabel(r'$\log T$')
         
     def plot_rhot_coverage(self, ax, symbol, **kwargs):
         for logt in self.logtvals:
