@@ -352,9 +352,13 @@ class evol:
                 atm_planet = 'jup'
             elif 0.9 < mtot / const.msat < 1.1:
                 atm_planet = 'sat'
+            elif 0.9 < mtot / const.mura < 1.1:
+                atm_planet = 'u'
+            elif 0.9 < mtot / const.mnep < 1.1:
+                atm_planet = 'n'
             else:
                 raise ValueError('mass is too far from jup or sat to use their model atmospheres.')
-        teq = {'jup':109., 'sat':81.3}
+        teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}  # uranus: pearl, hanel 1990 icarus. uranus: pearl, conrath 1991 journal of geophys. research
         if atm_type == 'f11_tables':
             import f11_atm
             atm = f11_atm.atm(self.path_to_data, atm_planet)
