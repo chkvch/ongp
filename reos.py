@@ -18,6 +18,7 @@ class eos:
 
         # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 
+        log.debug('')
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
         self.data = np.genfromtxt(path, names=self.names)
 

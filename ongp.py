@@ -54,7 +54,7 @@ class evol:
         **mesh_params):
 
         self.path_to_data = path_to_data
-        log.debug('ready to initialize hydrogen-helium equation of state')
+        log.debug('path to data %s', self.path_to_data)
         # initialize hydrogen-helium equation of state
         if hhe_eos_option == 'scvh':
             import scvh; reload(scvh)

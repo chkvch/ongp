@@ -24,6 +24,7 @@ class atm:
     def __init__(self, planet='jup', print_table=False):
         assert planet in ['jup', 'sat'], 'planet label %s not recognized. choose from jup, sat' % planet
         self.planet = planet
+        log.debug('planet is %s', self.planet)
 
         if self.planet == 'jup':
             self.clo = 78.4e0

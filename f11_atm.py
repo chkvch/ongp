@@ -22,6 +22,7 @@ class atm:
 
         assert planet in ['jup', 'sat', 'u', 'n'], 'planet label %s not recognized. choose from jup, sat, u, n.' % planet
         self.planet = planet
+        log.debug('planet is %s', self.planet)
 
         names = 'g', 'teff', 't10', 'teff_dim_sun', 't10_dim_sun', 'tint'
         log.debug('reading table from %s/f11_atm_%s.dat' % (path_to_data, self.planet))
