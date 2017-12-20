@@ -12,4 +12,4 @@ run.py
 *config*
 *~
 *.log
-
+sync_with_upstream.sh
