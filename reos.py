@@ -1,13 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
+import gp_configs.app_config as app_cfg
+import gp_configs.model_config as model_cfg
+import logging
+import config_const as conf
+
+log = logging.getLogger(__name__)
+logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+log.setLevel(conf.log_level)
 
 class eos:
-    
+
     def __init__(self, path_to_data):
 
         path = '%s/reos_water_pt.dat' % path_to_data
-        
+
         # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
@@ -15,15 +23,15 @@ class eos:
 
         self.logpvals = np.unique(self.data['logp'])
         self.logtvals = np.unique(self.data['logt'])
-        
+
         self.logpmin = min(self.logpvals)
         self.logpmax = max(self.logpvals)
         self.logtmin = min(self.logtvals)
         self.logtmax = max(self.logtvals)
-                
+
         self.nptsp = len(self.logpvals)
         self.nptst = len(self.logtvals)
-        
+
         self.logrho_on_pt = np.zeros((self.nptsp, self.nptst))
         self.logu_on_pt = np.zeros((self.nptsp, self.nptst))
         self.logs_on_pt = np.zeros((self.nptsp, self.nptst))
@@ -45,12 +53,12 @@ class eos:
         pt_basis = (self.logpvals, self.logtvals)
         self._get_logrho = RegularGridInterpolator(pt_basis, self.logrho_on_pt, bounds_error=False)
         self._get_logu = RegularGridInterpolator(pt_basis, self.logu_on_pt)
-        self._get_logs = RegularGridInterpolator(pt_basis, self.logs_on_pt)        
-        self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_pt)        
-        self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_pt)        
-        self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_pt)        
-                
-    def get_logrho(self, logp, logt):        
+        self._get_logs = RegularGridInterpolator(pt_basis, self.logs_on_pt)
+        self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_pt)
+        self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_pt)
+        self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_pt)
+
+    def get_logrho(self, logp, logt):
         return self._get_logrho((logp, logt))
 
     def get_logu(self, logp, logt):
@@ -58,7 +66,7 @@ class eos:
 
     def get_logs(self, logp, logt):
         return self._get_logs((logp, logt)) # + 10. # kJ/g/K to erg/g/K
-        
+
     def get_chit(self, logp, logt):
         return self._get_chit((logp, logt))
 
@@ -67,7 +75,7 @@ class eos:
 
     def get_gamma1(self, logp, logt):
         return self._get_gamma1((logp, logt))
-                
+
     def get_dlogrho_dlogp_const_t(self, logp, logt, f=1e-1):
         logp_lo = logp - np.log10(1. - f)
         logp_hi = logp + np.log10(1. + f)
@@ -95,7 +103,7 @@ class eos:
         logs_lo = self.get_logs(logp, logt_lo)
         logs_hi = self.get_logs(logp, logt_hi)
         return (logs_hi - logs_lo) / (logt_hi - logt_lo)
-        
+
     def get_cp(self, logp, logt):
         rhop = self.get_dlogrho_dlogp_const_t(logp, logt)
         rhot = self.get_dlogrho_dlogt_const_p(logp, logt)

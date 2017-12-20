@@ -8,6 +8,7 @@ import time
 import gp_configs.app_config as app_cfg
 import gp_configs.model_config as model_cfg
 import logging
+import config_const as conf
 
 # this module is adapted from Daniel P. Thorngren's giant planet evolutionary
 # code circa 2016ApJ...831...64T.
@@ -31,14 +32,10 @@ import logging
 #     blends with aneos water at low T. references: 2008ApJ...683.1217N, 2009PhRvB..79e4107F
 #     warn that the entropies
 
-# configure global logging facility
-# DEBUG Detailed information, typically of interest only when diagnosing problems.
-# INFO  Confirmation that things are working as expected.
-# WARNING   An indication that something unexpected happened.
-# ERROR Due to a more serious problem, the software has not been able to perform some function.
-# CRITICAL  A serious error, indicating that the program itself may be unable to continue running.
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
+logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+log.setLevel(conf.log_level)
+
 
 class evol:
 
@@ -144,6 +141,7 @@ class evol:
 
     # mesh function defining mass enclosed within a given zone number
     def mesh_func(self, t, mcore=None):
+        log.debug('mcore is %s', mcore)
         # assumes t runs from 0 at center to 1 at surface
         if self.mesh_params['mesh_func_type'] == 'tanh': # old type
             return 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
