@@ -18,7 +18,7 @@ class eos:
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
 
-        log.debug('')
+        log.debug('message')
         self.path_to_data = path_to_data
 
         self.fac_for_numerical_partials = fac_for_numerical_partials

@@ -33,7 +33,7 @@ class hhe_phase_diagram:
 
     def __init__(self, path_to_data, order=3, smooth=0., t_offset=0., extrapolate_to_low_pressure=True):
 
-        log.debug('')
+        log.debug('message')
         self.path_to_lhs_data = '%s/lorenzen_lhs.dat' % path_to_data
         self.path_to_rhs_data = '%s/lorenzen_rhs.dat' % path_to_data
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
