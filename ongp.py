@@ -45,7 +45,6 @@ class evol:
     def __init__(self,
         hhe_eos_option='scvh',
         z_eos_option='reos water',
-        z_eos=None,
         atm_option='f11_tables',
         hhe_phase_diagram=None,
         nz=1024,
@@ -328,7 +327,6 @@ class evol:
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important
 					transition_pressure=1., # pressure to assume for some kind of discontinuity for y or z
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a tabular Z eos
-                    z_eos_option=None,
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before
@@ -348,7 +346,6 @@ class evol:
 
         self.mtot = mtot
         self.t1 = t1
-        self.z_eos_option=z_eos_option
 
         self.transition_pressure = transition_pressure
 
@@ -356,20 +353,7 @@ class evol:
             assert self.hhe_phase_diagram, 'cannot include h/he immiscibility without specifying hhe_phase_diagram.'
 
         # model atmospheres
-        try:
-            atm_type, atm_planet = self.atm_option.split()
-        except ValueError: # decide J or S based on total mass
-            atm_type = self.atm_option
-            if 0.9 < mtot / const.mjup < 1.1:
-                atm_planet = 'jup'
-            elif 0.9 < mtot / const.msat < 1.1:
-                atm_planet = 'sat'
-            elif 0.9 < mtot / const.mura < 1.1:
-                atm_planet = 'u'
-            elif 0.9 < mtot / const.mnep < 1.1:
-                atm_planet = 'n'
-            else:
-                raise ValueError('mass is too far from jup or sat to use their model atmospheres.')
+        atm_type, atm_planet = self.atm_option.split()
         teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}  # uranus: pearl, hanel 1990 icarus. uranus: pearl, conrath 1991 journal of geophys. research
         if atm_type == 'f11_tables':
             import f11_atm
