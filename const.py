@@ -1,4 +1,8 @@
 import numpy as np
+import logging
+
+
+
 pi = np.pi
 one = 1
 radians_per_cycle = pi * 2
@@ -32,18 +36,18 @@ drsat_eq = 4e5
 rs_pol = rsat_pol = 54364e5 # polar
 drsat_pol = 10e5
 
-cgrav = 6.67408e-8 # this value is NIST / codata reccommended 2014. mesa has 6.67428. 
-h = 6.62606896e-27 
+cgrav = 6.67408e-8 # this value is NIST / codata reccommended 2014. mesa has 6.67428.
+h = 6.62606896e-27
 hbar = h / 2 / np.pi
-qe = 4.80320440e-10 
+qe = 4.80320440e-10
 
-c = clight = 2.99792458e10 
-k = kb = 1.3806504e-16 
+c = clight = 2.99792458e10
+k = kb = 1.3806504e-16
 kb_ev = 8.617385e-5
 avogadro = 6.02214179e23
 rgas = cgas = k * avogadro
 
-amu = 1.660538782e-24 
+amu = 1.660538782e-24
 mn = 1.6749286e-24 # neutron mass (g)
 mp = 1.6726231e-24
 me = 9.10938291e-28
@@ -95,4 +99,3 @@ saturn_rvol = 58232e5
 saturn_rotation_period = 10.656 * 60 * 60
 saturn_omega_rot = 2. * np.pi / saturn_rotation_period
 saturn_omega_dyn = np.sqrt(saturn_gm / saturn_rvol ** 3)
-

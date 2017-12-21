@@ -3,9 +3,11 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 import gp_configs.app_config as app_cfg
 import logging
+import config_const as conf
 
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
+logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+log.setLevel(conf.log_level)
 
 '''
 this module interpolates in the tabulated model atmospheres of
@@ -20,6 +22,7 @@ class atm:
 
         assert planet in ['jup', 'sat', 'u', 'n'], 'planet label %s not recognized. choose from jup, sat, u, n.' % planet
         self.planet = planet
+        log.debug('planet is %s', self.planet)
 
         names = 'g', 'teff', 't10', 'teff_dim_sun', 't10_dim_sun', 'tint'
         log.debug('reading table from %s/f11_atm_%s.dat' % (path_to_data, self.planet))
