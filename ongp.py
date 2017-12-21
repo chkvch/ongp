@@ -158,64 +158,80 @@ class evol:
             out /= out[-1]
             return out
         elif self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
-            if mcore is None:
-                f0 = t
-                density_f0 = 1. / np.diff(f0)
-                density_f0 = np.insert(density_f0, 0, density_f0[0])
-                norm = np.mean(density_f0)
-                density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * norm
-                density_f0 += self.mesh_params['amplitude_core_mesh_boost'] * np.exp(-(f0 - self.mesh_params['fmean_core_bdy_mesh_boost']) ** 2 / self.mesh_params['width_core_mesh_boost']) * norm
-                out = np.cumsum(1. / density_f0)
-                out -= out[0]
-                out /= out[-1]
-                return out
-            else:
-                surf_amp = self.mesh_params['amplitude_surface_mesh_boost']
-                surf_width = self.mesh_params['width_surface_mesh_boost']
-                core_amp = self.mesh_params['amplitude_core_mesh_boost']
-                core_width = self.mesh_params['width_core_mesh_boost']
-
-                cdf = t
-
-                def mesh_func(core_mean):
-                    pdf = 1. / np.diff(cdf)
-                    pdf = np.insert(pdf, 0, pdf[0])
-
-                    norm = np.mean(pdf) # ~nz
-
-                    pdf += surf_amp * cdf * np.exp((cdf - 1.) / surf_width) * norm # add exponential boost near surface
-                    pdf += core_amp * np.exp(-(cdf - core_mean) ** 2 / core_width) * norm # add gaussian boost hopefully near core boundary
-
-                    # turn the distribution function back into a cumulative function
-                    out = np.cumsum(1. / pdf)
-                    # stretch and slide to map onto (0,1)
-                    out -= out[0]
-                    out /= out[-1]
-                    return out
-
-                def zero_me(core_mean):
-
-                    mass = mesh_func(core_mean) * self.mtot
-
-                    k_mesh_boost = int(core_mean * self.nz)
-                    try:
-                        m_mesh_boost = mass[k_mesh_boost] / const.mearth # in earth masses
-                    except IndexError:
-                        return np.inf
-
-                    # print core_mean[0], (m_mesh_boost - mcore)
-
-                    return (m_mesh_boost - mcore) / mcore
-
-                t0 = time.time()
-                import scipy.optimize
-                sol = scipy.optimize.root(zero_me, np.array([0.2]), tol=1e-3)
-                if not sol.success:
-                    print sol
-                    raise RuntimeError('failed in root find for fmean for mesh flat_with_surface_exponential_core_gaussian')
-
-                self.fmean_core_bdy_mesh_boost = sol.x
-                return mesh_func(sol.x)
+            
+            f0 = t
+            density_f0 = 1. / np.diff(f0)
+            density_f0 = np.insert(density_f0, 0, density_f0[0])
+            norm = np.mean(density_f0)
+            density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * norm
+            density_f0 += self.mesh_params['amplitude_core_mesh_boost'] * np.exp(-(f0 - self.mesh_params['fmean_core_bdy_mesh_boost']) ** 2 / self.mesh_params['width_core_mesh_boost']) * norm
+            out = np.cumsum(1. / density_f0)
+            out -= out[0]
+            out /= out[-1]
+            return out
+            
+            # if mcore is None:
+            #     f0 = t
+            #     density_f0 = 1. / np.diff(f0)
+            #     density_f0 = np.insert(density_f0, 0, density_f0[0])
+            #     norm = np.mean(density_f0)
+            #     density_f0 += self.mesh_params['amplitude_surface_mesh_boost'] * f0 * np.exp((f0 - 1.) / self.mesh_params['width_surface_mesh_boost']) * norm
+            #     density_f0 += self.mesh_params['amplitude_core_mesh_boost'] * np.exp(-(f0 - self.mesh_params['fmean_core_bdy_mesh_boost']) ** 2 / self.mesh_params['width_core_mesh_boost']) * norm
+            #     out = np.cumsum(1. / density_f0)
+            #     out -= out[0]
+            #     out /= out[-1]
+            #     return out
+            # else:
+            #     surf_amp = self.mesh_params['amplitude_surface_mesh_boost']
+            #     surf_width = self.mesh_params['width_surface_mesh_boost']
+            #     core_amp = self.mesh_params['amplitude_core_mesh_boost']
+            #     core_width = self.mesh_params['width_core_mesh_boost']
+            #
+            #     cdf = t
+            #
+            #     def mesh_func(core_mean):
+            #         pdf = 1. / np.diff(cdf)
+            #         pdf = np.insert(pdf, 0, pdf[0])
+            #
+            #         norm = np.mean(pdf) # ~nz
+            #
+            #         pdf += surf_amp * cdf * np.exp((cdf - 1.) / surf_width) * norm # add exponential boost near surface
+            #         pdf += core_amp * np.exp(-(cdf - core_mean) ** 2 / core_width) * norm # add gaussian boost hopefully near core boundary
+            #
+            #         # turn the distribution function back into a cumulative function
+            #         out = np.cumsum(1. / pdf)
+            #         # stretch and slide to map onto (0,1)
+            #         out -= out[0]
+            #         out /= out[-1]
+            #         return out
+            #
+            #     def zero_me(core_mean):
+            #
+            #         mass = mesh_func(core_mean) * self.mtot
+            #
+            #         k_mesh_boost = int(core_mean * self.nz)
+            #         try:
+            #             m_mesh_boost = mass[k_mesh_boost] / const.mearth # in earth masses
+            #         except IndexError:
+            #             return np.inf
+            #
+            #         # print core_mean[0], (m_mesh_boost - mcore)
+            #
+            #         return (m_mesh_boost - mcore) / mcore
+            #
+            #     t0 = time.time()
+            #     try:
+            #         import scipy.optimize
+            #         sol = scipy.optimize.root(zero_me, np.array([0.2]), tol=1e-3)
+            #         if not sol.success:
+            #             print sol
+            #             raise RuntimeError('failed in root find for fmean for mesh flat_with_surface_exponential_core_gaussian')
+            #
+            #         self.fmean_core_bdy_mesh_boost = sol.x
+            #         return mesh_func(sol.x)
+            #     except RunTimeError: # failed to find a solution
+            #         self.fmean_core_bdy_mesh_boost = self.mesh_params['fmean_core_bdy_mesh_boost']
+            #         return mesh_func(self.fmean_core_bdy_mesh_boost)
 
         elif self.mesh_params['mesh_func_type'] == 'tanh_with_surface_exponential':
             f0 = 0.5 * (1. + np.tanh(5. * (t * np.pi / 2 - np.pi / 4)))
