@@ -329,7 +329,8 @@ class evol:
         return rhoinv ** -1
 
     def static(self, mtot=const.mjup,
-                    t1=165., # 1-bar temperature
+                    t1=None, # 1-bar temperature
+                    t10=None, # 10-bar temperature
                     yenv=0.27, # helium mass fraction of envelope (or of outer envelope if yenv_inner is not None)
                     zenv=0., # heavy element mass fraction of envelope (or of outer envelope if zenv_inner is not None)
                     mcore=0., # mass of pure-z core in Earth masses.
@@ -361,7 +362,14 @@ class evol:
                 raise ValueError("if type(mtot) is str, first element must be j, s, u, n")
 
         self.mtot = mtot
-        self.t1 = t1
+        if t1 and not t10:
+            self.atm_which_t = 't1'
+            self.t1 = t1
+        elif t10 and not t1:
+            self.atm_which_t = 't10'
+            self.t10 = t10
+        else:
+            raise ValueError('must specify one and only one of t1 or t10.')
 
         self.transition_pressure = transition_pressure
 
@@ -546,17 +554,23 @@ class evol:
         self.rtot = self.r[-1]
         assert abs(self.mtot - self.m[-1]) / self.mtot < 1e-8, 'total mass is off'
 
-        self.t1 = self.t[-1] # this should be true by construction
-        # linearly interpolate to get the 10-bar temperature
-        k10 = np.where(self.p < 1e7)[0][0]
-        tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3)
-        self.t10 = splev(1e7, tck)
+        if self.atm_which_t == 't1': # interpolate in existing t profile to find t10
+            assert self.t1 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            k10 = np.where(self.p < 1e7)[0][0]
+            tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
+            self.t10 = splev(1e7, tck)
+            assert self.t1 > 0., 'bad t1 %g' % self.t1
+        elif self.atm_which_t == 't10':
+            assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            #
+            # TODO write a function in f11_atm.py that will take current g and t10 and return the t1. until then,
+            # no information in the model outside of 10 bars.
+            #
 
-        assert self.t10 > 0., 'negative t10 %g' % self.t10
-        assert self.t1 > 0., 'negative t1 %g' % self.t1
+        assert self.t10 > 0., 'bad t10 %g' % self.t10
 
-        # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module
-        self.surface_g = const.cgrav * mtot / self.r[-1] ** 2
+        # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.
+        self.surface_g = const.cgrav * mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
         if self.atm_option.split()[0] == 'f11_tables':
             if self.surface_g * 1e-2 > max(atm.g_grid):
                 raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, max(atm.g_grid)))
@@ -566,12 +580,15 @@ class evol:
             self.tint = atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
-        except ValueError:
+        except ValueError as e:
             if self.zenv_inner:
                 print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
             else:
                 print 'zenv = ', self.zenv
-            raise AtmError('unspecified ValueError from atmosphere grid. g_mks=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
+            if 'f(a) and f(b) must have different signs' in e.args[0]:
+                raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
+            else:
+                raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
 
         # set entropy in envelope (ignore z contribution)
         self.entropy = np.zeros_like(self.p)
@@ -636,7 +653,7 @@ class evol:
 
         # terms needed for calculation of the composition term brunt_B.
         if self.kcore > 0:
-            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative # throws divide by zero encountered in log; fix
+            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative # throws divide by zero encountered in log; fix me!
         else:
             self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
         # this is the thermodynamic derivative (const P and T), for H-He.
@@ -777,7 +794,7 @@ class evol:
         self.pressure_scale_height = self.p / self.rho / self.g
 
 
-        return self.rtot, self.t1, self.teff
+        return self.rtot, self.t[-1], self.teff
 
     # these implement the analytic p(rho) relations for "rock" and "ice" mixtures from Hubbard & Marley 1989
 
@@ -951,7 +968,12 @@ class evol:
             adiabatic gradient here (as well as later) is ignoring any z contribution.
               if not adiabatic, then just integrate existing gradt
         '''
-        self.t[-1] = self.t1
+        if self.atm_which_t == 't1':
+            self.t[-1] = self.t1
+        elif self.atm_which_t == 't10':
+            self.t[-1] = self.t10
+        else:
+            raise ValueError("atm_which_t must be one of 't1', 't10'")
         if adiabatic:
             self.grada[:self.kcore] = 0.
             self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])

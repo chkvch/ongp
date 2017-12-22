@@ -16,20 +16,46 @@ doi:10.1088/0004-637X/729/1/32
 
 class atm:
 
-    def __init__(self, path_to_data, planet='jup', print_table=False):
+    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None):
 
-        assert planet in ['jup', 'sat', 'u', 'n'], 'planet label %s not recognized. choose from jup, sat, u, n.' % planet
         self.planet = planet
 
-        names = 'g', 'teff', 't10', 'teff_dim_sun', 't10_dim_sun', 'tint'
-        log.debug('reading table from %s/f11_atm_%s.dat' % (path_to_data, self.planet))
-        self.data = np.genfromtxt('%s/f11_atm_%s.dat' % (path_to_data, self.planet), delimiter='&', names=names)
-        file_length = len(open('%s/f11_atm_%s.dat' % (path_to_data, self.planet)).readlines(  ))
-        g_step = 12
-        if planet in ['jup', 'sat']:
+        # setting usecols based on the use case and then passing that to genfromtxt
+        # lets us only load the relevant columns, then subsequent code can be uniform across cases
+        if self.planet in ('jup', 'sat'):
+            self.table_path = '%s/f11_atm_%s.dat' % (path_to_data, self.planet)
+            names = 'g', 'teff', 't10', 'tint'
             g_step = 12
-        if planet in ['u', 'n']:
+            usecols = {
+                '1.0j':(0, 1, 2, 5),
+                '0.7j':(0, 3, 4, 5)
+            }
+            usecols['1.0s'] = usecols['1.0j']
+            usecols['0.7s'] = usecols['0.7j']
+            
+            if not flux_level: # pick a default based on planet
+                flux_level = {'jup':'1.0j', 'sat':'1.0s'}[self.planet]
+        elif self.planet in ('u', 'n'):
+            self.table_path = '%s/f11_atm_un.dat' % path_to_data
+            names = 'g', 'teff', 't10', 't1', 'tint'
             g_step = 9
+            usecols = {
+                '0.12n':(0, 1, 2, 3, 13), 
+                '1.0n':(0, 4, 5, 6, 13),
+                '1.0u':(0, 7, 8, 9, 13),
+                '1.8u':(0, 10, 11, 12, 13)
+            }
+            if not flux_level: # default to 1.0u or 1.0n
+                flux_level = '1.0' + self.planet
+        else:
+            raise ValueError('planet label %s not recognized. choose from jup, sat, u, n.' % self.planet)
+            
+        print 'planet %s, flux level %s' % (planet, flux_level)
+                      
+        log.debug('reading table from %s' % self.table_path)
+        self.data = np.genfromtxt(self.table_path, delimiter='&', names=names, usecols=usecols[flux_level])
+        file_length = len(open(self.table_path).readlines())
+
         for i in np.arange(0, file_length, g_step):
             self.data['g'][i+1:i+g_step] = self.data['g'][i]
 
@@ -38,72 +64,72 @@ class atm:
         npts_g = len(self.g_grid)
         npts_tint = len(self.tint_grid)
 
-        t10 = np.zeros((npts_g, npts_tint)) # 1.0 Lsun
-        teff = np.zeros((npts_g, npts_tint)) # 1.0 Lsun
-        t10_dim_sun = np.zeros((npts_g, npts_tint)) # 0.7 Lsun
-        teff_dim_sun = np.zeros((npts_g, npts_tint)) # 0.7 Lsun
-
+        t = {}
+        t_columns = names[1:-1] # ('teff', 't10') in the j/s case; (teff, t1, t10) in the u/n case
+        for t_column in t_columns:
+            t[t_column] = np.zeros((npts_g, npts_tint))
+            
         for m, gval in enumerate(self.g_grid):
-            at_this_g = self.data['g'] == gval
-            data_for_this_g = self.data[at_this_g]
+            data_for_this_g = self.data[self.data['g'] == gval]
             for n, tintval in enumerate(self.tint_grid):
-                t10[m, n] = data_for_this_g[data_for_this_g['tint'] == tintval]['t10']
-                teff[m, n] = data_for_this_g[data_for_this_g['tint'] == tintval]['teff']
+                for t_column in t_columns:
+                    t[t_column][m, n] = data_for_this_g[data_for_this_g['tint'] == tintval][t_column]
 
-                t10_dim_sun[m, n] = data_for_this_g[data_for_this_g['tint'] == tintval]['t10_dim_sun']
-                teff_dim_sun[m, n] = data_for_this_g[data_for_this_g['tint'] == tintval]['teff_dim_sun']
-
-            if t10[m, -1] == -1: # at least one blank element at high tint
-                last_nan = np.where(np.diff(t10[m, :] < 0))[0][-1] + 1
+            if t['t10'][m, -1] == -1: # this g block has at least one blank element at high tint. should only happen for j/s
+                assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
+                last_nan = np.where(np.diff(t['t10'][m, :] < 0))[0][-1] + 1
                 tint = self.tint_grid[last_nan]
-                # extrapolate for this tint
-                # print 'g=%f: last nan for 10 is at tint = %f' % (gval, tint)
-                # print tint, self.tint_grid[last_nan - 1], self.tint_grid[last_nan - 2]
                 alpha = (tint - self.tint_grid[last_nan -2]) / (self.tint_grid[last_nan - 1] - self.tint_grid[last_nan - 2])
+                
+                for t_column in t_columns:
+                    t[t_column][m, last_nan] = alpha * t[t_column][m, last_nan - 1] + (1. - alpha) * t[t_column][m, last_nan - 2]
 
-                t10[m, last_nan] = alpha * t10[m, last_nan - 1] + (1. - alpha) * t10[m, last_nan - 2]
-                teff[m, last_nan] = alpha * teff[m, last_nan - 1] + (1. - alpha) * teff[m, last_nan - 2]
-
-                t10_dim_sun[m, last_nan] = alpha * t10_dim_sun[m, last_nan - 1] + (1. - alpha) * t10_dim_sun[m, last_nan - 2]
-                teff_dim_sun[m, last_nan] = alpha * teff_dim_sun[m, last_nan - 1] + (1. - alpha) * teff_dim_sun[m, last_nan - 2]
-
-            if t10[m, 0] == -1: # at least one blank element at low tint
-                first_nan = np.where(np.diff(t10[m, :] < 0))[0][0] # first sign change
+            if t['t10'][m, 0] == -1: # this g block at least one blank element at low tint. should only happen for j/s
+                assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
+                first_nan = np.where(np.diff(t['t10'][m, :] < 0))[0][0] # first sign change
                 tint = self.tint_grid[first_nan]
                 alpha = (tint - self.tint_grid[first_nan + 2]) / (self.tint_grid[first_nan + 1] - self.tint_grid[first_nan + 2])
 
-                t10[m, first_nan] = alpha * t10[m, first_nan + 1] + (1. - alpha) * t10[m, first_nan + 2]
-                teff[m, first_nan] = alpha * teff[m, first_nan + 1] + (1. - alpha) * teff[m, first_nan + 2]
+                for t_column in t_columns:
+                    t[t_column][m, first_nan] = alpha * t[t_column][m, first_nan + 1] + (1. - alpha) * t[t_column][m, first_nan + 2]
 
-                t10_dim_sun[m, first_nan] = alpha * t10_dim_sun[m, first_nan + 1] + (1. - alpha) * t10_dim_sun[m, first_nan + 2]
-                teff_dim_sun[m, first_nan] = alpha * teff_dim_sun[m, first_nan + 1] + (1. - alpha) * teff_dim_sun[m, first_nan + 2]
 
-            self.data['t10'][self.data['g'] == gval] = t10[m, :][::-1]
-            self.data['t10_dim_sun'][self.data['g'] == gval] = t10_dim_sun[m, :][::-1]
-            self.data['teff'][self.data['g'] == gval] = teff[m, :][::-1]
-            self.data['teff_dim_sun'][self.data['g'] == gval] = teff_dim_sun[m, :][::-1]
+            for t_column in t_columns:
+                self.data[t_column][self.data['g'] == gval] = t[t_column][m, :][::-1]
 
             if print_table:
-                print '%5s %5s %6s %5s' % ('g', 'tint', 't10', 'teff')
+                print ('%8s ' * (2 + len(t_columns))) % (('g', 'tint') + t_columns)
                 for n, tintval in enumerate(self.tint_grid):
-                    print '%5.1f %5.1f %6.1f %6.1f' % (gval, tintval, self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], self.data['teff'][self.data['g'] == gval][npts_tint - n - 1])
-                    # print '%5.1f %5.1f %6.1f %5.1f' % (gval, tintval, self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], self.data['teff'][self.data['g'] == gval][npts_tint - n -1])
+                    try:
+                        print ('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
+                            ( \
+                                self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
+                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], 
+                                self.data['t1'][self.data['g'] == gval][npts_tint - n - 1], 
+                            ))
+                    except ValueError:
+                        # no t1
+                        print ('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
+                            ( \
+                                self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
+                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], 
+                            ))
                 print
-
-        self.get_t10 = RegularGridInterpolator((self.g_grid, self.tint_grid), t10)
-        self.get_teff = RegularGridInterpolator((self.g_grid, self.tint_grid), teff)
-        self.get_t10_dim_sun = RegularGridInterpolator((self.g_grid, self.tint_grid), t10_dim_sun)
-        self.get_teff_dim_sun = RegularGridInterpolator((self.g_grid, self.tint_grid), teff_dim_sun)
+                
+        self.get = {}
+        for t_column in t_columns:
+            self.get[t_column] = RegularGridInterpolator((self.g_grid, self.tint_grid), t[t_column])
 
     def get_tint(self, g, t10):
-        """give g (mks) and t10 (K) as arguments, does a root find to obtain the
-        intrinsic temperature tint (K)."""
+        """
+        give g (mks) and t10 (K) as arguments, does a root find to obtain the
+        intrinsic temperature tint (K). 
+        """
 
-        assert t10 > 0., 'get_tint got a negative t10 %f' % t10
+        assert t10 > 0., 'get_tint got a negative t10 %f' % t
         def zero_me(tint):
-            # print tint, t10 - self.get_t10((g, tint))
             try:
-                return t10 - self.get_t10((g, tint))
+                return t10 - self.get['t10']((g, tint))
             except ValueError:
                 print 'failed to interpolate for t10 at g = %f, tint = %f' % (g, tint)
 
@@ -116,7 +142,7 @@ class atm:
         g_bin = np.where(self.g_grid - g > 0)[0][0]
         minmax = lambda z: (min(z), max(z))
         g_lo, g_hi = self.g_grid[g_bin - 1], self.g_grid[g_bin]
-
+        
         data_g_lo = self.data[self.data['g'] == g_lo]
         data_g_lo = data_g_lo[data_g_lo['t10'] > 0]
         min_tint_g_lo = min(data_g_lo['tint'])
@@ -126,7 +152,7 @@ class atm:
         data_g_hi = data_g_hi[data_g_hi['t10'] > 0]
         min_tint_g_hi = min(data_g_hi['tint'])
         max_tint_g_hi = max(data_g_hi['tint'])
-
+        
         min_tint = max(min_tint_g_lo, min_tint_g_hi)
         max_tint = min(max_tint_g_lo, max_tint_g_hi)
 
