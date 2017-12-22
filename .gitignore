@@ -9,7 +9,7 @@ figures
 .DS_Store
 run.py
 *.pyc
-*config*
+gp_configs
 *~
 *.log
-
+sync_with_upstream.sh
