@@ -560,6 +560,7 @@ class evol:
             assert self.t1 > 0., 'bad t1 %g' % self.t1
         elif self.atm_which_t == 't10':
             assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            self.t1 = -1
             #
             # TODO write a function in f11_atm.py that will take current g and t10 and return the t1. until then,
             # no information in the model outside of 10 bars.
@@ -1100,7 +1101,7 @@ class evol:
                 print 'saved problematic logp, logt, y, z to rho_nans.dat'
                 raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), self.iters))
 
-    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., starting_t1=2e3, min_t1=160., nsteps=100,
+    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., start_t=2e3, end_t=160, which_t='t1', nsteps=100,
                 stdout_interval=1, # output controls
                 output_prefix=None,
                 include_he_immiscibility=False, # helium rain
@@ -1111,9 +1112,9 @@ class evol:
                 include_core_entropy=False,
                 gammainv_erosion=1e-1, # for core erosion rate estimates
                 luminosity_erosion_option=None,
-                z_eos_option=None,
+                # z_eos_option=None,
                 timesteps_ease_in=None):
-
+                
         '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
         using the energy equation dL/dm = -T * ds/dt where L is the intrinsic luminosity, m is the mass coordinate, T is the temperature,
         s is the specific entropy, and t is time.
@@ -1122,16 +1123,16 @@ class evol:
 
         import time
         assert 0. <= zenv <= 1., 'invalid envelope z %f' % zenv
+        
 
-        # set vector of t1s to compute
+        # set vector of surface temperature to compute
         if timesteps_ease_in:
             # make the first steps_to_ease_in steps more gradual in terms of d(dt)/d(step).
             # only important if you're interested in resolving evolution at very early times (1e3 or 1e4 years).
             i = np.arange(nsteps)
-            t1s = 0.5 * (starting_t1 - min_t1) * (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + min_t1
+            ts = 0.5 * (start_t - end_t) * (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + end_t
         else:
-            t1s = np.logspace(np.log10(min_t1), np.log10(starting_t1), nsteps)[::-1]
-        # return t1s
+            ts = np.logspace(np.log10(end_t), np.log10(start_t), nsteps)[::-1]
 
         self.history = {}
         self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'ysurf', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
@@ -1141,23 +1142,30 @@ class evol:
             # allocate history arrays with the length of steps we expect.
             # bad design because if the run terminates early, rest of history
             # will be filled with zeroes. keep in mind.
-            self.history[name] = np.zeros_like(t1s)
+            self.history[name] = np.zeros_like(ts)
 
         keep_going = True
         previous_entropy = 0
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 't1', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
+        stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
         start_time = time.time()
         print ('%12s ' * len(stdout_columns)) % stdout_columns
-        for step, t1 in enumerate(t1s):
+        for step, t in enumerate(ts):
+            if which_t == 't1':
+                t1 = t
+                t10 = None
+            elif which_t == 't10':
+                t1 = None
+                t10 = t
+            else:
+                assert ValueError("which_t must be one of ('t1', 't10').")
             try:
-                self.static(mtot=mtot, t1=t1, yenv=yenv, zenv=zenv, mcore=mcore,
+                self.static(mtot=mtot, t1=t1, t10=t10, yenv=yenv, zenv=zenv, mcore=mcore,
                                 include_he_immiscibility=include_he_immiscibility,
                                 phase_t_offset=phase_t_offset,
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y,
                                 rrho_where_have_helium_gradient=rrho_where_have_helium_gradient,
-                                z_eos_option=z_eos_option,
                                 include_core_entropy=include_core_entropy)
                 walltime = time.time() - start_time
             except ValueError:
@@ -1301,8 +1309,8 @@ class evol:
                     raise
 
             if step % stdout_interval == 0 or step == nsteps - 1:
-                print '%12i %12i %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
-                    (step, self.iters, self.t1, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
+                    (step, self.iters, self.t1, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
 
             previous_entropy = self.entropy
 

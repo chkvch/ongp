@@ -53,7 +53,7 @@ class atm:
         else:
             raise ValueError('planet label %s not recognized. choose from jup, sat, u, n.' % self.planet)
             
-        print 'planet %s, flux level %s' % (planet, flux_level)
+        # print 'planet %s, flux level %s' % (planet, flux_level)
                       
         log.debug('reading table from %s' % self.table_path)
         self.data = np.genfromtxt(self.table_path, delimiter='&', names=names, usecols=usecols[flux_level])
