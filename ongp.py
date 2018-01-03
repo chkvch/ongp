@@ -375,7 +375,7 @@ class evol:
             assert self.hhe_phase_diagram, 'cannot include h/he immiscibility without specifying hhe_phase_diagram.'
 
         # model atmospheres
-        atm_type, atm_planet = self.atm_option.split()
+        atm_type, atm_planet = self.atm_option.split() # e.g., 'f11_tables u'
         teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}  # uranus: pearl, hanel 1990 icarus. uranus: pearl, conrath 1991 journal of geophys. research
         if atm_type == 'f11_tables':
             import f11_atm
@@ -561,10 +561,13 @@ class evol:
         elif self.atm_which_t == 't10':
             assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
             self.t1 = -1
-            #
-            # TODO write a function in f11_atm.py that will take current g and t10 and return the t1. until then,
-            # no information in the model outside of 10 bars.
-            #
+
+            '''
+            TODO write a function in f11_atm.py that will take current g and t10 and return the t1 if
+            available (this is the case for uranus or neptune). until then, no information in the model
+            outside of 10 bars.
+            '''
+
 
         assert self.t10 > 0., 'bad t10 %g' % self.t10
 
@@ -652,7 +655,7 @@ class evol:
 
         # terms needed for calculation of the composition term brunt_B.
         if self.kcore > 0:
-            self.dlogy_dlogp[self.kcore:] = np.diff(np.log(self.y[self.kcore-1:])) / np.diff(np.log(self.p[self.kcore-1:])) # structure derivative # throws divide by zero encountered in log; fix me!
+            self.dlogy_dlogp[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # structure derivative # throws divide by zero encountered in log; fix me!
         else:
             self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
         # this is the thermodynamic derivative (const P and T), for H-He.
@@ -954,8 +957,14 @@ class evol:
 
     def integrate_hydrostatic(self):
         dp = const.cgrav * self.m[1:] * self.dm / 4. / np.pi / self.r[1:] ** 4
-        self.p[-1] = 1e6
-        self.p[:-1] = np.cumsum(dp[::-1])[::-1] + 1e6
+        if self.atm_which_t == 't1':
+            psurf = 1e6
+        elif self.atm_which_t == 't10':
+            psurf = 1e7
+        else:
+            raise ValueError('atm_which_t option %s not recognized.' % self.atm_which_t)
+        self.p[-1] = psurf
+        self.p[:-1] = psurf + np.cumsum(dp[::-1])[::-1]
 
         if np.any(np.isnan(self.p)):
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
@@ -1477,6 +1486,19 @@ class evol:
             f.write('\n')
 
             print 'wrote %i zones to %s' % (k, outfile)
+            
+def plot_grada_nans_on_scvh(**kwargs):
+    import matplotlib.pyplot as plt
+    import scvh; reload(scvh)
+    
+    names = 'logp', 'logt', 'y'
+    nans = np.genfromtxt('grada_nans.dat', names=names)
+    print nans['logp']
+    print nans['logt']
+    plt.plot(nans['logp'], nans['logt'], 'rx', zorder=10, markersize=15, mew=1)
+
+    eos = scvh.eos('/Users/chris/Dropbox/planet_models/ongp/data')
+    eos.plot_pt_coverage(**kwargs)
 
 
 class EOSError(Exception):

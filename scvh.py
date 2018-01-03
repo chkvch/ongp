@@ -658,16 +658,22 @@ class eos:
 
         return res
 
-    def plot_pt_coverage(self, ax, symbol, **kwargs):
+    def plot_pt_coverage(self, ax=None, symbol='.', **kwargs):
+        if not ax:
+            import matplotlib.pyplot as plt
+            ax = plt.gca()
         for logt in self.logtvals:
             logp = self.h_data[logt]['logp']
             ax.plot(logp, np.ones_like(logp) * logt, symbol, **kwargs)
 
         ax.set_xlim(-1.5, 19.5)
         ax.set_xlabel(r'$\log\ P$')
-        ax.set_ylabel(r'$\log T$')
+        ax.set_ylabel(r'$\log\ T$')
 
-    def plot_rhot_coverage(self, ax, symbol, **kwargs):
+    def plot_rhot_coverage(self, ax=None, symbol='.', **kwargs):
+        if not ax:
+            import matplotlib.pyplot as plt
+            ax = plt.gca()
         for logt in self.logtvals:
             logrho = self.h_data[logt]['logrho']
             ax.plot(10 ** logrho, np.ones_like(logrho) * 10 ** logt, symbol, **kwargs)
