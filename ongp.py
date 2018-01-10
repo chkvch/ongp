@@ -718,9 +718,11 @@ class evol:
         self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
         self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
 
-        self.brunt_b = self.brunt_b_mhm
-        self.brunt_n2 = self.brunt_n2_mhm
+        # self.brunt_b = self.brunt_b_mhm
+        # self.brunt_n2 = self.brunt_n2_mhm
         self.brunt_n2_thermal = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt)
+
+        self.brunt_n2 = self.brunt_n2_unno
 
         # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
         # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
@@ -779,6 +781,7 @@ class evol:
         if self.zenv_inner: # two-layer envelope in terms of Z
             self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
             self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
+            self.mz_env = self.mz_env_outer + self.mz_env_inner
             self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
             self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
         else:
@@ -1041,13 +1044,15 @@ class evol:
         if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
             assert self.zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
             assert self.zenv_inner < 1., 'set_yz got bad z %f' % self.zenv_inner
-            assert self.zenv_inner >= self.zenv, 'no z inversion allowed.'
+            if not self.zenv_inner >= self.zenv:
+                raise UnphysicalParameterError('no z inversion allowed.')
             self.z[self.kcore:self.ktrans] = self.zenv_inner
             self.z[self.ktrans:] = self.zenv_outer
         if self.yenv_inner:
             assert self.yenv_inner > 0, 'if you want a Y-free envelope, no need to specify yenv_inner.'
             assert self.yenv_inner < 1., 'set_yz got bad y %f' % self.yenv_inner
-            assert self.yenv_inner >= self.yenv, 'no y inversion allowed.'
+            if not self.yenv_inner >= self.yenv:
+                raise UnphysicalParameterError('no y inversion allowed.')
             self.y[self.kcore:self.ktrans] = self.yenv_inner
             self.y[self.ktrans:] = self.yenv_outer
 
@@ -1371,8 +1376,12 @@ class evol:
                 os.mkdir(outdir)
             plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')
 
-    def save_profile(self, outfile, save_gyre_model_with_profile=True,
-                    smooth_brunt_n2_std=None, add_rigid_rotation=None, erase_y_discontinuity_from_brunt=False, erase_z_discontinuity_from_brunt=False,
+    def save_profile(self, outfile, 
+                    save_gyre_model_with_profile=True,
+                    smooth_brunt_n2_std=None, 
+                    add_rigid_rotation=None, 
+                    erase_y_discontinuity_from_brunt=False, 
+                    erase_z_discontinuity_from_brunt=False,
                     omit_brunt_composition_term=False):
 
         # try to be smart about output filenames
@@ -1412,7 +1421,6 @@ class evol:
                 dummy_epsilon = 0.
                 dummy_epsilon_t = 0.
                 dummy_epsilon_rho = 0.
-
 
                 if omit_brunt_composition_term:
                     assert not erase_y_discontinuity_from_brunt, 'set omit_brunt_composition_term or erase_y_discontinuity_from_brunt, not both'
