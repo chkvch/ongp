@@ -380,11 +380,11 @@ class evol:
         if atm_type == 'f11_tables':
             import f11_atm
             reload(f11_atm)
-            atm = f11_atm.atm(self.path_to_data, atm_planet)
+            self.atm = f11_atm.atm(self.path_to_data, atm_planet)
         elif atm_type == 'f11_fit':
             import f11_atm_fit
             reload(f11_atm_fit)
-            atm = f11_atm_fit.atm(atm_planet)
+            self.atm = f11_atm_fit.atm(atm_planet)
         else:
             raise ValueError('atm_type %s not recognized.' % atm_type)
         self.teq = teq[atm_planet] # make this free parameter!
@@ -398,6 +398,9 @@ class evol:
         self.yenv = yenv
         self.yenv_inner = yenv_inner
         self.yenv_outer = self.yenv
+        
+        self.erase_z_discontinuity_from_brunt = erase_z_discontinuity_from_brunt
+        self.include_core_entropy = include_core_entropy
 
         # initialize lagrangian mesh.
         assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
@@ -467,38 +470,37 @@ class evol:
         self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
 
         # relax to hydrostatic
-        oldRadii = (0, 0, 0)
+        last_three_radii = 0, 0, 0
         for iteration in xrange(self.max_iters_for_static_model):
             self.iters += 1
 
-            self.integrate_hydrostatic()
-            self.locate_transition_pressure()
-            self.set_yz()
-            self.integrate_temperature()
+            self.integrate_hydrostatic() # integrate momentum equation to get pressure
+            self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
+            self.set_yz() # set y and z profiles
+            self.integrate_temperature() # integrate gradt (usually grada) for envelope temp; core isothermal
             self.set_core_density()
             self.set_envelope_density()
-            self.integrate_continuity()
+            self.integrate_continuity() # get zone radii from their densities via continuity equation
 
-            if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
+            if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.relative_radius_tolerance):
                 if iteration >= self.min_iters_for_static_model:
                     break
             if not np.isfinite(self.r[-1]):
                 raise HydroError('found infinite total radius.')
 
-            oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
+            last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
 
         else:
             return -1
 
         if verbose: print 'converged homogeneous model after %i iterations.' % self.iters
 
-        if include_he_immiscibility: # repeat iterations, now including the phase diagram calculation (if modeling helium rain)
-            oldRadii = (0, 0, 0)
+        if include_he_immiscibility: # repeat hydro iterations, now including the phase diagram calculation (if modeling helium rain)
+            last_three_radii = 0, 0, 0
             for iteration in xrange(self.max_iters_for_static_model):
                 self.iters_immiscibility = iteration + 1
 
                 self.integrate_hydrostatic()
-
                 self.integrate_temperature() # sets grada for the last time
 
                 if rrho_where_have_helium_gradient and self.have_rainout:
@@ -538,271 +540,32 @@ class evol:
                             f.write('%12s %12g %12g %12g %12g %12g\n' % (in_core, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
                     print 'saved output/found_infinite_radius.dat'
                     raise RuntimeError('found infinite total radius')
-                oldRadii = (oldRadii[1], oldRadii[2], self.r[-1])
+                last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
             else:
                 return -1
 
             if verbose: print 'converged with new Y profile after %i iterations.' % self.iters_immiscibility
 
-        # finalize hydrostatic profiles, and calculate lots of auxiliary quantities of interest.
+        # finalize hydrostatic profiles (maybe not necessary since we just did 20 iterations)
         self.integrate_hydrostatic()
         self.set_core_density()
         self.set_envelope_density()
-
+        
+        # finally, calculate lots of auxiliary quantities of interest
         self.rtot = self.r[-1]
-        assert abs(self.mtot - self.m[-1]) / self.mtot < 1e-8, 'total mass is off'
 
-        if self.atm_which_t == 't1': # interpolate in existing t profile to find t10
-            assert self.t1 == self.t[-1] # this should be true by construction (see integrate_temperature)
-            k10 = np.where(self.p < 1e7)[0][0]
-            tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
-            self.t10 = splev(1e7, tck)
-            assert self.t1 > 0., 'bad t1 %g' % self.t1
-        elif self.atm_which_t == 't10':
-            assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
-            self.t1 = -1
-
-            '''
-            TODO write a function in f11_atm.py that will take current g and t10 and return the t1 if
-            available (this is the case for uranus or neptune). until then, no information in the model
-            outside of 10 bars.
-            '''
-
-
-        assert self.t10 > 0., 'bad t10 %g' % self.t10
-
-        # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.
-        self.surface_g = const.cgrav * mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
-        if self.atm_option.split()[0] == 'f11_tables':
-            if self.surface_g * 1e-2 > max(atm.g_grid):
-                raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, max(atm.g_grid)))
-            elif self.surface_g * 1e-2 < min(atm.g_grid):
-                raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, min(atm.g_grid)))
-        try:
-            self.tint = atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
-            self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
-            self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
-        except ValueError as e:
-            if self.zenv_inner:
-                print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
-            else:
-                print 'zenv = ', self.zenv
-            if 'f(a) and f(b) must have different signs' in e.args[0]:
-                raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
-            else:
-                raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
-
-        # set entropy in envelope (ignore z contribution)
-        self.entropy = np.zeros_like(self.p)
-        self.entropy[self.kcore:] = 10 ** self.hhe_eos.get_logs(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) * const.mp / const.kb
-        # experimenting with including entropy of core material (don't bother with aneos, it's not a column).
-        if include_core_entropy:
-            if not self.z_eos_option == 'reos water':
-                raise NotImplementedError("including entropy of the core is only possible if z_eos_option == 'reos water'.")
-            else:
-                self.entropy[:self.kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore])) * const.mp / const.kb
-
-        # core is isothermal at temperature of the base of the envelope
-        self.t[:self.kcore] = self.t[self.kcore]
-
-        self.r[0] = 1. # 1 cm central radius to keep these things at least calculable at center zone
-        self.g = const.cgrav * self.m / self.r ** 2
-        self.g[0] = self.g[1] # hack so that we don't get infs in, e.g., pressure scale height. won't effect anything
-
-        # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
-        self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
-
-        self.gamma1 = np.zeros_like(self.p)
-        self.csound = np.zeros_like(self.p)
-        self.gradt_direct = np.zeros_like(self.p)
-
-        if self.kcore > 0 and self.z_eos_option: # compute gamma1 in core
-            self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-        self.csound = np.sqrt(self.p / self.rho * self.gamma1)
-        self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
-
-        self.delta_nu = (2. * trapz(self.csound ** -1, x=self.r)) ** -1 * 1e6 # the large frequency separation in uHz
-        self.delta_nu_env = (2. * trapz(self.csound[self.kcore:] ** -1, x=self.r[self.kcore:])) ** -1 * 1e6
-
-        dlnp_dlnr = np.diff(np.log(self.p)) / np.diff(np.log(self.r))
-        dlnrho_dlnr = np.diff(np.log(self.rho)) / np.diff(np.log(self.r))
-
-        if self.kcore > 0:
-            try:
-                self.chirho[:self.kcore] = self.z_eos.get_chirho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-                self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-                self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
-            except AttributeError:
-                print "warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option
-                print 'cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.'
-                pass
-
-        # ignoring the envelope z component when it comes to calculating chirho and chit
-        self.chirho[self.kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-        self.chit[self.kcore:] = self.hhe_eos.get_chit(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-        self.gradt_direct[:self.kcore] = 0. # was previously self.gradt
-        self.gradt_direct[self.kcore+1:] = np.diff(np.log(self.t[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # was previously self.gradt
-
-        self.brunt_n2_direct = np.zeros_like(self.p)
-        self.brunt_n2_direct[1:] = self.g[1:] / self.r[1:] * (dlnp_dlnr / self.gamma1[1:] - dlnrho_dlnr)
-
-        # other forms of the BV frequency
-        self.homology_v = const.cgrav * self.m * self.rho / self.r / self.p
-        self.brunt_n2_unno_direct = np.zeros_like(self.p)
-        self.brunt_n2_unno_direct[self.kcore+1:] = self.g[self.kcore+1:] * self.homology_v[self.kcore+1:] / self.r[self.kcore+1:] * \
-            (self.dlogp_dlogrho[self.kcore:] ** -1. - self.gamma1[self.kcore+1:] ** -1.) # Unno 13.102
-
-        # terms needed for calculation of the composition term brunt_B.
-        if self.kcore > 0:
-            self.dlogy_dlogp[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # structure derivative # throws divide by zero encountered in log; fix me!
-        else:
-            self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
-        # this is the thermodynamic derivative (const P and T), for H-He.
-        self.dlogrho_dlogy = np.zeros_like(self.p)
-        self.dlogrho_dlogy[self.kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-
-        rho_z = np.zeros_like(self.p)
-        rho_hhe = np.zeros_like(self.p)
-        if np.any(self.z > 0.) and self.z_eos_option:
-            rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
-        rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
-        rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
-        self.dlogrho_dlogz = np.zeros_like(self.p)
-        # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
-        self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
-        self.dlogz_dlogp = np.zeros_like(self.p)
-        self.dlogz_dlogp[1:] = np.diff(np.log(self.z + 1e-20)) / np.diff(np.log(self.p)) # fudge doesn't change answer, just avoids inf if z==0
-
-
-        # this is the form of brunt_n2 that makes use of grad, grada, and the composition term brunt B.
-        self.brunt_n2_unno = np.zeros_like(self.p)
-        # in core, explicitly ignore the Y gradient.
-        self.brunt_n2_unno[:self.kcore+1] = self.g[:self.kcore+1] * self.homology_v[:self.kcore+1] / self.r[:self.kcore+1] * \
-            (self.chit[:self.kcore+1] / self.chirho[:self.kcore+1] * (self.grada[:self.kcore+1] - self.gradt[:self.kcore+1]) + \
-            self.dlogrho_dlogz[:self.kcore+1] * self.dlogz_dlogp[:self.kcore+1])
-        # in envelope, Y gradient is crucial.
-        self.brunt_n2_unno[self.kcore:] = self.g[self.kcore:] * self.homology_v[self.kcore:] / self.r[self.kcore:] * \
-            (self.chit[self.kcore:] / self.chirho[self.kcore:] * (self.grada[self.kcore:] - self.gradt[self.kcore:]) + \
-            self.dlogrho_dlogy[self.kcore:] * self.dlogy_dlogp[self.kcore:])
-
-        # akin to mike montgomery's form for brunt_B, which is how mesa does it by default (Paxton+2013)
-        rho_this_pt_next_comp = np.zeros_like(self.p)
-        if np.all(self.z[self.kcore:-1] > 0.):
-            rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
-        else:
-            rho_this_pt_next_comp[self.kcore+1:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1])
-        # core-mantle point must be treated separately since next cell down is pure Z, and get_rho_xyz is not designed for pure Z.
-        # call z_eos.get_logrho directly instead.
-        if self.kcore > 0:
-            if self.z_eos_option:
-                rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
-            elif self.core_prho_relation:
-                if self.core_prho_relation == 'hm89 rock':
-                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_rock(self.p[self.kcore], self.rho[self.kcore])
-                elif self.core_prho_relation == 'hm89 ice':
-                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_ice(self.p[self.kcore], self.rho[self.kcore])
-                else:
-                    raise ValueError ('if using core_prho_relation, only options are hm89 rock and hm89 ice.')
-            else:
-                raise ValueError('cannot include a core unless either z_eos_option or core_prho_relation are set.')
-        # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
-        if erase_z_discontinuity_from_brunt:
-            rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
-        else:
-            rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]
-
-        self.brunt_b_mhm = np.zeros_like(self.p)
-        self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[1:]) - np.log(self.rho[:-1])) / (np.log(self.rho[1:]) - np.log(self.rho[:-1])) / self.chit[:-1]
-        # self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
-        self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
-        self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
-
-        # self.brunt_b = self.brunt_b_mhm
-        # self.brunt_n2 = self.brunt_n2_mhm
-        self.brunt_n2_thermal = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt)
-
-        self.brunt_n2 = self.brunt_n2_unno
-
-        # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
-        # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
-        self.dlogrho_dlogt_const_p = np.zeros_like(self.p)
-        # print 'at time of calculating rho_t for final static model, log core temperature is %f' % np.log10(self.t[0])
-        if self.kcore > 0 and self.z_eos_option:
-            self.dlogrho_dlogt_const_p[:self.kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        if self.z_eos_option == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
-            k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
-            try:
-                if self.zenv > 0.:
-                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = \
-                            self.rho[self.kcore:k_t_boundary+1] \
-                            * (self.z[self.kcore:k_t_boundary+1] / rho_z[self.kcore:k_t_boundary+1] \
-                                * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:k_t_boundary+1]), \
-                                                                        np.log10(self.t[self.kcore:k_t_boundary+1])) \
-                            + (1. - self.z[self.kcore:k_t_boundary+1]) / rho_hhe[self.kcore:k_t_boundary+1] \
-                                * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
-                                                        np.log10(self.t[self.kcore:k_t_boundary+1]),
-                                                        self.y[self.kcore:k_t_boundary+1])) # eq. (9) in equations.pdf
-                else: # pure H/He, just ask SCvH
-                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
-                                                                                                    np.log10(self.t[self.kcore:k_t_boundary+1]),
-                                                                                                    self.y[self.kcore:k_t_boundary+1])
-            except:
-                print 'failed in dlogrho_dlogt_const_p for hi-T part of envelope'
-                raise
-            try: # fix for z==0
-                if self.zenv > 0.:
-                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.rho[k_t_boundary+1:] \
-                                                    * (self.z[k_t_boundary+1:] / rho_z[k_t_boundary+1:] \
-                                                    * self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), \
-                                                                                                np.log10(self.t[k_t_boundary+1:])) \
-                                                    + (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] \
-                                                        * self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
-                                                                                np.log10(self.t[k_t_boundary+1:]), \
-                                                                                self.y[k_t_boundary+1:]))
-                else:
-                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
-                                                                                np.log10(self.t[k_t_boundary+1:]), \
-                                                                                self.y[k_t_boundary+1:])
-            except:
-                print 'failed in dlogrho_dlogt_const_p for lo-T part of envelope'
-                raise
-
-        else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
-            if self.z_eos_option:
-                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * (self.z[self.kcore:] / rho_z[self.kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]))
-            else:
-                assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
-                self.dlogrho_dlogt_const_p[self.kcore:] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-
-        self.mf = self.m / self.mtot
-        self.rf = self.r / self.rtot
-
-        if self.zenv_inner: # two-layer envelope in terms of Z
-            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
-            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
-            self.mz_env = self.mz_env_outer + self.mz_env_inner
-            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
-            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
-        else:
-            # Z uniform in envelope, Z=1 in core.
-            self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
-            self.mz = self.mz_env + self.mcore * const.mearth
-
-        self.bulk_z = self.mz / self.mtot
-        self.ysurf = self.y[-1]
-        self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
-
-        # axial moment of inertia if spherical, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
-        self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
-
-        self.pressure_scale_height = self.p / self.rho / self.g
-
+        self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
+        self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
+        self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
 
         return self.rtot, self.t[-1], self.teff
+        
+        
+        
+        
+        
 
     # these implement the analytic p(rho) relations for "rock" and "ice" mixtures from Hubbard & Marley 1989
-
     def p_of_rho_hm89_rock(self, rho):
         return rho ** 4.406 * np.exp(-6.579 - 0.176 * rho + 0.00202 * rho ** 2.) # Mbar
 
@@ -1114,6 +877,258 @@ class evol:
                             fw.write('%16.8f %16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k], self.z[k]))
                 print 'saved problematic logp, logt, y, z to rho_nans.dat'
                 raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), self.iters))
+                
+    def set_atm(self):
+
+        if self.atm_which_t == 't1': # interpolate in existing t profile to find t10
+            assert self.t1 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            k10 = np.where(self.p < 1e7)[0][0]
+            tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
+            self.t10 = splev(1e7, tck)
+            assert self.t1 > 0., 'bad t1 %g' % self.t1
+        elif self.atm_which_t == 't10':
+            assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            self.t1 = -1
+
+            '''
+            TODO write a function in f11_atm.py that will take current g and t10 and return the t1 if
+            available (this is the case for uranus or neptune). until then, no information in the model
+            outside of 10 bars.
+            '''
+
+        assert self.t10 > 0., 'bad t10 %g' % self.t10
+
+        # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.
+        self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
+        if self.atm_option.split()[0] == 'f11_tables':
+            if self.surface_g * 1e-2 > max(self.atm.g_grid):
+                raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, max(atm.g_grid)))
+            elif self.surface_g * 1e-2 < min(self.atm.g_grid):
+                raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, min(atm.g_grid)))
+        try:
+            self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
+            self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
+            self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
+        except ValueError as e:
+            if self.zenv_inner:
+                print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
+            else:
+                print 'zenv = ', self.zenv
+            if 'f(a) and f(b) must have different signs' in e.args[0]:
+                raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
+            else:
+                raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
+                
+    def set_derivatives_etc(self):
+        self.r[0] = 1. # 1 cm central radius to keep these things at least calculable at center zone
+        self.g = const.cgrav * self.m / self.r ** 2
+        self.g[0] = self.g[1] # hack so that we don't get infs in, e.g., pressure scale height. won't effect anything
+
+        # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
+        self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
+
+        self.gamma1 = np.zeros_like(self.p)
+        self.csound = np.zeros_like(self.p)
+        self.gradt_direct = np.zeros_like(self.p)
+
+        if self.kcore > 0 and self.z_eos_option: # compute gamma1 in core
+            self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+        self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        self.csound = np.sqrt(self.p / self.rho * self.gamma1)
+        self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
+
+        self.delta_nu = (2. * trapz(self.csound ** -1, x=self.r)) ** -1 * 1e6 # the large frequency separation in uHz
+        self.delta_nu_env = (2. * trapz(self.csound[self.kcore:] ** -1, x=self.r[self.kcore:])) ** -1 * 1e6
+
+        dlnp_dlnr = np.diff(np.log(self.p)) / np.diff(np.log(self.r))
+        dlnrho_dlnr = np.diff(np.log(self.rho)) / np.diff(np.log(self.r))
+
+        if self.kcore > 0:
+            try:
+                self.chirho[:self.kcore] = self.z_eos.get_chirho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+                self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
+            except AttributeError:
+                print "warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option
+                print 'cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.'
+                pass
+
+        # ignoring the envelope z component when it comes to calculating chirho and chit
+        self.chirho[self.kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        self.chit[self.kcore:] = self.hhe_eos.get_chit(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        self.gradt_direct[:self.kcore] = 0. # was previously self.gradt
+        self.gradt_direct[self.kcore+1:] = np.diff(np.log(self.t[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # was previously self.gradt
+
+        self.brunt_n2_direct = np.zeros_like(self.p)
+        self.brunt_n2_direct[1:] = self.g[1:] / self.r[1:] * (dlnp_dlnr / self.gamma1[1:] - dlnrho_dlnr)
+
+        # other forms of the BV frequency
+        self.homology_v = const.cgrav * self.m * self.rho / self.r / self.p
+        self.brunt_n2_unno_direct = np.zeros_like(self.p)
+        self.brunt_n2_unno_direct[self.kcore+1:] = self.g[self.kcore+1:] * self.homology_v[self.kcore+1:] / self.r[self.kcore+1:] * \
+            (self.dlogp_dlogrho[self.kcore:] ** -1. - self.gamma1[self.kcore+1:] ** -1.) # Unno 13.102
+
+        # terms needed for calculation of the composition term brunt_B.
+        if self.kcore > 0:
+            self.dlogy_dlogp[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # structure derivative # throws divide by zero encountered in log; fix me!
+        else:
+            self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
+        # this is the thermodynamic derivative (const P and T), for H-He.
+        self.dlogrho_dlogy = np.zeros_like(self.p)
+        self.dlogrho_dlogy[self.kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+
+        rho_z = np.zeros_like(self.p)
+        rho_hhe = np.zeros_like(self.p)
+        if np.any(self.z > 0.) and self.z_eos_option:
+            rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
+        rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
+        rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
+        self.dlogrho_dlogz = np.zeros_like(self.p)
+        # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
+        self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
+        self.dlogz_dlogp = np.zeros_like(self.p)
+        self.dlogz_dlogp[1:] = np.diff(np.log(self.z + 1e-20)) / np.diff(np.log(self.p)) # fudge doesn't change answer, just avoids inf if z==0
+
+
+        # this is the form of brunt_n2 that makes use of grad, grada, and the composition term brunt B.
+        self.brunt_n2_unno = np.zeros_like(self.p)
+        # in core, explicitly ignore the Y gradient.
+        self.brunt_n2_unno[:self.kcore+1] = self.g[:self.kcore+1] * self.homology_v[:self.kcore+1] / self.r[:self.kcore+1] * \
+            (self.chit[:self.kcore+1] / self.chirho[:self.kcore+1] * (self.grada[:self.kcore+1] - self.gradt[:self.kcore+1]) + \
+            self.dlogrho_dlogz[:self.kcore+1] * self.dlogz_dlogp[:self.kcore+1])
+        # in envelope, Y gradient is crucial.
+        self.brunt_n2_unno[self.kcore:] = self.g[self.kcore:] * self.homology_v[self.kcore:] / self.r[self.kcore:] * \
+            (self.chit[self.kcore:] / self.chirho[self.kcore:] * (self.grada[self.kcore:] - self.gradt[self.kcore:]) + \
+            self.dlogrho_dlogy[self.kcore:] * self.dlogy_dlogp[self.kcore:])
+
+        # akin to mike montgomery's form for brunt_B, which is how mesa does it by default (Paxton+2013)
+        rho_this_pt_next_comp = np.zeros_like(self.p)
+        if np.all(self.z[self.kcore:-1] > 0.):
+            rho_this_pt_next_comp[self.kcore+1:] = self.get_rho_xyz(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1], self.z[self.kcore:-1])
+        else:
+            rho_this_pt_next_comp[self.kcore+1:] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.kcore+1:]), np.log10(self.t[self.kcore+1:]), self.y[self.kcore:-1])
+        # core-mantle point must be treated separately since next cell down is pure Z, and get_rho_xyz is not designed for pure Z.
+        # call z_eos.get_logrho directly instead.
+        if self.kcore > 0:
+            if self.z_eos_option:
+                rho_this_pt_next_comp[self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
+            elif self.core_prho_relation:
+                if self.core_prho_relation == 'hm89 rock':
+                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_rock(self.p[self.kcore], self.rho[self.kcore])
+                elif self.core_prho_relation == 'hm89 ice':
+                    rho_this_pt_next_comp[self.kcore] = self.get_rhoz_hm89_ice(self.p[self.kcore], self.rho[self.kcore])
+                else:
+                    raise ValueError ('if using core_prho_relation, only options are hm89 rock and hm89 ice.')
+            else:
+                raise ValueError('cannot include a core unless either z_eos_option or core_prho_relation are set.')
+        # within core, composition is assumed constant so rho_this_pt_next_comp is identical to rho.
+        if self.erase_z_discontinuity_from_brunt:
+            rho_this_pt_next_comp[:self.kcore+1] = self.rho[:self.kcore+1]
+        else:
+            rho_this_pt_next_comp[:self.kcore] = self.rho[:self.kcore]
+
+        self.brunt_b_mhm = np.zeros_like(self.p)
+        self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[1:]) - np.log(self.rho[:-1])) / (np.log(self.rho[1:]) - np.log(self.rho[:-1])) / self.chit[:-1]
+        # self.brunt_b_mhm[:-1] = (np.log(rho_this_pt_next_comp[:-1]) - np.log(self.rho[:-1])) / (np.log(self.rho[:-1]) - np.log(self.rho[1:])) / self.chit[:-1]
+        self.brunt_n2_mhm = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt + self.brunt_b_mhm)
+        self.brunt_n2_mhm[0] = 0. # had nan previously, probably from brunt_b
+
+        # self.brunt_b = self.brunt_b_mhm
+        # self.brunt_n2 = self.brunt_n2_mhm
+        self.brunt_n2_thermal = self.g ** 2 * self.rho / self.p * self.chit / self.chirho * (self.grada - self.gradt)
+
+        self.brunt_n2 = self.brunt_n2_unno
+
+        # this is the thermo derivative rho_t in scvh parlance. necessary for gyre, which calls this minus delta.
+        # dlogrho_dlogt_const_p = chit / chirho = -delta = -rho_t
+        self.dlogrho_dlogt_const_p = np.zeros_like(self.p)
+        # print 'at time of calculating rho_t for final static model, log core temperature is %f' % np.log10(self.t[0])
+        if self.kcore > 0 and self.z_eos_option:
+            self.dlogrho_dlogt_const_p[:self.kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
+        if self.z_eos_option == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
+            k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
+            try:
+                if self.zenv > 0.:
+                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = \
+                            self.rho[self.kcore:k_t_boundary+1] \
+                            * (self.z[self.kcore:k_t_boundary+1] / rho_z[self.kcore:k_t_boundary+1] \
+                                * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:k_t_boundary+1]), \
+                                                                        np.log10(self.t[self.kcore:k_t_boundary+1])) \
+                            + (1. - self.z[self.kcore:k_t_boundary+1]) / rho_hhe[self.kcore:k_t_boundary+1] \
+                                * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
+                                                        np.log10(self.t[self.kcore:k_t_boundary+1]),
+                                                        self.y[self.kcore:k_t_boundary+1])) # eq. (9) in equations.pdf
+                else: # pure H/He, just ask SCvH
+                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
+                                                                                                    np.log10(self.t[self.kcore:k_t_boundary+1]),
+                                                                                                    self.y[self.kcore:k_t_boundary+1])
+            except:
+                print 'failed in dlogrho_dlogt_const_p for hi-T part of envelope'
+                raise
+            try: # fix for z==0
+                if self.zenv > 0.:
+                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.rho[k_t_boundary+1:] \
+                                                    * (self.z[k_t_boundary+1:] / rho_z[k_t_boundary+1:] \
+                                                    * self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), \
+                                                                                                np.log10(self.t[k_t_boundary+1:])) \
+                                                    + (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] \
+                                                        * self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
+                                                                                np.log10(self.t[k_t_boundary+1:]), \
+                                                                                self.y[k_t_boundary+1:]))
+                else:
+                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
+                                                                                np.log10(self.t[k_t_boundary+1:]), \
+                                                                                self.y[k_t_boundary+1:])
+            except:
+                print 'failed in dlogrho_dlogt_const_p for lo-T part of envelope'
+                raise
+
+        else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
+            if self.z_eos_option:
+                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * (self.z[self.kcore:] / rho_z[self.kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]))
+            else:
+                assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
+                self.dlogrho_dlogt_const_p[self.kcore:] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+
+
+        if self.zenv_inner: # two-layer envelope in terms of Z
+            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
+            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
+            self.mz_env = self.mz_env_outer + self.mz_env_inner
+            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
+            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+        else:
+            # Z uniform in envelope, Z=1 in core.
+            self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
+            self.mz = self.mz_env + self.mcore * const.mearth
+
+        self.bulk_z = self.mz / self.mtot
+        self.ysurf = self.y[-1]
+        self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
+
+        # axial moment of inertia if spherical, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
+        self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
+
+        self.pressure_scale_height = self.p / self.rho / self.g
+        self.mf = self.m / self.mtot
+        self.rf = self.r / self.rtot
+    
+    def set_entropy(self):
+        # set entropy in envelope (ignore z contribution in envelope)
+        self.entropy = np.zeros_like(self.p)
+        self.entropy[self.kcore:] = 10 ** self.hhe_eos.get_logs(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) * const.mp / const.kb
+        # experimenting with including entropy of core material (don't bother with aneos, it's not a column).
+        if self.include_core_entropy:
+            if not self.z_eos_option == 'reos water':
+                raise NotImplementedError("including entropy of the core is only possible if z_eos_option == 'reos water'.")
+            else:
+                self.entropy[:self.kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore])) * const.mp / const.kb        
+
+
+
+
+
+
 
     def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., start_t=2e3, end_t=160, which_t='t1', nsteps=100,
                 stdout_interval=1, # output controls
