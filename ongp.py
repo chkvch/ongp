@@ -42,7 +42,7 @@ class evol:
     def __init__(self,
         hhe_eos_option='scvh',
         z_eos_option='reos water',
-        atm_option='f11_tables',
+        atm_option='f11_tables jup',
         hhe_phase_diagram=None,
         nz=1024,
         relative_radius_tolerance=1e-6, # better than 1 km for a Jupiter radius
@@ -1479,7 +1479,7 @@ class evol:
 
             # write scalars
             # these names should match attributes of the Evolver instance
-            scalar_names = 'nz', 'iters', 'mtot', 'rtot', 'tint', 'lint', 't1', 't10', 'teff', 'ysurf', 'nz_gradient', 'nz_shell', 'zenv', 'zenv_inner', 'mz_env', 'mz', 'bulk_z', 'delta_nu', 'delta_nu_env'
+            scalar_names = 'nz', 'iters', 'mtot', 'rtot', 'mcore', 'tint', 'lint', 't1', 't10', 'teff', 'ysurf', 'nz_gradient', 'nz_shell', 'zenv', 'zenv_inner', 'mz_env', 'mz', 'bulk_z', 'delta_nu', 'delta_nu_env'
             n_scalars = len(scalar_names)
             scalar_header_fmt = '%20s ' * n_scalars
             f.write(scalar_header_fmt % scalar_names)
