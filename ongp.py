@@ -329,6 +329,7 @@ class evol:
     def static(self, mtot=const.mjup,
                     t1=None, # 1-bar temperature
                     t10=None, # 10-bar temperature
+                    teq=None, # equilibrium temperature (connects tint to teff). function of distance and Bond albedo
                     yenv=0.27, # helium mass fraction of envelope (or of outer envelope if yenv_inner is not None)
                     zenv=0., # heavy element mass fraction of envelope (or of outer envelope if zenv_inner is not None)
                     mcore=0., # mass of pure-z core in Earth masses.
@@ -376,7 +377,14 @@ class evol:
 
         # model atmospheres
         atm_type, atm_planet = self.atm_option.split() # e.g., 'f11_tables u'
-        teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}  # uranus: pearl, hanel 1990 icarus. uranus: pearl, conrath 1991 journal of geophys. research
+        if teq:
+            self.teq = teq
+        else:
+            # use a default value. 
+            # J is a mean of Hanel et al. 1981 and Pearl & Conrath 1991.
+            # S i'll need to check.
+            # U, N come from Pearl & Conrath 1991.
+            self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[atm_planet]
         if atm_type == 'f11_tables':
             import f11_atm
             reload(f11_atm)
@@ -387,7 +395,6 @@ class evol:
             self.atm = f11_atm_fit.atm(atm_planet)
         else:
             raise ValueError('atm_type %s not recognized.' % atm_type)
-        self.teq = teq[atm_planet] # make this free parameter!
 
         self.core_prho_relation = core_prho_relation # if None (default), use z_eos_option
 
@@ -1130,7 +1137,9 @@ class evol:
 
 
 
-    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., start_t=2e3, end_t=160, which_t='t1', nsteps=100,
+    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., 
+                start_t=2e3, end_t=160, which_t='t1', nsteps=100,
+                teq=None, # will pass to static, which defaults to dict values if teq==None
                 stdout_interval=1, # output controls
                 output_prefix=None,
                 include_he_immiscibility=False, # helium rain
@@ -1190,7 +1199,7 @@ class evol:
             else:
                 assert ValueError("which_t must be one of ('t1', 't10').")
             try:
-                self.static(mtot=mtot, t1=t1, t10=t10, yenv=yenv, zenv=zenv, mcore=mcore,
+                self.static(mtot=mtot, t1=t1, t10=t10, yenv=yenv, zenv=zenv, mcore=mcore, teq=teq,
                                 include_he_immiscibility=include_he_immiscibility,
                                 phase_t_offset=phase_t_offset,
                                 minimum_y_is_envelope_y=minimum_y_is_envelope_y,
