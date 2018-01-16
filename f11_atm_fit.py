@@ -11,6 +11,7 @@ logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
 log.setLevel(conf.log_level)
 
 class atm:
+    
     """a class to implement the [F11] model atmospheres for Jupiter and Saturn,
     as fit analytically by [LC13].
 
