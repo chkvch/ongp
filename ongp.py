@@ -376,7 +376,7 @@ class evol:
             assert self.hhe_phase_diagram, 'cannot include h/he immiscibility without specifying hhe_phase_diagram.'
 
         # model atmospheres
-        atm_type, atm_planet = self.atm_option.split() # e.g., 'f11_tables u'
+        self.atm_type, self.atm_planet = self.atm_option.split() # e.g., 'f11_tables u'
         if teq:
             self.teq = teq
         else:
@@ -384,17 +384,17 @@ class evol:
             # J is a mean of Hanel et al. 1981 and Pearl & Conrath 1991.
             # S i'll need to check.
             # U, N come from Pearl & Conrath 1991.
-            self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[atm_planet]
-        if atm_type == 'f11_tables':
+            self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[self.atm_planet]
+        if self.atm_type == 'f11_tables':
             import f11_atm
             reload(f11_atm)
-            self.atm = f11_atm.atm(self.path_to_data, atm_planet)
-        elif atm_type == 'f11_fit':
+            self.atm = f11_atm.atm(self.path_to_data, self.atm_planet)
+        elif self.atm_type == 'f11_fit':
             import f11_atm_fit
             reload(f11_atm_fit)
-            self.atm = f11_atm_fit.atm(atm_planet)
+            self.atm = f11_atm_fit.atm(self.atm_planet)
         else:
-            raise ValueError('atm_type %s not recognized.' % atm_type)
+            raise ValueError('atm_type %s not recognized.' % self.atm_type)
 
         self.core_prho_relation = core_prho_relation # if None (default), use z_eos_option
 
@@ -909,9 +909,9 @@ class evol:
         self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
         if self.atm_option.split()[0] == 'f11_tables':
             if self.surface_g * 1e-2 > max(self.atm.g_grid):
-                raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, max(atm.g_grid)))
+                raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (self.atm_planet, self.surface_g*1e-2, max(self.atm.g_grid)))
             elif self.surface_g * 1e-2 < min(self.atm.g_grid):
-                raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (atm_planet, self.surface_g*1e-2, min(atm.g_grid)))
+                raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (self.atm_planet, self.surface_g*1e-2, min(self.atm.g_grid)))
         try:
             self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
