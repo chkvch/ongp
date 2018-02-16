@@ -36,7 +36,6 @@ log = logging.getLogger(__name__)
 logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
 log.setLevel(conf.log_level)
 
-
 class evol:
 
     def __init__(self,
@@ -310,9 +309,9 @@ class evol:
     def get_rho_xyz(self, logp, logt, y, z):
         # only meant to be called when Z is non-zero and Y is not 0 or 1
         if np.any(np.isnan(logp)):
-            raise EOSError('have %i nans in logp' % num(logp[np.isnan(logp)]))
+            raise EOSError('have %i nans in logp' % len(logp[np.isnan(logp)]))
         elif np.any(np.isnan(logt)):
-            raise EOSError('have %i nans in logt' % num(logt[np.isnan(logt)]))
+            raise EOSError('have %i nans in logt' % len(logt[np.isnan(logt)]))
         elif np.any(y <= 0.):
             raise EOSError('one or more bad y')
         elif np.any(y >= 1.):
