@@ -811,17 +811,21 @@ class evol:
         elif self.ktrans == -1: # no transition found (yet)
             return
         if self.zenv_inner: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, zenv_inner is z of the inner envelope
-            assert self.zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
-            assert self.zenv_inner < 1., 'set_yz got bad z %f' % self.zenv_inner
-            if not self.zenv_inner >= self.zenv:
-                raise UnphysicalParameterError('no z inversion allowed.')
+            try:
+                assert self.zenv_inner > 0, 'if you want a z-free envelope, no need to specify zenv_inner.'
+                assert self.zenv_inner < 1., 'set_yz got bad z %f' % self.zenv_inner
+                assert self.zenv_inner >= self.zenv, 'no z inversion allowed.'
+            except AssertionError as e:
+                raise UnphysicalParameterError(e.args[0])
             self.z[self.kcore:self.ktrans] = self.zenv_inner
             self.z[self.ktrans:] = self.zenv_outer
         if self.yenv_inner:
-            assert self.yenv_inner > 0, 'if you want a Y-free envelope, no need to specify yenv_inner.'
-            assert self.yenv_inner < 1., 'set_yz got bad y %f' % self.yenv_inner
-            if not self.yenv_inner >= self.yenv:
-                raise UnphysicalParameterError('no y inversion allowed.')
+            try:
+                assert self.yenv_inner > 0, 'if you want a Y-free envelope, no need to specify yenv_inner.'
+                assert self.yenv_inner < 1., 'set_yz got bad y %f' % self.yenv_inner
+                assert self.yenv_inner >= self.yenv, 'no y inversion allowed.'
+            except AssertionError as e:
+                raise UnphysicalParameterError(e.args[0])
             self.y[self.kcore:self.ktrans] = self.yenv_inner
             self.y[self.ktrans:] = self.yenv_outer
 
