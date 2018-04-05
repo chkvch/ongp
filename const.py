@@ -9,6 +9,7 @@ radians_per_cycle = pi * 2
 degrees_per_cycle = 360.
 degrees_per_radian = degrees_per_cycle / radians_per_cycle
 radians_per_degree = radians_per_cycle / degrees_per_cycle
+deg_per_day = 180. / np.pi * 60 * 60 * 24
 
 msun = 1.9892e33
 rsun = 6.9598e10
