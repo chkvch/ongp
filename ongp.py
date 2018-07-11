@@ -30,7 +30,6 @@ import config_const as conf
 # (5) the Rostock eos (REOS) for water, also obtained courtesy of Nadine Nettelmann.
 #     at present won't work for cool planet models since it only covers T > 1000 K;
 #     blends with aneos water at low T. references: 2008ApJ...683.1217N, 2009PhRvB..79e4107F
-#     warn that the entropies
 
 log = logging.getLogger(__name__)
 logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
@@ -745,8 +744,8 @@ class evol:
     def integrate_temperature(self, adiabatic=True):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
-            adiabatic gradient here (as well as later) is ignoring any z contribution.
-              if not adiabatic, then just integrate existing gradt
+        adiabatic gradient here (as well as later) is ignoring any z contribution.
+        if not adiabatic, then just integrate existing gradt
         '''
         if self.atm_which_t == 't1':
             self.t[-1] = self.t1
@@ -755,16 +754,30 @@ class evol:
         else:
             raise ValueError("atm_which_t must be one of 't1', 't10'")
         if adiabatic:
-            self.grada[:self.kcore] = 0.
+            self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
+            # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
+            
+            # this call to get grada is slow.
+            # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
+            # relies so heavily on interpolation in scvh.
             self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             self.grada_check_nans()
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
-            for k in np.arange(self.nz)[::-1]:
+            for k in np.arange(self.nz)[::-1]: # surface to center
                 if k == self.nz - 1: continue
                 if k == self.kcore - 1: break
                 dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
                 dlnt = self.grada[k] * dlnp
                 self.t[k] = self.t[k+1] * (1. + dlnt)
+            
+            # slices + cumsum faster than the for loop by a factor of > a hundred. made it work in isolation, here it seems
+            # to make the integral run away?
+            # dlnp = np.diff(np.log(self.p))
+            # dlnt = self.grada[:-1] * dlnp
+            # dt = dlnt * self.t[1:]
+            # self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
+            # print self.t    
+
         else:
             for k in np.arange(self.nz)[::-1]:
                 if k == self.nz - 1: continue

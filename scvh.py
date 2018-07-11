@@ -17,7 +17,7 @@ class eos:
         '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
-
+        
         log.debug('message')
         self.path_to_data = path_to_data
 
@@ -44,8 +44,11 @@ class eos:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
-                    _data = np.genfromtxt(path_to_h_data, skip_header=i+1, max_rows=nrows, names=self.h_names)
-
+                    # _data = np.genfromtxt(path_to_h_data, skip_header=i+1, max_rows=nrows, names=self.h_names)
+                    with open(path_to_h_data, "rb") as f:
+                        from itertools import islice
+                        _data = np.genfromtxt(islice(f, i+1, i+nrows+1), names=self.h_names)
+                    
                     # this ndarray is too annoying, convert data for this logt to a dict
                     data = {}
                     for name in self.h_names:
@@ -71,7 +74,10 @@ class eos:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
-                    _data = np.genfromtxt(path_to_he_data, skip_header=i+1, max_rows=nrows, names=self.he_names)
+                    # _data = np.genfromtxt(path_to_he_data, skip_header=i+1, max_rows=nrows, names=self.he_names)
+                    with open(path_to_he_data, "rb") as f:
+                        from itertools import islice
+                        _data = np.genfromtxt(islice(f, i+1, i+nrows+1), names=self.he_names)
 
                     # this ndarray is too annoying, convert data for this logt to a dict
                     data = {}

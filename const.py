@@ -97,6 +97,6 @@ jupiter_omega_dyn = np.sqrt(jupiter_gm / jupiter_rvol ** 3)
 
 saturn_gm = 37.931e6 * 1e15
 saturn_rvol = 58232e5
-saturn_rotation_period = 10.656 * 60 * 60
+saturn_rotation_period = 10.656 * 60 * 60 # lol
 saturn_omega_rot = 2. * np.pi / saturn_rotation_period
 saturn_omega_dyn = np.sqrt(saturn_gm / saturn_rvol ** 3)
