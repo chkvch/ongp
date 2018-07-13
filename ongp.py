@@ -154,7 +154,7 @@ class evol:
             out /= out[-1]
             return out
         elif self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
-            
+
             f0 = t
             density_f0 = 1. / np.diff(f0)
             density_f0 = np.insert(density_f0, 0, density_f0[0])
@@ -165,7 +165,7 @@ class evol:
             out -= out[0]
             out /= out[-1]
             return out
-            
+
             # if mcore is None:
             #     f0 = t
             #     density_f0 = 1. / np.diff(f0)
@@ -378,7 +378,7 @@ class evol:
         if teq:
             self.teq = teq
         else:
-            # use a default value. 
+            # use a default value.
             # J is a mean of Hanel et al. 1981 and Pearl & Conrath 1991.
             # S i'll need to check.
             # U, N come from Pearl & Conrath 1991.
@@ -403,7 +403,7 @@ class evol:
         self.yenv = yenv
         self.yenv_inner = yenv_inner
         self.yenv_outer = self.yenv
-        
+
         self.erase_z_discontinuity_from_brunt = erase_z_discontinuity_from_brunt
         self.include_core_entropy = include_core_entropy
 
@@ -555,7 +555,7 @@ class evol:
         self.integrate_hydrostatic()
         self.set_core_density()
         self.set_envelope_density()
-        
+
         # finally, calculate lots of auxiliary quantities of interest
         self.rtot = self.r[-1]
 
@@ -564,11 +564,11 @@ class evol:
         self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
 
         return self.rtot, self.t[-1], self.teff
-        
-        
-        
-        
-        
+
+
+
+
+
 
     # these implement the analytic p(rho) relations for "rock" and "ice" mixtures from Hubbard & Marley 1989
     def p_of_rho_hm89_rock(self, rho):
@@ -756,7 +756,7 @@ class evol:
         if adiabatic:
             self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
             # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
-            
+
             # this call to get grada is slow.
             # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
             # relies so heavily on interpolation in scvh.
@@ -769,14 +769,14 @@ class evol:
                 dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
                 dlnt = self.grada[k] * dlnp
                 self.t[k] = self.t[k+1] * (1. + dlnt)
-            
+
             # slices + cumsum faster than the for loop by a factor of > a hundred. made it work in isolation, here it seems
             # to make the integral run away?
             # dlnp = np.diff(np.log(self.p))
             # dlnt = self.grada[:-1] * dlnp
             # dt = dlnt * self.t[1:]
             # self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
-            # print self.t    
+            # print self.t
 
         else:
             for k in np.arange(self.nz)[::-1]:
@@ -900,7 +900,7 @@ class evol:
                             fw.write('%16.8f %16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k], self.z[k]))
                 print 'saved problematic logp, logt, y, z to rho_nans.dat'
                 raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), self.iters))
-                
+
     def set_atm(self):
 
         if self.atm_which_t == 't1': # interpolate in existing t profile to find t10
@@ -927,7 +927,7 @@ class evol:
             if self.surface_g * 1e-2 > max(self.atm.g_grid):
                 raise AtmError('surface gravity too high for %s atm tables. value = %g, maximum = %g' % (self.atm_planet, self.surface_g*1e-2, max(self.atm.g_grid)))
             elif self.surface_g * 1e-2 < min(self.atm.g_grid):
-                raise AtmError('surface gravity too low for %s atm tables. value = %g, maximum = %g' % (self.atm_planet, self.surface_g*1e-2, min(self.atm.g_grid)))
+                raise AtmError('surface gravity too low for %s atm tables. value = %g, minimum = %g' % (self.atm_planet, self.surface_g*1e-2, min(self.atm.g_grid)))
         try:
             self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
             self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
@@ -941,7 +941,7 @@ class evol:
                 raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
             else:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
-                
+
     def set_derivatives_etc(self):
         self.r[0] = 1. # 1 cm central radius to keep these things at least calculable at center zone
         self.g = const.cgrav * self.m / self.r ** 2
@@ -1135,7 +1135,7 @@ class evol:
         self.pressure_scale_height = self.p / self.rho / self.g
         self.mf = self.m / self.mtot
         self.rf = self.r / self.rtot
-    
+
     def set_entropy(self):
         # set entropy in envelope (ignore z contribution in envelope)
         self.entropy = np.zeros_like(self.p)
@@ -1145,7 +1145,7 @@ class evol:
             if not self.z_eos_option == 'reos water':
                 raise NotImplementedError("including entropy of the core is only possible if z_eos_option == 'reos water'.")
             else:
-                self.entropy[:self.kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore])) * const.mp / const.kb        
+                self.entropy[:self.kcore] = 10 ** self.z_eos.get_logs(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore])) * const.mp / const.kb
 
 
 
@@ -1153,7 +1153,7 @@ class evol:
 
 
 
-    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0., 
+    def run(self, mtot=const.mjup, yenv=0.27, zenv=0., mcore=0.,
                 start_t=2e3, end_t=160, which_t='t1', nsteps=100,
                 teq=None, # will pass to static, which defaults to dict values if teq==None
                 stdout_interval=1, # output controls
@@ -1168,7 +1168,7 @@ class evol:
                 luminosity_erosion_option=None,
                 # z_eos_option=None,
                 timesteps_ease_in=None):
-                
+
         '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
         using the energy equation dL/dm = -T * ds/dt where L is the intrinsic luminosity, m is the mass coordinate, T is the temperature,
         s is the specific entropy, and t is time.
@@ -1177,7 +1177,7 @@ class evol:
 
         import time
         assert 0. <= zenv <= 1., 'invalid envelope z %f' % zenv
-        
+
 
         # set vector of surface temperature to compute
         if timesteps_ease_in:
@@ -1232,7 +1232,25 @@ class evol:
                 # return self.history
                 raise
             dt_yr = 0.
-            # this is the piece daniel now uses scipy.integrate.odeint to integrate instead
+
+            # these used to only be set if step > 0
+            self.history['step'][step] = step
+            self.history['iters'][step] = self.iters
+            self.history['age'][step] = age_gyr
+            self.history['dt_yr'][step] = dt_yr
+            self.history['radius'][step] = self.rtot
+            self.history['tint'][step] = self.tint
+            self.history['lint'][step] = self.lint
+            self.history['t1'][step] = self.t1
+            self.history['t10'][step] = self.t10
+            self.history['teff'][step] = self.teff
+            self.history['ysurf'][step] = self.y[-1]
+            self.history['nz_gradient'][step] = self.nz_gradient
+            self.history['nz_shell'][step] = self.nz_shell
+            self.history['mz_env'][step] = self.mz_env
+            self.history['mz'][step] = self.mz
+            self.history['bulk_z'][step] = self.bulk_z
+
             if step > 0: # there is a timestep to speak of
                 delta_s = self.entropy - previous_entropy
                 delta_s *= const.kb / const.mp # now erg K^-1 g^-1
@@ -1250,23 +1268,6 @@ class evol:
                 self.delta_s = delta_s # erg K^-1 g^-1
                 self.eps_grav = eps_grav
                 self.luminosity = luminosity
-
-                self.history['step'][step] = step
-                self.history['iters'][step] = self.iters
-                self.history['age'][step] = age_gyr
-                self.history['dt_yr'][step] = dt_yr
-                self.history['radius'][step] = self.rtot
-                self.history['tint'][step] = self.tint
-                self.history['lint'][step] = self.lint
-                self.history['t1'][step] = self.t1
-                self.history['t10'][step] = self.t10
-                self.history['teff'][step] = self.teff
-                self.history['ysurf'][step] = self.y[-1]
-                self.history['nz_gradient'][step] = self.nz_gradient
-                self.history['nz_shell'][step] = self.nz_shell
-                self.history['mz_env'][step] = self.mz_env
-                self.history['mz'][step] = self.mz
-                self.history['bulk_z'][step] = self.bulk_z
 
                 if luminosity_erosion_option:
                     # estimate of core erosion rate following Guillot+2003 chapter eq. 14. went into Moll, Garaud, Mankovich, Fortney ApJ 2017
@@ -1416,11 +1417,11 @@ class evol:
                 os.mkdir(outdir)
             plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')
 
-    def save_profile(self, outfile, 
+    def save_profile(self, outfile,
                     save_gyre_model_with_profile=True,
-                    smooth_brunt_n2_std=None, 
-                    add_rigid_rotation=None, 
-                    erase_y_discontinuity_from_brunt=False, 
+                    smooth_brunt_n2_std=None,
+                    add_rigid_rotation=None,
+                    erase_y_discontinuity_from_brunt=False,
                     erase_z_discontinuity_from_brunt=False,
                     omit_brunt_composition_term=False):
 
@@ -1534,11 +1535,11 @@ class evol:
             f.write('\n')
 
             print 'wrote %i zones to %s' % (k, outfile)
-            
+
 def plot_grada_nans_on_scvh(**kwargs):
     import matplotlib.pyplot as plt
     import scvh; reload(scvh)
-    
+
     names = 'logp', 'logt', 'y'
     nans = np.genfromtxt('grada_nans.dat', names=names)
     print nans['logp']
