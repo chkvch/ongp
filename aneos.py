@@ -61,7 +61,7 @@ class eos:
         try:
             return self._get_logrho((logp, logt))
         except ValueError:
-            print 'out of bounds in aneos get_logrho.'
+            print('out of bounds in aneos get_logrho.')
             raise
     def get_logu(self, logp, logt):
         return self._get_logu((logp, logt))
@@ -98,7 +98,7 @@ class eos:
         from scipy.optimize import brentq
         import time
 
-        print 'regularizing %s tables to rectangular in P, s' % self.material
+        print('regularizing %s tables to rectangular in P, s' % self.material)
 
         logpvals = np.linspace(6, 15, self.npts)
         logsvals = np.linspace(min(self.data['logs']), max(self.data['logs']), self.npts)
@@ -119,7 +119,7 @@ class eos:
                     logt_on_ps[i, j] = np.nan
                     logrho_on_ps[i, j] = np.nan
                     logu_on_ps[i, j] = np.nan
-            print 'row %i/%i, %f s' % (i+1, self.npts, time.time() - t0)
+            print('row %i/%i, %f s' % (i+1, self.npts, time.time() - t0))
 
         fmt = '%21.16f\t' * 5
         with open('../aneos/aneos_%s_ps.dat' % self.material, 'w') as fw:
@@ -128,7 +128,7 @@ class eos:
                     line = fmt % (logrho_on_ps[i, j], logt_on_ps[i, j], logpval, logu_on_ps[i, j], logsval)
                     fw.write(line + '\n')
 
-        print 'wrote aneos/aneos_%s_ps.dat' % self.material
+        print('wrote aneos/aneos_%s_ps.dat' % self.material)
 
 
     def plot_rhot_coverage(self, ax=None):

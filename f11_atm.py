@@ -10,13 +10,13 @@ logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
 log.setLevel(conf.log_level)
 
 class atm:
-    
+
     '''
     this class interpolates in the tabulated model atmospheres of
     Fortney, Ikoma, Nettelmann, Guillot, and Marley 2011 for J, S, U, N.
     ApJ 729:32
     doi:10.1088/0004-637X/729/1/32
-    '''    
+    '''
 
     def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None):
 
@@ -35,7 +35,7 @@ class atm:
             }
             usecols['1.0s'] = usecols['1.0j']
             usecols['0.7s'] = usecols['0.7j']
-            
+
             if not flux_level: # pick a default based on planet
                 flux_level = {'jup':'1.0j', 'sat':'1.0s'}[self.planet]
         elif self.planet in ('u', 'n'):
@@ -43,7 +43,7 @@ class atm:
             names = 'g', 'teff', 't10', 't1', 'tint'
             g_step = 9
             usecols = {
-                '0.12n':(0, 1, 2, 3, 13), 
+                '0.12n':(0, 1, 2, 3, 13),
                 '1.0n':(0, 4, 5, 6, 13),
                 '1.0u':(0, 7, 8, 9, 13),
                 '1.8u':(0, 10, 11, 12, 13)
@@ -52,9 +52,9 @@ class atm:
                 flux_level = '1.0' + self.planet
         else:
             raise ValueError('planet label %s not recognized. choose from jup, sat, u, n.' % self.planet)
-            
+
         # print 'planet %s, flux level %s' % (planet, flux_level)
-                      
+
         log.debug('reading table from %s' % self.table_path)
         self.data = np.genfromtxt(self.table_path, delimiter='&', names=names, usecols=usecols[flux_level])
         file_length = len(open(self.table_path).readlines())
@@ -71,7 +71,7 @@ class atm:
         t_columns = names[1:-1] # ('teff', 't10') in the j/s case; (teff, t1, t10) in the u/n case
         for t_column in t_columns:
             t[t_column] = np.zeros((npts_g, npts_tint))
-            
+
         for m, gval in enumerate(self.g_grid):
             data_for_this_g = self.data[self.data['g'] == gval]
             for n, tintval in enumerate(self.tint_grid):
@@ -83,7 +83,7 @@ class atm:
                 last_nan = np.where(np.diff(t['t10'][m, :] < 0))[0][-1] + 1
                 tint = self.tint_grid[last_nan]
                 alpha = (tint - self.tint_grid[last_nan -2]) / (self.tint_grid[last_nan - 1] - self.tint_grid[last_nan - 2])
-                
+
                 for t_column in t_columns:
                     t[t_column][m, last_nan] = alpha * t[t_column][m, last_nan - 1] + (1. - alpha) * t[t_column][m, last_nan - 2]
 
@@ -101,24 +101,23 @@ class atm:
                 self.data[t_column][self.data['g'] == gval] = t[t_column][m, :][::-1]
 
             if print_table:
-                print ('%8s ' * (2 + len(t_columns))) % (('g', 'tint') + t_columns)
+                print('%8s ' * (2 + len(t_columns))) % (('g', 'tint') + t_columns)
                 for n, tintval in enumerate(self.tint_grid):
                     try:
-                        print ('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
+                        print('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
                             ( \
                                 self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
-                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], 
-                                self.data['t1'][self.data['g'] == gval][npts_tint - n - 1], 
+                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1],
+                                self.data['t1'][self.data['g'] == gval][npts_tint - n - 1],
                             ))
                     except ValueError:
                         # no t1
-                        print ('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
+                        print('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
                             ( \
                                 self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
-                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1], 
+                                self.data['t10'][self.data['g'] == gval][npts_tint - n - 1],
                             ))
-                print
-                
+
         self.get = {}
         for t_column in t_columns:
             self.get[t_column] = RegularGridInterpolator((self.g_grid, self.tint_grid), t[t_column])
@@ -126,7 +125,7 @@ class atm:
     def get_tint(self, g, t10):
         """
         give g (mks) and t10 (K) as arguments, does a root find to obtain the
-        intrinsic temperature tint (K). 
+        intrinsic temperature tint (K).
         """
 
         assert t10 > 0., 'get_tint got a negative t10 %f' % t
@@ -134,7 +133,7 @@ class atm:
             try:
                 return t10 - self.get['t10']((g, tint))
             except ValueError:
-                print 'failed to interpolate for t10 at g = %f, tint = %f' % (g, tint)
+                print('failed to interpolate for t10 at g = %f, tint = %f' % (g, tint))
 
         # for brackets on tint, consider the nodes for the two nearest values in g. take the
         # intersection of their tint values for which t10, teff are defined, and use min/max
@@ -145,7 +144,7 @@ class atm:
         g_bin = np.where(self.g_grid - g > 0)[0][0]
         minmax = lambda z: (min(z), max(z))
         g_lo, g_hi = self.g_grid[g_bin - 1], self.g_grid[g_bin]
-        
+
         data_g_lo = self.data[self.data['g'] == g_lo]
         data_g_lo = data_g_lo[data_g_lo['t10'] > 0]
         min_tint_g_lo = min(data_g_lo['tint'])
@@ -155,7 +154,7 @@ class atm:
         data_g_hi = data_g_hi[data_g_hi['t10'] > 0]
         min_tint_g_hi = min(data_g_hi['tint'])
         max_tint_g_hi = max(data_g_hi['tint'])
-        
+
         min_tint = max(min_tint_g_lo, min_tint_g_hi)
         max_tint = min(max_tint_g_lo, max_tint_g_hi)
 

@@ -1,5 +1,5 @@
 import numpy as np
-import const; reload(const)
+import const
 from scipy.interpolate import RegularGridInterpolator, splrep, splev
 from scipy.optimize import brentq
 import gp_configs.app_config as app_cfg
@@ -17,7 +17,7 @@ class eos:
         '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
         to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
-        
+
         log.debug('message')
         self.path_to_data = path_to_data
 
@@ -48,7 +48,7 @@ class eos:
                     with open(path_to_h_data, "rb") as f:
                         from itertools import islice
                         _data = np.genfromtxt(islice(f, i+1, i+nrows+1), names=self.h_names)
-                    
+
                     # this ndarray is too annoying, convert data for this logt to a dict
                     data = {}
                     for name in self.h_names:
@@ -195,9 +195,9 @@ class eos:
         try:
             res = self.get_hhe(pair, y)
         except ValueError:
-            print 'probably out of bounds in logP, logT, or Y -- did you accidentally pass P, T? (or loglogP, loglogT?)'
-            print logp
-            print logt
+            print('probably out of bounds in logP, logT, or Y -- did you accidentally pass P, T? (or loglogP, loglogT?)')
+            print(logp)
+            print(logt)
             raise
 
         res['logp'] = logp
@@ -287,7 +287,7 @@ class eos:
         y_lo = y * (1. - f)
         y_hi = y * (1. + f)
         if np.any(y_lo < 0.) or np.any(y_hi > 1.):
-            print 'warning: chiy not calculable for y this close to 0 or 1. should change size of step for finite differences.'
+            print('warning: chiy not calculable for y this close to 0 or 1. should change size of step for finite differences.')
             return None
 
         # logrho = self.get_logrho(logp, logt, y)
@@ -363,7 +363,7 @@ class eos:
             try:
                 return const.mh / const.mhe * y / (1. - y)
             except ZeroDivisionError:
-                print 'tried divide by zero in beta'
+                print('tried divide by zero in beta')
                 return np.nan
 
         def get_gamma(xh, xh2, xhe, xhep):
@@ -670,11 +670,11 @@ class eos:
             ax = plt.gca()
         for logt in self.logtvals:
             logp = self.h_data[logt]['logp']
-            ax.plot(logp, np.ones_like(logp) * logt, symbol, **kwargs)
+            ax.plot(10**logp, np.ones_like(logp) * 10**logt, symbol, **kwargs)
 
-        ax.set_xlim(-1.5, 19.5)
-        ax.set_xlabel(r'$\log\ P$')
-        ax.set_ylabel(r'$\log\ T$')
+        # ax.set_xlim(-1.5, 19.5)
+        # ax.set_xlabel(r'$\log\ P$')
+        # ax.set_ylabel(r'$\log\ T$')
 
     def plot_rhot_coverage(self, ax=None, symbol='.', **kwargs):
         if not ax:

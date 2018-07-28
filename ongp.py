@@ -54,7 +54,7 @@ class evol:
         log.debug('path to data %s', self.path_to_data)
         # initialize hydrogen-helium equation of state
         if hhe_eos_option == 'scvh':
-            import scvh; reload(scvh)
+            import scvh
             self.hhe_eos = scvh.eos(self.path_to_data)
 
             # load isentrope tables so we can use isentropic P-T profiles at solar composition
@@ -73,10 +73,14 @@ class evol:
 
         if z_eos_option:
             # initialize z equation of state
-            import aneos; reload(aneos)
-            import reos; reload(reos)
+            import aneos
+            import reos
             if z_eos_option == 'reos water':
                 self.z_eos = reos.eos(self.path_to_data)
+                self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
+            elif z_eos_option == 'reos water v2':
+                import reos_v2
+                self.z_eos = reos_v2.eos()
                 self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
             elif 'aneos' in z_eos_option:
                 material = z_eos_option.split()[1]
@@ -93,7 +97,7 @@ class evol:
 
         if hhe_phase_diagram:
             if hhe_phase_diagram == 'lorenzen':
-                import lorenzen; reload(lorenzen)
+                import lorenzen
                 self.phase = lorenzen.hhe_phase_diagram(self.path_to_data, extrapolate_to_low_pressure=extrapolate_phase_diagram_to_low_pressure)
             else:
                 raise ValueError('lorenzen is the only available h/he phase diagram at this time.')
@@ -119,10 +123,11 @@ class evol:
             'amplitude_core_mesh_boost':1e1,
             'width_core_mesh_boost':1e-2,
             'fmean_core_bdy_mesh_boost':2e-1
-        }
-
-        for key, value in mesh_params.iteritems():
+            }
+        # overwrite with any passed by user
+        for key, value in mesh_params.items():
             self.mesh_params[key] = value
+
 
         # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
         # relative_radius_tolerance over both of the last two iterations.
@@ -286,13 +291,13 @@ class evol:
             try:
                 rho_z_low_t = 10 ** self.z_eos_low_t.get_logrho(logp_low_t, logt_low_t)
             except:
-                print 'off low-t eos tables?'
+                print('off low-t eos tables?')
                 raise
 
             try:
                 rho_z_high_t = 10 ** self.z_eos.get_logrho(logp_high_t, logt_high_t)
             except:
-                print 'off high-t eos tables?'
+                print('off high-t eos tables?')
                 raise
 
             rho_z = np.concatenate((rho_z_high_t, rho_z_low_t))
@@ -339,7 +344,7 @@ class evol:
                     rrho_where_have_helium_gradient=None, # superadiabaticity (parameterized as the density ratio R_rho) to assume wherever there's a stabilizing composition gradient
                     erase_z_discontinuity_from_brunt=False, # ignore Z discontinuity when calculating buoyancy frequency's composition term
                     include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important
-					transition_pressure=1., # pressure to assume for some kind of discontinuity for y or z
+					transition_pressure=1., # pressure in Mbar=1e12(cgs) to assume for some kind of discontinuity for y or z
                     core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a tabular Z eos
                     verbose=False):
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
@@ -385,11 +390,9 @@ class evol:
             self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[self.atm_planet]
         if self.atm_type == 'f11_tables':
             import f11_atm
-            reload(f11_atm)
             self.atm = f11_atm.atm(self.path_to_data, self.atm_planet)
         elif self.atm_type == 'f11_fit':
             import f11_atm_fit
-            reload(f11_atm_fit)
             self.atm = f11_atm_fit.atm(self.atm_planet)
         else:
             raise ValueError('atm_type %s not recognized.' % self.atm_type)
@@ -476,7 +479,7 @@ class evol:
 
         # relax to hydrostatic
         last_three_radii = 0, 0, 0
-        for iteration in xrange(self.max_iters_for_static_model):
+        for iteration in range(self.max_iters_for_static_model):
             self.iters += 1
 
             self.integrate_hydrostatic() # integrate momentum equation to get pressure
@@ -498,11 +501,11 @@ class evol:
         else:
             return -1
 
-        if verbose: print 'converged homogeneous model after %i iterations.' % self.iters
+        if verbose: print('converged homogeneous model after %i iterations.' % self.iters)
 
         if include_he_immiscibility: # repeat hydro iterations, now including the phase diagram calculation (if modeling helium rain)
             last_three_radii = 0, 0, 0
-            for iteration in xrange(self.max_iters_for_static_model):
+            for iteration in range(self.max_iters_for_static_model):
                 self.iters_immiscibility = iteration + 1
 
                 self.integrate_hydrostatic()
@@ -526,8 +529,8 @@ class evol:
 
                     self.integrate_temperature(adiabatic=False)
 
-                print 'WARNING: calling equilibrium_y_profile. check to see that this routine sees the correct total helium mass.'
-                print 'changes were made c. september 2017 to support a Y jump at the transition; initial total he mass not necessarily stored correctly.'
+                print('WARNING: calling equilibrium_y_profile. check to see that this routine sees the correct total helium mass.')
+                print('changes were made c. september 2017 to support a Y jump at the transition; initial total he mass not necessarily stored correctly.')
                 self.y = self.equilibrium_y_profile(phase_t_offset, minimum_y_is_envelope_y=minimum_y_is_envelope_y, transition_pressure=transition_pressure)
 
                 self.set_core_density()
@@ -540,16 +543,16 @@ class evol:
                 if not np.isfinite(self.r[-1]):
                     with open('output/found_infinite_radius.dat', 'w') as f:
                         f.write('%12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r'))
-                        for k in xrange(self.nz):
+                        for k in range(self.nz):
                             in_core = k < self.kcore
                             f.write('%12s %12g %12g %12g %12g %12g\n' % (in_core, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
-                    print 'saved output/found_infinite_radius.dat'
+                    print('saved output/found_infinite_radius.dat')
                     raise RuntimeError('found infinite total radius')
                 last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
             else:
                 return -1
 
-            if verbose: print 'converged with new Y profile after %i iterations.' % self.iters_immiscibility
+            if verbose: print('converged with new Y profile after %i iterations.' % self.iters_immiscibility)
 
         # finalize hydrostatic profiles (maybe not necessary since we just did 20 iterations)
         self.integrate_hydrostatic()
@@ -599,7 +602,7 @@ class evol:
         ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
 
         if np.isnan(ymax1) or self.y[k1] < ymax1:
-            if verbose: print 'first point at P > P_trans = %1.1f Mbar is stable to demixing. Y = %1.4f, Ymax = %1.4f' % (transition_pressure, self.y[k1], ymax1)
+            if verbose: print('first point at P > P_trans = %1.1f Mbar is stable to demixing. Y = %1.4f, Ymax = %1.4f' % (transition_pressure, self.y[k1], ymax1))
             self.nz_gradient = 0
             self.nz_shell = 0
             return self.y
@@ -607,7 +610,7 @@ class evol:
         self.ystart = np.copy(self.y)
         yout = np.copy(self.y)
         yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
-        if verbose: print 'demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1]
+        if verbose: print('demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1])
 
         t0 = time.time()
         rainout_to_core = False
@@ -623,9 +626,9 @@ class evol:
             ymax = self.phase.ymax_lhs(p[k], self.t[k] - phase_t_offset) # April 12 2017: phase_t_offset here rather than in Lorenzen module
             if np.isnan(ymax):
                 raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
-            if show_timing: print 'zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0)
+            if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
             if yout[k] < ymax:
-                if verbose: print 'stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1
+                if verbose: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1)
                 break
             self.nz_gradient = 0
             self.k_shell_top = 0
@@ -652,7 +655,7 @@ class evol:
                 # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
                 # the global helium mass.
                 msg = 'would need Y > 1 in inner homog region; rainout to core.'
-                if verbose: print msg
+                if verbose: print(msg)
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
                 # assert this "should"
@@ -663,15 +666,15 @@ class evol:
                 yout[self.kcore:k] = y_interior
                 self.nz_gradient += 1
 
-        if verbose: print 'he gradient over %i zones. rainout to core %s' % (self.nz_gradient, rainout_to_core)
-        if show_timing: print 't0 + %f seconds' % (time.time() - t0)
+        if verbose: print('he gradient over %i zones. rainout to core %s' % (self.nz_gradient, rainout_to_core))
+        if show_timing: print('t0 + %f seconds' % (time.time() - t0))
 
-        if verbose: print self.mhe, np.dot(yout[self.kcore:], self.dm[self.kcore-1:]), np.dot(yout[self.kcore:self.nz-1], self.dm[self.kcore:])
+        if verbose: print(self.mhe, np.dot(yout[self.kcore:], self.dm[self.kcore-1:]), np.dot(yout[self.kcore:self.nz-1], self.dm[self.kcore:]))
 
         if rainout_to_core:
             # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.
             # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
-            if verbose: print '%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe')
+            if verbose: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
             for k in np.arange(kbot, self.nz):
                 yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
                 # should fix following line for the case where there is no core
@@ -679,11 +682,11 @@ class evol:
                     tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
                 except:
                     raise RuntimeError('equilibrium_y_profile fails when have rainout to core and no core. (fixable.)')
-                if verbose: print '%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe)
+                if verbose: print('%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
                 if tentative_total_he_mass >= self.mhe:
-                    if verbose: print 'tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe
+                    if verbose: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
                     rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
-                    if verbose: print 'satisfied he mass conservation to a relative precision of %f' % rel_mhe_error
+                    if verbose: print('satisfied he mass conservation to a relative precision of %f' % rel_mhe_error)
                     # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
                     self.nz_shell = k - self.kcore
                     self.k_shell_top = k
@@ -707,7 +710,7 @@ class evol:
                 self.rho[:self.kcore] = 8
                 self.rho[:self.kcore] = self.get_rhoz_hm89_ice(self.p[:self.kcore], self.rho[:self.kcore])
             else:
-                raise ValueError, "core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'."
+                raise ValueError("core_prho_relation must be one of 'hm89 rock' or 'hm89 ice'.")
         else:
             assert self.z_eos_option, 'cannot calculate rho_z if no z_eos_option specified'
             self.rho[:self.kcore] = 10 ** self.z_eos.get_logrho(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
@@ -819,7 +822,7 @@ class evol:
         set y and z of inner and outer envelope.
         '''
         if self.ktrans == 0:
-            print 'warning: got ktrans == 0'
+            print('warning: got ktrans == 0')
             return
         elif self.ktrans == -1: # no transition found (yet)
             return
@@ -874,12 +877,12 @@ class evol:
                                                         / (self.r[k_last_nan+1] - self.r[k_first_nan]) \
                                                         * (first_good_grada - last_good_grada) + last_good_grada
             else: # abort
-                print '%i nans in grada for iteration %i, stopping' % (num_nans, self.iters)
+                print('%i nans in grada for iteration %i, stopping' % (num_nans, self.iters))
                 with open('grada_nans.dat', 'w') as fw:
                     for k, val in enumerate(self.grada):
                         if np.isnan(val):
                             fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
-                print 'saved problematic logp, logt, y to grada_nans.dat'
+                print('saved problematic logp, logt, y to grada_nans.dat')
                 raise EOSError('%i nans in grada after eos call on static iteration %i.' % (len(self.grada[np.isnan(self.grada)]), self.iters))
 
     def rho_check_nans(self):
@@ -898,7 +901,7 @@ class evol:
                     for k, val in enumerate(self.rho):
                         if np.isnan(val):
                             fw.write('%16.8f %16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k], self.z[k]))
-                print 'saved problematic logp, logt, y, z to rho_nans.dat'
+                print('saved problematic logp, logt, y, z to rho_nans.dat')
                 raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), self.iters))
 
     def set_atm(self):
@@ -934,9 +937,9 @@ class evol:
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError as e:
             if self.zenv_inner:
-                print 'z2, z1 = ', self.zenv_inner, self.zenv_outer
+                print('z2, z1 = ', self.zenv_inner, self.zenv_outer)
             else:
-                print 'zenv = ', self.zenv
+                print('zenv = ', self.zenv)
             if 'f(a) and f(b) must have different signs' in e.args[0]:
                 raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
             else:
@@ -972,8 +975,8 @@ class evol:
                 self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
                 self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
             except AttributeError:
-                print "warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option
-                print 'cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.'
+                print("warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.z_eos_option)
+                print('cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.')
                 pass
 
         # ignoring the envelope z component when it comes to calculating chirho and chit
@@ -1086,7 +1089,7 @@ class evol:
                                                                                                     np.log10(self.t[self.kcore:k_t_boundary+1]),
                                                                                                     self.y[self.kcore:k_t_boundary+1])
             except:
-                print 'failed in dlogrho_dlogt_const_p for hi-T part of envelope'
+                print('failed in dlogrho_dlogt_const_p for hi-T part of envelope')
                 raise
             try: # fix for z==0
                 if self.zenv > 0.:
@@ -1103,7 +1106,7 @@ class evol:
                                                                                 np.log10(self.t[k_t_boundary+1:]), \
                                                                                 self.y[k_t_boundary+1:])
             except:
-                print 'failed in dlogrho_dlogt_const_p for lo-T part of envelope'
+                print('failed in dlogrho_dlogt_const_p for lo-T part of envelope')
                 raise
 
         else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
@@ -1204,7 +1207,7 @@ class evol:
         # these columns are for the realtime (e.g., notebook) output
         stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y_surf', 'walltime'
         start_time = time.time()
-        print ('%12s ' * len(stdout_columns)) % stdout_columns
+        print(('%12s ' * len(stdout_columns)) % stdout_columns)
         for step, t in enumerate(ts):
             if which_t == 't1':
                 t1 = t
@@ -1228,7 +1231,7 @@ class evol:
                 if output_prefix:
                     with open('%s.history' % output_prefix, 'wb') as fw:
                         pickle.dump(self.history, fw, 0)
-                    print 'wrote history data to %s.history' % output_prefix
+                    print('wrote history data to %s.history' % output_prefix)
                 # return self.history
                 raise
             dt_yr = 0.
@@ -1360,19 +1363,19 @@ class evol:
                     pickle.dump(self.profile, f, 0) # 0 means dump as text
 
                 if not keep_going:
-                    print 'stopping.'
+                    print ('stopping.')
                     raise
 
             if step % stdout_interval == 0 or step == nsteps - 1:
-                print '%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
-                    (step, self.iters, self.t1, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime)
+                print('%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
+                    (step, self.iters, self.t1, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime))
 
             previous_entropy = self.entropy
 
         if output_prefix:
             with open('%s.history' % output_prefix, 'wb') as fw:
                 pickle.dump(self.history, fw, 0)
-            print 'wrote history data to %s.history' % output_prefix
+            print('wrote history data to %s.history' % output_prefix)
 
         return self.history
 
@@ -1427,7 +1430,7 @@ class evol:
 
         # try to be smart about output filenames
         if '.profile' in outfile and '.gyre' in outfile:
-            print 'please pass save_profile an output path with either .gyre or .profile extensions, or neither. not both. please.'
+            print('please pass save_profile an output path with either .gyre or .profile extensions, or neither. not both. please.')
         elif '.profile' in outfile:
             gyre_outfile = outfile.replace('.profile', '.gyre')
         elif '.gyre' in outfile:
@@ -1498,7 +1501,7 @@ class evol:
                                            dummy_epsilon, dummy_epsilon_t, dummy_epsilon_rho,
                                            omega))
 
-                print 'wrote %i zones to %s' % (k, gyre_outfile)
+                print('wrote %i zones to %s' % (k, gyre_outfile))
 
         # also write more complete profile info
         with open(outfile, 'w') as f:
@@ -1530,25 +1533,11 @@ class evol:
                     try:
                         f.write('%20.10g ' % getattr(self, name)[k])
                     except:
-                        print k, name
+                        print(k, name)
                 f.write('\n')
             f.write('\n')
 
-            print 'wrote %i zones to %s' % (k, outfile)
-
-def plot_grada_nans_on_scvh(**kwargs):
-    import matplotlib.pyplot as plt
-    import scvh; reload(scvh)
-
-    names = 'logp', 'logt', 'y'
-    nans = np.genfromtxt('grada_nans.dat', names=names)
-    print nans['logp']
-    print nans['logt']
-    plt.plot(nans['logp'], nans['logt'], 'rx', zorder=10, markersize=15, mew=1)
-
-    eos = scvh.eos('/Users/chris/Dropbox/planet_models/ongp/data')
-    eos.plot_pt_coverage(**kwargs)
-
+            print('wrote %i zones to %s' % (k, outfile))
 
 class EOSError(Exception):
     pass
