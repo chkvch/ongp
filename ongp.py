@@ -18,8 +18,8 @@ import config_const as conf
 # (1) the complete Saumon, Chabrier, & van Horn (SCvH-i; 1995ApJS...99..713S)
 #     equation of state for hydrogen and helium, rather than just solar-Y adiabats;
 #
-# (2) the Fortney+2011 model atmospheres for Jupiter and Saturn (todo: implement
-#     the Uranus and Neptune tables also);
+# (2) boundary conditions from the Fortney+2011 model atmospheres for Jupiter,
+#     Saturn, Uranus and Neptune;
 #
 # (3) the Lorenzen+2011 ab initio phase diagram for hydrogen and helium, obtained
 #     courtesy of Nadine Nettelmann;
@@ -57,30 +57,17 @@ class evol:
             import scvh
             self.hhe_eos = scvh.eos(self.path_to_data)
 
-            # load isentrope tables so we can use isentropic P-T profiles at solar composition
-            # as starting guesses before we tweak Y, Z distribution
-            solar_isentropes = np.load('%s/scvhIsentropes.npz' % self.path_to_data)
-            self.logrho_on_solar_isentrope = RegularGridInterpolator(
-                (solar_isentropes['entropy'], solar_isentropes['pressure']), solar_isentropes['density'])
-            self.logt_on_solar_isentrope = RegularGridInterpolator(
-                (solar_isentropes['entropy'], solar_isentropes['pressure']), np.log10(solar_isentropes['temperature']))
-
-        elif eos == 'militzer':
-            # this would only be good for a jupiter-like helium fraction anyway
-            raise NotImplementedError('no militzer EOS yet.')
-        else:
-            raise NotImplementedError('this EOS name is not recognized.')
+        elif hhe_eos_option == 'reos3b':
+            import reos3b
+            self.hhe_eos = reos3b.eos(self.path_to_data)
+        self.hhe_eos_option = hhe_eos_option
 
         if z_eos_option:
             # initialize z equation of state
             import aneos
-            import reos
+            import reos_water
             if z_eos_option == 'reos water':
-                self.z_eos = reos.eos(self.path_to_data)
-                self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
-            elif z_eos_option == 'reos water v2':
-                import reos_v2
-                self.z_eos = reos_v2.eos()
+                self.z_eos = reos_water.eos(self.path_to_data)
                 self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
             elif 'aneos' in z_eos_option:
                 material = z_eos_option.split()[1]
