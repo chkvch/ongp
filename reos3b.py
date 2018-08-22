@@ -11,30 +11,33 @@ class eos:
 
         self.he_path = '%s/REOS3b-He-2018.dat' % path_to_data
         self.he_data = np.genfromtxt(self.he_path, skip_header=16, names=self.columns)
-
-        # Linear 2d interpolation really sucks unless you want noisy derivatives (including grada)
-        #
-        # h_basis = np.array([self.h_data['logp'], self.h_data['logt']]).T
-        # self.get_logrho_h = LinearNDInterpolator(h_basis, self.h_data['logrho'])
-        # self.get_logs_h = LinearNDInterpolator(h_basis, self.h_data['logs'])
-
-        # he_basis = np.array([self.he_data['logp'], self.he_data['logt']]).T
-        # self.get_logrho_he = LinearNDInterpolator(he_basis, self.he_data['logrho'])
-        # self.get_logs_he = LinearNDInterpolator(he_basis, self.he_data['logs'])
-
+        
+        # take out large pressures where entropies seem harder to fit, store results in dictionary
+        self.h = {}
+        self.he = {}
+        for key in ('logt', 'logrho', 'logs', 'logp'):
+            self.h[key] = np.delete(self.h_data[key], np.where(self.h_data['logp'] > 14.))
+            self.he[key] = np.delete(self.he_data[key], np.where(self.he_data['logp'] > 14.))
+        
         kwargs = {'kx':3, 'ky':3}
-        self.tck_logrho_h = bisplrep(self.h_data['logp'], self.h_data['logt'], self.h_data['logrho'], **kwargs)
-        self.tck_logrho_he = bisplrep(self.he_data['logp'], self.he_data['logt'], self.he_data['logrho'], **kwargs)
-
-        # logs column wants larger expected number of knots
-        kwargs['nxest'] = 50
-        kwargs['nyest'] = 50
-        self.tck_logs_h = bisplrep(self.h_data['logp'], self.h_data['logt'], self.h_data['logs'], **kwargs)
-
-        # try using knots from logs_h for logs_he
-        # kwargs['s'] = 1500
-        # self.tck_logs_he = bisplrep(self.he_data['logp'], self.he_data['logt'], self.he_data['logs'], **kwargs)
-
+        
+        self.tck_logrho_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logrho'], **kwargs)
+        self.tck_logrho_he = bisplrep(self.he['logp'], self.he['logt'], self.he['logrho'], **kwargs)
+        
+        # # logs column wants larger expected number of knots
+        # kwargs['nxest'] = 50
+        # kwargs['nyest'] = 50
+        self.tck_logs_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logs'], **kwargs)
+        self.tck_logs_he = bisplrep(self.he['logp'], self.he['logt'], self.he['logs'], **kwargs)
+        
+        self.tck_logt_ps_h = bisplrep(self.h['logp'], self.h['logs'], self.h['logt'], **kwargs)
+        self.tck_logt_ps_he = bisplrep(self.he['logp'], self.he['logs'], self.he['logt'], **kwargs)
+        
+    def get_logt_ps_h(self, logp, logs):
+        return bisplev(logp, logs, self.tck_logt_ps_h).diagonal()
+    def get_logt_ps_he(self, logp, logs):
+        return bisplev(logp, logs, self.tck_logt_ps_he).diagonal()
+        
     def get_logrho_h(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h).diagonal()[::-1]
     def get_dlogrho_dlogp_const_t_h(self, logp, logt):
@@ -50,24 +53,30 @@ class eos:
         return bisplev(logp[::-1], logt[::-1], self.tck_logrho_he, dy=1).diagonal()[::-1]
 
     def get_logs_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_h).diagonal()[::-1]
+        try:
+            return bisplev(logp[::-1], logt[::-1], self.tck_logs_h).diagonal()[::-1]
+        except:
+            return bisplev(logp, logt, self.tck_logs_h)
     def get_dlogs_dlogp_const_t_h(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logs_h, dx=1).diagonal()[::-1]
     def get_dlogs_dlogt_const_p_h(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logs_h, dy=1).diagonal()[::-1]
 
     def get_logs_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_he).diagonal()[::-1]
+        try:
+            return bisplev(logp[::-1], logt[::-1], self.tck_logs_he).diagonal()[::-1]
+        except:
+            return bisplev(logp, logt, self.tck_logs_he)
     def get_dlogs_dlogp_const_t_he(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logs_he, dx=1).diagonal()[::-1]
     def get_dlogs_dlogt_const_p_he(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logs_he, dy=1).diagonal()[::-1]
 
-    def get_logrho(self, logp, logt, y):
+    def get_logrho(self, logp, logs, y):
         assert y >= 0, 'got bad y %f' % y
         assert y <= 1, 'got bad y %f' % y
-        rhoinv = (1. - y) / 10 ** self.get_logrho_h(logp, logt)
-        rhoinv += y / 10 ** self.get_logrho_he(logp, logt)
+        rhoinv = (1. - y) / 10 ** self.get_logrho_h(logp, logs)
+        rhoinv += y / 10 ** self.get_logrho_he(logp, logs)
         return np.log10(rhoinv ** -1)
 
     def get_logs(self, logp, logt, y):
@@ -77,12 +86,31 @@ class eos:
         s += y * 10 ** self.get_logs_he(logp, logt)
         # s += smix
         return np.log10(s)
+        
+    def get_grada(self, logp, logt, y):
+        # see Saumon, Chabrier, van Horn (1995) Equations (45-46)
+        # correct both equations; should read (1-Y) * S^H/S; (1-Y) * S^He/S
+        
+        s_h = 10 ** self.get_logs_h(logp, logt)
+        s_he = 10 ** self.get_logs_he(logp, logt)
+        
+        st_h = self.get_dlogs_dlogt_const_p_h(logp, logt)
+        sp_h = self.get_dlogs_dlogp_const_t_h(logp, logt)
+        st_he = self.get_dlogs_dlogt_const_p_he(logp, logt)
+        sp_he = self.get_dlogs_dlogp_const_t_he(logp, logt)
+
+        s = 10 ** self.get_logs(logp, logt, y)
+        
+        st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix term
+        sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix term
+        
+        return - sp / st
+        
 
     # def get_dlogs_dlogt_const_p(self, logp, logt, y, f=1e-4, n=4):
     #     logts = np.linspace(logt-f, logt+f, n)
     #     s = CubicSpline(logts, self.get_logs(logp, logts, y), False)
     #     return s.derivative()(logt)
-    #
     #
     # def get_dlogs_logp_const_t(self, logp, logt, y, f=1e-4, n=4):
     #     logps = np.linspace(logp-f, logp+f, n)

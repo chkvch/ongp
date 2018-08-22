@@ -9,6 +9,10 @@ import gp_configs.app_config as app_cfg
 import gp_configs.model_config as model_cfg
 import logging
 import config_const as conf
+try:
+    from importlib import reload # reload functionality in python 3
+except:
+    pass
 
 # this module is adapted from Daniel P. Thorngren's giant planet evolutionary
 # code circa 2016ApJ...831...64T.
@@ -65,7 +69,7 @@ class evol:
         if z_eos_option:
             # initialize z equation of state
             import aneos
-            import reos_water
+            import reos_water; reload(reos_water)
             if z_eos_option == 'reos water':
                 self.z_eos = reos_water.eos(self.path_to_data)
                 self.z_eos_low_t = aneos.eos(self.path_to_data, 'water')
