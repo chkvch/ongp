@@ -11,33 +11,33 @@ class eos:
 
         self.he_path = '%s/REOS3b-He-2018.dat' % path_to_data
         self.he_data = np.genfromtxt(self.he_path, skip_header=16, names=self.columns)
-        
+
         # take out large pressures where entropies seem harder to fit, store results in dictionary
         self.h = {}
         self.he = {}
         for key in ('logt', 'logrho', 'logs', 'logp'):
             self.h[key] = np.delete(self.h_data[key], np.where(self.h_data['logp'] > 14.))
             self.he[key] = np.delete(self.he_data[key], np.where(self.he_data['logp'] > 14.))
-        
+
         kwargs = {'kx':3, 'ky':3}
-        
+
         self.tck_logrho_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logrho'], **kwargs)
         self.tck_logrho_he = bisplrep(self.he['logp'], self.he['logt'], self.he['logrho'], **kwargs)
-        
+
         # # logs column wants larger expected number of knots
         # kwargs['nxest'] = 50
         # kwargs['nyest'] = 50
         self.tck_logs_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logs'], **kwargs)
         self.tck_logs_he = bisplrep(self.he['logp'], self.he['logt'], self.he['logs'], **kwargs)
-        
+
         self.tck_logt_ps_h = bisplrep(self.h['logp'], self.h['logs'], self.h['logt'], **kwargs)
         self.tck_logt_ps_he = bisplrep(self.he['logp'], self.he['logs'], self.he['logt'], **kwargs)
-        
+
     def get_logt_ps_h(self, logp, logs):
         return bisplev(logp, logs, self.tck_logt_ps_h).diagonal()
     def get_logt_ps_he(self, logp, logs):
         return bisplev(logp, logs, self.tck_logt_ps_he).diagonal()
-        
+
     def get_logrho_h(self, logp, logt):
         return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h).diagonal()[::-1]
     def get_dlogrho_dlogp_const_t_h(self, logp, logt):
@@ -86,26 +86,26 @@ class eos:
         s += y * 10 ** self.get_logs_he(logp, logt)
         # s += smix
         return np.log10(s)
-        
+
     def get_grada(self, logp, logt, y):
         # see Saumon, Chabrier, van Horn (1995) Equations (45-46)
         # correct both equations; should read (1-Y) * S^H/S; (1-Y) * S^He/S
-        
+
         s_h = 10 ** self.get_logs_h(logp, logt)
         s_he = 10 ** self.get_logs_he(logp, logt)
-        
+
         st_h = self.get_dlogs_dlogt_const_p_h(logp, logt)
         sp_h = self.get_dlogs_dlogp_const_t_h(logp, logt)
         st_he = self.get_dlogs_dlogt_const_p_he(logp, logt)
         sp_he = self.get_dlogs_dlogp_const_t_he(logp, logt)
 
         s = 10 ** self.get_logs(logp, logt, y)
-        
+
         st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix term
         sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix term
-        
+
         return - sp / st
-        
+
 
     # def get_dlogs_dlogt_const_p(self, logp, logt, y, f=1e-4, n=4):
     #     logts = np.linspace(logt-f, logt+f, n)

@@ -60,10 +60,14 @@ class evol:
         if hhe_eos_option == 'scvh':
             import scvh
             self.hhe_eos = scvh.eos(self.path_to_data)
-
         elif hhe_eos_option == 'reos3b':
             import reos3b
             self.hhe_eos = reos3b.eos(self.path_to_data)
+        elif hhe_eos_option == 'mh13_scvh':
+            import mh13_scvh
+            self.hhe_eos = mh13_scvh.eos(self.path_to_data)
+        else:
+            print('hydrogen-helium eos option {} not recognized'.format(hhe_eos_option))
         self.hhe_eos_option = hhe_eos_option
 
         if z_eos_option:
@@ -555,7 +559,10 @@ class evol:
 
         self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
         self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
-        self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        try:
+            self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        except:
+            print('failed in set_derivatives_etc; skipping')
 
         return self.rtot, self.t[-1], self.teff
 
