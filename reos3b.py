@@ -24,7 +24,7 @@ class eos:
         self.tck_logrho_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logrho'], **kwargs)
         self.tck_logrho_he = bisplrep(self.he['logp'], self.he['logt'], self.he['logrho'], **kwargs)
 
-        # # logs column wants larger expected number of knots
+        # # logs column wants larger expected number of knots?
         # kwargs['nxest'] = 50
         # kwargs['nyest'] = 50
         self.tck_logs_h = bisplrep(self.h['logp'], self.h['logt'], self.h['logs'], **kwargs)
@@ -38,39 +38,17 @@ class eos:
     def get_logt_ps_he(self, logp, logs):
         return bisplev(logp, logs, self.tck_logt_ps_he).diagonal()
 
-    def get_logrho_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h).diagonal()[::-1]
-    def get_dlogrho_dlogp_const_t_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h, dx=1).diagonal()[::-1]
-    def get_dlogrho_dlogt_const_p_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h, dy=1).diagonal()[::-1]
+    def get_logrho_h(self, logp, logt, dx=0, dy=0):
+        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_h, dx=dx, dy=dy).diagonal()[::-1]
 
-    def get_logrho_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_he).diagonal()[::-1]
-    def get_dlogrho_dlogp_const_t_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_he, dx=1).diagonal()[::-1]
-    def get_dlogrho_dlogt_const_p_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_he, dy=1).diagonal()[::-1]
+    def get_logrho_he(self, logp, logt, dx=0, dy=0):
+        return bisplev(logp[::-1], logt[::-1], self.tck_logrho_he, dx=dx, dy=dy).diagonal()[::-1]
 
-    def get_logs_h(self, logp, logt):
-        try:
-            return bisplev(logp[::-1], logt[::-1], self.tck_logs_h).diagonal()[::-1]
-        except:
-            return bisplev(logp, logt, self.tck_logs_h)
-    def get_dlogs_dlogp_const_t_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_h, dx=1).diagonal()[::-1]
-    def get_dlogs_dlogt_const_p_h(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_h, dy=1).diagonal()[::-1]
+    def get_logs_h(self, logp, logt, dx=0, dy=0):
+        return bisplev(logp[::-1], logt[::-1], self.tck_logs_h, dx=dx, dy=dy).diagonal()[::-1]
 
-    def get_logs_he(self, logp, logt):
-        try:
-            return bisplev(logp[::-1], logt[::-1], self.tck_logs_he).diagonal()[::-1]
-        except:
-            return bisplev(logp, logt, self.tck_logs_he)
-    def get_dlogs_dlogp_const_t_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_he, dx=1).diagonal()[::-1]
-    def get_dlogs_dlogt_const_p_he(self, logp, logt):
-        return bisplev(logp[::-1], logt[::-1], self.tck_logs_he, dy=1).diagonal()[::-1]
+    def get_logs_he(self, logp, logt, dx=0, dy=0):
+        return bisplev(logp[::-1], logt[::-1], self.tck_logs_he, dx=dx, dy=dy).diagonal()[::-1]
 
     def get_logrho(self, logp, logs, y):
         assert y >= 0, 'got bad y %f' % y
@@ -93,13 +71,13 @@ class eos:
 
         s_h = 10 ** self.get_logs_h(logp, logt)
         s_he = 10 ** self.get_logs_he(logp, logt)
-
-        st_h = self.get_dlogs_dlogt_const_p_h(logp, logt)
-        sp_h = self.get_dlogs_dlogp_const_t_h(logp, logt)
-        st_he = self.get_dlogs_dlogt_const_p_he(logp, logt)
-        sp_he = self.get_dlogs_dlogp_const_t_he(logp, logt)
-
         s = 10 ** self.get_logs(logp, logt, y)
+
+        st_h = self.get_logs_h(logp, logt, dy=1)
+        sp_h = self.get_logs_h(logp, logt, dx=1)
+        st_he = self.get_logs_he(logp, logt, dy=1)
+        sp_he = self.get_logs_he(logp, logt, dx=1)
+
 
         st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix term
         sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix term

@@ -11,7 +11,7 @@ logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
 log.setLevel(conf.log_level)
 
 class atm:
-    
+
     """a class to implement the [F11] model atmospheres for Jupiter and Saturn,
     as fit analytically by [LC13].
 
@@ -43,20 +43,20 @@ class atm:
             self.tmid = 224e0
             self.dt = 25e0
         elif self.planet == 'sat':
-			self.clo = 62.7e0
-			self.klo = 0.00202e0
-			self.t0lo = -97.1e0
-			self.betalo = -0.18e0
-			self.gammalo = 2.31e0
+            self.clo = 62.7e0
+            self.klo = 0.00202e0
+            self.t0lo = -97.1e0
+            self.betalo = -0.18e0
+            self.gammalo = 2.31e0
 
-			self.chi = -1680e0
-			self.khi = 831e0
-			self.t0hi = 141e0
-			self.betahi = -0.0721e0
-			self.gammahi = 0.293e0
+            self.chi = -1680e0
+            self.khi = 831e0
+            self.t0hi = 141e0
+            self.betahi = -0.0721e0
+            self.gammahi = 0.293e0
 
-			self.tmid = 225e0
-			self.dt = 25e0
+            self.tmid = 225e0
+            self.dt = 25e0
 
     def get_t10(self, g, tint):
 
@@ -81,7 +81,7 @@ class atm:
         t0 = 50
         t1 = 3e3
         if not zero_me(t0) * zero_me(t1) < 0:
-            print 'no root between bounds t0=%g, t1=%g' % (t0, t1)
+            print('no root between bounds t0=%g, t1=%g' % (t0, t1))
             raise ValueError
 
         from scipy.optimize import brentq

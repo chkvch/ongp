@@ -913,13 +913,6 @@ class evol:
         elif self.atm_which_t == 't10':
             assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
             self.t1 = -1
-
-            '''
-            TODO write a function in f11_atm.py that will take current g and t10 and return the t1 if
-            available (this is the case for uranus or neptune). until then, no information in the model
-            outside of 10 bars.
-            '''
-
         assert self.t10 > 0., 'bad t10 %g' % self.t10
 
         # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.

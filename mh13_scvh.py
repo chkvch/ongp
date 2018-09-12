@@ -14,6 +14,10 @@ class eos:
         self.tck_logrho_h = bisplrep(self.h_data['logp'], self.h_data['logt'], self.h_data['logrho'], **kwargs)
         self.tck_logs_h = bisplrep(self.h_data['logp'], self.h_data['logt'], self.h_data['logs'], **kwargs)
 
+        # get t profile at constant entropy by using p, s as a basis?
+        self.tck_logt_h_ps = bisplrep(self.h_data['logp'], self.h_data['logs'], self.h_data['logt'], **kwargs)
+        self.tck_logp_h_ts = bisplrep(self.h_data['logt'], self.h_data['logs'], self.h_data['logp'], **kwargs)
+
         self.scvh_eos = scvh.eos(path_to_data)
 
     def get_logrho_he(self, logp, logt, dx=0, dy=0):
@@ -81,6 +85,10 @@ class eos:
         sp += y * s_he / s * sp_he
 
         return - sp / st
+
+    def get_grada_diff(self, logp, logt, y):
+        return
+
 
     # dpdt_const_rho = - 10 ** logp / 10 ** logt * res['rhot'] / res['rhop']
     # dudt_const_rho = s * (res['st'] - res['sp'] * res['rhot'] / res['rhop'])
