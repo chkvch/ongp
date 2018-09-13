@@ -102,7 +102,6 @@ class evol:
 
     # mesh function defining mass enclosed within a given zone number
     def mesh_func(self, t, mcore=None):
-        log.debug('mcore is %s', mcore)
         # assumes t runs from 0 at center to 1 at surface
         if self.mesh_params['mesh_func_type'] == 'tanh': # old type
             return 0.5 * (1. + np.tanh(10. * (t * np.pi / 2 - np.pi / 4)))
@@ -1127,7 +1126,7 @@ class evol:
         start_time = time.time()
         print(('%12s ' * len(stdout_columns)) % stdout_columns)
         # the evolve loop
-        dt_yr = 0.        
+        dt_yr = 0.
         for step, t in enumerate(ts):
             # make sure only one of t1, t10 is provided to static
             params[params['which_t']] = t
