@@ -5,10 +5,6 @@ import sys
 import const
 import pickle
 import time
-try:
-    from importlib import reload # reload functionality in python 3
-except:
-    pass
 
 class evol:
 
@@ -35,7 +31,7 @@ class evol:
         if params['z_eos_option']:
             # initialize z equation of state
             import aneos
-            import reos_water; reload(reos_water)
+            import reos_water
             if params['z_eos_option'] == 'reos water':
                 self.z_eos = reos_water.eos(params['path_to_data'])
                 self.z_eos_low_t = aneos.eos(params['path_to_data'], 'water')
