@@ -3,14 +3,6 @@ from scipy.optimize import brentq
 import numpy as np
 import time
 import sys
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
-
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
 
 def get_y(xhe):
     return 1.0 / (1. + (1. - xhe) / (4. * xhe))
@@ -78,17 +70,8 @@ class hhe_phase_diagram:
                 p_lo, p_hi = self.p_grid[p_bin - 1], self.p_grid[p_bin]
 
             alpha_p = (np.log10(pval) - np.log10(p_lo)) / (np.log10(p_hi) - np.log10(p_lo)) # linear in logp
-            # alpha_p = (pval - p_lo) / (p_hi - p_lo) # could also do linear in p if preferred
 
-            # from the scipy.interpolate.splev documentation:
-            #
-            # der : int, optional; The order of derivative of the spline to compute (must be less than or equal to k).
-            # ext : int, optional; Controls the value returned for elements of x not in the interval defined by the knot sequence.
-            # if ext=0, return the extrapolated value.
-            # if ext=1, return 0
-            # if ext=2, raise a ValueError
-            # if ext=3, return the boundary value.
-
+            # see the the scipy.interpolate.splev documentation
             ext=0
             res_lo_p = interpolate.splev(tval, self.xt_splines_lhs[p_lo], der=0, ext=ext)
             res_hi_p = interpolate.splev(tval, self.xt_splines_lhs[p_hi], der=0, ext=ext)
