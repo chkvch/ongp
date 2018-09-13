@@ -43,7 +43,7 @@ class evol:
                 raise ValueError("z eos option '%s' not recognized." % params['z_eos_option'])
 
         # if you're wondering, model atmospheres are initialized in self.static.
-        # that way we can run a Jupiter and then a Saturn without invoking a new evol instance.
+        # that way we can run, e.g., a Jupiter and then a Saturn without invoking a new evol instance.
 
         if 'hhe_phase_diagram' in params.keys():
             if params['hhe_phase_diagram'] == 'lorenzen':
@@ -201,25 +201,6 @@ class evol:
         '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
             envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before
             convergence, or -1 for failure to converge.'''
-
-                    # mtot=const.mjup,
-                    # t1=None, # 1-bar temperature
-                    # t10=None, # 10-bar temperature
-                    # teq=None, # equilibrium temperature (connects tint to teff). function of distance and Bond albedo
-                    # yenv=0.27, # helium mass fraction of envelope (or of outer envelope if y2 is not None)
-                    # zenv=0., # heavy element mass fraction of envelope (or of outer envelope if z2 is not None)
-                    # mcore=0., # mass of pure-z core in Earth masses.
-                    # z2=None, # must be greater than zenv
-                    # y2=None, # must be greater than yenv
-                    # include_he_immiscibility=False, # whether to move helium around according to a H-He phase diagram
-                    # phase_t_offset=0, # temperature offset for the phase diagram, only used if include_he_immiscibility
-                    # minimum_y_is_envelope_y=False, # hack for dealing with non-monotone Y profiles resulting from phase diagram, only used if include_he_immiscibility
-                    # rrho_where_have_helium_gradient=None, # superadiabaticity (parameterized as the density ratio R_rho) to assume wherever there's a stabilizing composition gradient
-                    # erase_z_discontinuity_from_brunt=False, # ignore Z discontinuity when calculating buoyancy frequency's composition term
-                    # include_core_entropy=False, # can include if using a Z eos with entropy information (like REOS water); not necessarily important
-					# transition_pressure=1., # pressure in Mbar=1e12(cgs) to assume for some kind of discontinuity for y or z
-                    # core_prho_relation=None, # if want to use Hubbard + Marley 1989 P(rho) relations instead of a tabular Z eos
-                    # verbose=False):
 
         if type(params['mtot']) is str:
             if params['mtot'][0] == 'j':
@@ -1035,10 +1016,6 @@ class evol:
 
 
 
-
-
-
-
     def evolve(self, params):
 
         '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
@@ -1046,22 +1023,6 @@ class evol:
         s is the specific entropy, and t is time.
         important inputs are starting_t1 (say 1, 2, 3 thousand K) and min_t1 (put just beneath a realistic t1 for J/S/U/N or else it'll run off F11 atm tables.)
         for now ignores the possibility of having two-layer envelope in terms of Y or Z'''
-
-            # mtot=const.mjup, yenv=0.27, zenv=0., mcore=0.,
-            # start_t=2e3, end_t=160, which_t='t1', nsteps=100,
-            # teq=None, # will pass to static, which defaults to dict values if teq==None
-            # stdout_interval=1, # output controls
-            # output_prefix=None,
-            # include_he_immiscibility=False, # helium rain
-            # phase_t_offset=0.,
-            # minimum_y_is_envelope_y=False,
-            # rrho_where_have_helium_gradient=None,
-            # max_age=None, # general
-            # include_core_entropy=False,
-            # gammainv_erosion=1e-1, # for core erosion rate estimates
-            # luminosity_erosion_option=None,
-            # # z_eos_option=None,
-            # timesteps_ease_in=None):
 
         if not 'mtot' in params.keys():
             if hasattr(self, 'static_params'):
