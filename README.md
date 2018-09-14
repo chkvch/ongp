@@ -11,7 +11,7 @@ evol_params = {
     'hhe_eos_option':'scvh',
     'z_eos_option':'reos water',
     'atm_option':'f11_tables jup', 
-    'path_to_data':'/Users/chris/Dropbox/planet_models/ongp/data'
+    'path_to_data':'./data'
 }
 e = ongp.evol(evol_params)
 
