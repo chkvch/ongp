@@ -54,14 +54,16 @@ class evol:
                                         extrapolate_to_low_pressure=params['extrapolate_phase_diagram_to_low_pressure']
                                         )
             elif params['hhe_phase_diagram'] == 'schoettler':
-                raise ValueError('schoettler et al. phase diagram is still a work in progress.')
+                import phase
+                reload(phase)
+                self.phase = phase.diagram()
             else:
-                raise ValueError('lorenzen is the only available h/he phase diagram at this time.')
+                raise ValueError('hhe phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
 
         # defaults for other params
         self.evol_params = {
             'nz':1024,
-            'radius_rtol':1e-6, # better than 1km for a Jupiter radius
+            'radius_rtol':1e-5,
             'max_iters_static':500,
             'min_iters_static':12
         }
@@ -260,8 +262,12 @@ class evol:
         else:
             self.y2 = None
 
+        self.mz_env = None
+        self.mz = None
+        self.bulk_z = None
+
         if not 'phase_t_offset' in params.keys():
-            phase_t_offset = params['phase_t_offset'] = 0.
+            params['phase_t_offset'] = 0.
         if not 'minimum_y_is_envelope_y' in params.keys():
             minimum_y_is_envelope_y = params['minimum_y_is_envelope_y'] = False
         if not 'erase_z_discontinuity_from_brunt' in params.keys():
@@ -272,6 +278,8 @@ class evol:
             params['core_prho_relation'] = None
         if not 'verbose' in params.keys():
             params['verbose'] = False
+        if not 'debug_rainout' in params.keys():
+            params['debug_rainout'] = None
 
         # save params passed to static
         self.static_params = params
@@ -324,7 +332,7 @@ class evol:
 
         self.integrate_continuity() # rho, dm -> r
         self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
-        self.integrate_temperature() # p, t, y -> grada -> t
+        self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
 
         # now that we have pressure, try and locate transition pressure
         self.locate_transition_pressure()
@@ -361,6 +369,10 @@ class evol:
             self.set_envelope_density()
             self.integrate_continuity() # get zone radii from their densities via continuity equation
 
+            if 'debug_iterations' in params.keys():
+                if params['debug_iterations']:
+                    print('iter=', self.iters, 'rtot=%g'%self.r[-1])
+
             # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
             # radius_rtol over both of the last two iterations.
             if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
@@ -384,7 +396,7 @@ class evol:
                 self.integrate_hydrostatic()
                 self.integrate_temperature() # sets grada for the last time
 
-                if rrho_where_have_helium_gradient and self.have_rainout:
+                if 'rrho_where_have_helium_gradient' in params.keys() and self.have_rainout:
                     # allow helium gradient regions to have superadiabatic temperature stratification.
                     # this is new here -- copied from below where we'd ordinarily only compute this after we have a converged model.
                     # might cost some time because of the additional eos calls.
@@ -398,19 +410,20 @@ class evol:
                     # print 'in internal brunt_b calculation: self.k_shell_top = %i; brunt_b[self.k_shell_top] == %g' % (self.k_shell_top, self.brunt_b[self.k_shell_top+1])
                     assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
 
-                    self.gradt += rrho_where_have_helium_gradient * self.brunt_b
+                    self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
 
                     self.integrate_temperature(adiabatic=False)
 
-                print('WARNING: calling equilibrium_y_profile. check to see that this routine sees the correct total helium mass.')
-                print('changes were made c. september 2017 to support a Y jump at the transition; initial total he mass not necessarily stored correctly.')
-                self.y = self.equilibrium_y_profile(phase_t_offset, minimum_y_is_envelope_y=minimum_y_is_envelope_y, transition_pressure=transition_pressure)
+                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                            verbose=params['debug_rainout'],
+                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
+                            ptrans=params['transition_pressure'])
 
                 self.set_core_density()
                 self.set_envelope_density()
                 self.integrate_continuity()
 
-                if np.all(np.abs(np.mean((oldRadii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
+                if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     break
 
                 if not np.isfinite(self.r[-1]):
@@ -425,7 +438,7 @@ class evol:
             else:
                 return -1
 
-            if verbose: print('converged with new Y profile after %i iterations.' % self.iters_immiscibility)
+            # if verbose: print('converged with new Y profile after %i iterations.' % self.iters_immiscibility)
 
         # finalize hydrostatic profiles (maybe not necessary since we just did 20 iterations)
         self.integrate_hydrostatic()
@@ -440,7 +453,7 @@ class evol:
         try:
             self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
         except:
-            print('failed in set_derivatives_etc; skipping')
+            pass
 
         return self.rtot, self.t[-1], self.teff
 
@@ -470,9 +483,9 @@ class evol:
         assert res['success'], 'failed root find in get_rhoz_hm89_ice'
         return res.x
 
-    def equilibrium_y_profile(self, phase_t_offset, verbose=False, show_timing=False, minimum_y_is_envelope_y=False, transition_pressure=None):
+    def lorenzen_equilibrium_y_profile(self, phase_t_offset, verbose=True, show_timing=False, minimum_y_is_envelope_y=False, transition_pressure=None):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
-        may require a nearly pure-helium layer atop the core.'''
+        may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         k1 = np.where(p > transition_pressure)[0][-1]
         ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
@@ -575,6 +588,144 @@ class evol:
 
         return yout
 
+    def equilibrium_y_profile(self, phase_t_offset, verbose=False, show_timing=False, minimum_y_is_envelope_y=False, ptrans=None):
+        '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
+        may require a helium-rich layer atop the core.'''
+        p = self.p * 1e-12 # Mbar
+        t = self.t * 1e-3 # kK
+        k1 = np.where(p > ptrans)[0][-1]
+
+        # the phase diagram came from a model for a system of just H and He.
+        # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
+        # this would correspond to xp > x and Yp > Y where x, Y are the fractions in a real model
+        # that includes Z.
+        # given Z, set Y from Yp according to
+        #   X + Y + Z = 1, and
+        #   Y / X = Yp / Xp.
+        # together, these amount to
+        #   Y = (1 - Z) / (1 + (1 - Yp) / Yp).
+
+        get_xp = lambda yp: 1. / (1. + 4. * (1. - yp) / yp)
+        get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
+
+        get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
+
+        if verbose: print('rainout iteration {}'.format(self.iters_immiscibility))
+
+        # if t_offset is positive, immiscibility sets in sooner.
+        # i.e., query phase diagram with a lower T than true planet T.
+        xplo, xphi = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+        if type(xplo) is str:
+            if xplo == 'stable':
+                if verbose: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing\n' % (ptrans))
+                self.nz_gradient = 0
+                self.nz_shell = 0
+                return self.y
+            elif xplo == 'failed':
+                raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.1f, t = %.1f, t-t_offset=%.1f' % (p[k1], self.t[k1], self.t[k1] - phase_t_offset))
+        elif type(xplo) is np.float64:
+            ymax1 = get_y(self.z[k1], get_yp(xplo))
+            if self.y[k1] < ymax1:
+                if verbose: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing. t_offset=%f K, y=%1.4f, ymax=%1.4f\n' % (ptrans, phase_t_offset,  self.y[k1], ymax1))
+                self.nz_gradient = 0
+                self.nz_shell = 0
+                return self.y
+
+        self.ystart = np.copy(self.y)
+        yout = np.copy(self.y)
+        yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
+        if verbose: print('demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1])
+
+        t0 = time.time()
+        rainout_to_core = False
+
+        # can't set nz_gradient and k_shell_top here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
+        # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
+        # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
+        # self.nz_gradient = 0
+        # self.k_shell_top = 0
+        self.k_gradient_top = k1
+        for k in np.arange(k1-1, self.kcore, -1): # inward from first point where p > ptrans
+            t1 = time.time()
+            # note that phase_t_offset is applied here; phase diagram simply sees different temperature
+            xplo, xphi = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
+            if type(xplo) is str:
+                if xplo == 'stable':
+                    if verbose: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1)
+                    break
+                elif xplo == 'failed':
+                    raise ValueError('failed to get miscibility gap in initial loop over zones. p, t = %f Mbar, %f K' % (p[k], self.t[k]))
+            elif type(xplo) is np.float64:
+                ymax = get_y(self.z[k], get_yp(xplo))
+                if yout[k] < ymax:
+                    break
+            else:
+                raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
+            if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
+
+            self.nz_gradient = 0
+            self.k_shell_top = 0
+            ystart = yout[k]
+            yout[k] = ymax
+
+            if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
+                yout[k:] = yout[k]
+
+            # difference between initial he mass and current proposed he mass above and including this zone
+            # must be deposited into the deeper interior.
+            he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
+            enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
+            if not enclosed_envelope_mass > 0: # at core boundary
+                rainout_to_core = True
+                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
+                # assert this "should"
+                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: gradient reaches core'
+                kbot = k
+                break
+            y_interior = he_mass_missing_above / enclosed_envelope_mass
+            if y_interior > 1:
+                # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
+                # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
+                # the global helium mass.
+                if verbose: print('would need Y > 1 in inner homog region; rainout to core.')
+                rainout_to_core = True
+                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
+                # assert this "should"
+                # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
+                kbot = k
+                break
+            else:
+                if verbose: print(k-1, yout[k-1], y_interior)
+                yout[self.kcore:k] = y_interior
+                self.nz_gradient += 1 # this isn't being counted right, always  1
+
+        if verbose: print('rainout to core %s' % rainout_to_core)
+        if show_timing: print('t0 + %f seconds' % (time.time() - t0))
+
+        if rainout_to_core:
+            # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.
+            # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
+            if verbose: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
+            for k in np.arange(kbot, self.nz):
+                yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
+                tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
+                if verbose: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
+                if tentative_total_he_mass >= self.mhe:
+                    if verbose: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
+                    rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
+                    if verbose: print('satisfied he mass conservation to a relative precision of %f' % rel_mhe_error)
+                    # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
+                    self.nz_shell = k - self.kcore
+                    self.k_shell_top = k
+                    break
+
+        self.have_rainout = self.nz_gradient > 0
+        self.have_rainout_to_core = rainout_to_core
+        if rainout_to_core: assert self.k_shell_top
+        if verbose: print()
+
+        return yout
+
     def set_core_density(self):
         if self.kcore == 0:
             return
@@ -620,7 +771,7 @@ class evol:
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
 
 
-    def integrate_temperature(self, adiabatic=True):
+    def integrate_temperature(self, adiabatic=True, brute_force_loop=False):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
         adiabatic gradient here (as well as later) is ignoring any z contribution.
@@ -638,24 +789,22 @@ class evol:
 
             # this call to get grada is slow.
             # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
-            # relies so heavily on interpolation in scvh.
+            # relies so heavily on interpolation in the hhe eos.
             self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             self.grada_check_nans()
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
-            for k in np.arange(self.nz)[::-1]: # surface to center
-                if k == self.nz - 1: continue
-                if k == self.kcore - 1: break
-                dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
-                dlnt = self.grada[k] * dlnp
-                self.t[k] = self.t[k+1] * (1. + dlnt)
-
-            # slices + cumsum faster than the for loop by a factor of > a hundred. made it work in isolation, here it seems
-            # to make the integral run away?
-            # dlnp = np.diff(np.log(self.p))
-            # dlnt = self.grada[:-1] * dlnp
-            # dt = dlnt * self.t[1:]
-            # self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
-            # print self.t
+            if brute_force_loop:
+                for k in np.arange(self.nz)[::-1]: # surface to center
+                    if k == self.nz - 1: continue
+                    if k == self.kcore - 1: break
+                    dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
+                    dlnt = self.grada[k] * dlnp
+                    self.t[k] = self.t[k+1] * (1. + dlnt)
+            else: # slices + cumsum does at least a factor of a few faster
+                dlnp = np.diff(np.log(self.p))
+                dlnt = self.grada[:-1] * dlnp
+                dt = dlnt * self.t[1:]
+                self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
 
         else:
             for k in np.arange(self.nz)[::-1]:
@@ -985,7 +1134,6 @@ class evol:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
                 self.dlogrho_dlogt_const_p[self.kcore:] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
 
-
         if self.z2: # two-layer envelope in terms of Z
             self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
             self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
@@ -1093,6 +1241,7 @@ class evol:
         print(('%12s ' * len(stdout_columns)) % stdout_columns)
         # the evolve loop
         dt_yr = 0.
+        done = False
         for step, t in enumerate(ts):
             # make sure only one of t1, t10 is provided to static
             params[params['which_t']] = t
@@ -1104,14 +1253,20 @@ class evol:
             try:
                 self.static(params) # pass the full evolve params; a lot won't be used but shouldn't cause any problems
                 walltime = time.time() - start_time
-            except ValueError:
+            except AtmError:
+                print('end because static model returned AtmError')
+                done = True
+            except:
                 print('failed in building static model -- likely off eos or atm tables')
+                done = True
+
+            if done:
                 # don't update any history info; save history to this point if output_prefix is specified
-                if output_prefix:
-                    with open('%s.history' % output_prefix, 'wb') as fw:
+                if 'output_prefix' in params.keys():
+                    with open('%s.history' % params['output_prefix'], 'wb') as fw:
                         pickle.dump(self.history, fw, 0)
-                    print('wrote history data to %s.history' % output_prefix)
-                raise
+                    print('wrote history data to %s.history' % params['output_prefix'])
+                break
 
             history_qtys = {
                 'step': step,

@@ -1,5 +1,6 @@
 from scipy.interpolate import RectBivariateSpline as rbs
 import scvh
+import numpy as np
 
 class eos:
     def __init__(self, path_to_data):
