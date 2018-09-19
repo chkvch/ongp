@@ -5,6 +5,7 @@ import sys
 import const
 import pickle
 import time
+from importlib import reload
 
 class evol:
 
@@ -23,7 +24,7 @@ class evol:
             import reos3b
             self.hhe_eos = reos3b.eos(params['path_to_data'])
         elif params['hhe_eos_option'] == 'mh13_scvh':
-            import mh13_scvh
+            import mh13_scvh; reload(mh13_scvh)
             self.hhe_eos = mh13_scvh.eos(params['path_to_data'])
         else:
             print('hydrogen-helium eos option {} not recognized'.format(params['hhe_eos_option']))
@@ -276,6 +277,7 @@ class evol:
         self.static_params = params
 
         # initialize lagrangian mesh.
+        if not 'mcore' in params.keys(): params['mcore'] = 0.
         mcore = params['mcore']
         assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
         if mcore > 0.:
@@ -310,6 +312,9 @@ class evol:
         self.z[:self.kcore] = 1.
         assert self.z1 >= 0., 'got negative z1 %g' % self.z1
         self.z[self.kcore:] = self.z1
+
+        if not 'transition_pressure' in params.keys():
+            params['transition_pressure'] = 1.
 
         self.iters = 0
 
