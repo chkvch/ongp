@@ -30,8 +30,8 @@ class eos:
         path_to_he_data = '%s/scvh_he.dat' % self.path_to_data
 
         # for logt = 3.38, 3.46, 3.54, extrapolate up to logp = 11.6, 11.8, 12.0
-        # on isotherms. necessary to have these points for some Saturn models.
-        logpvals_to_fill = np.array([11.6, 11.8, 12.0])
+        # on isotherms. necessary to have these points for some cold Saturn models.
+        logpvals_to_fill = np.array([11.6, 11.8, 12.0, 12.2, 12.4])
         logtvals_to_fill = np.array([3.38, 3.46, 3.54])
         npts_extrap = 5
 

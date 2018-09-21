@@ -1,13 +1,13 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
-import gp_configs.app_config as app_cfg
-import logging
-import config_const as conf
+# import gp_configs.app_config as app_cfg
+# import logging
+# import config_const as conf
 
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
+# log = logging.getLogger(__name__)
+# logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+# log.setLevel(conf.log_level)
 
 class atm:
 
@@ -21,7 +21,7 @@ class atm:
     def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None):
 
         self.planet = planet
-        log.debug('planet is %s', self.planet)
+        # log.debug('planet is %s', self.planet)
 
         # setting usecols based on the use case and then passing that to genfromtxt
         # lets us only load the relevant columns, then subsequent code can be uniform across cases
@@ -55,7 +55,7 @@ class atm:
 
         # print 'planet %s, flux level %s' % (planet, flux_level)
 
-        log.debug('reading table from %s' % self.table_path)
+        # log.debug('reading table from %s' % self.table_path)
         self.data = np.genfromtxt(self.table_path, delimiter='&', names=names, usecols=usecols[flux_level])
         file_length = len(open(self.table_path).readlines())
 
@@ -159,3 +159,44 @@ class atm:
         max_tint = min(max_tint_g_lo, max_tint_g_hi)
 
         return brentq(zero_me, min_tint, max_tint)
+
+
+    def get_tint_teff(self, g, t10):
+        """
+        give g (mks) and t10 (K) as arguments, does a root find to obtain the
+        intrinsic temperature tint (K) and effective temperature teff (K).
+        """
+
+        assert t10 > 0., 'get_tint got a negative t10 %f' % t
+        def zero_me(tint):
+            try:
+                return t10 - self.get['t10']((g, tint))
+            except ValueError:
+                print('failed to interpolate for t10 at g = %f, tint = %f' % (g, tint))
+
+        # for brackets on tint, consider the nodes for the two nearest values in g. take the
+        # intersection of their tint values for which t10, teff are defined, and use min/max
+        # of that set as our bracketing values. (avoids choosing as brackets points for which
+        # t10, teff are not defined)
+        if not min(self.g_grid) <= g <= max(self.g_grid):
+            raise ValueError('g value %f outside bounds of f11 atmosphere table for %s' % (g, self.planet))
+        g_bin = np.where(self.g_grid - g > 0)[0][0]
+        minmax = lambda z: (min(z), max(z))
+        g_lo, g_hi = self.g_grid[g_bin - 1], self.g_grid[g_bin]
+
+        data_g_lo = self.data[self.data['g'] == g_lo]
+        data_g_lo = data_g_lo[data_g_lo['t10'] > 0]
+        min_tint_g_lo = min(data_g_lo['tint'])
+        max_tint_g_lo = max(data_g_lo['tint'])
+
+        data_g_hi = self.data[self.data['g'] == g_hi]
+        data_g_hi = data_g_hi[data_g_hi['t10'] > 0]
+        min_tint_g_hi = min(data_g_hi['tint'])
+        max_tint_g_hi = max(data_g_hi['tint'])
+
+        min_tint = max(min_tint_g_lo, min_tint_g_hi)
+        max_tint = min(max_tint_g_lo, max_tint_g_hi)
+
+        tint = brentq(zero_me, min_tint, max_tint)
+        teff = float(self.get['teff']((g, tint)))
+        return tint, teff

@@ -8,14 +8,14 @@ class eos:
         self.h_path = '{}/MH13+SCvH-H-2018.dat'.format(path_to_data)
         self.h_data = np.genfromtxt(self.h_path, skip_header=16, names=self.columns)
 
-        logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 14.])
-        logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 14.])
+        self.logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 14.])
+        self.logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 14.])
 
-        logrho = np.zeros((len(logpvals), len(logtvals)))
-        logs = np.zeros((len(logpvals), len(logtvals)))
-        for i, logpval in enumerate(logpvals):
-            logrho[i] = self.h_data['logrho'][self.h_data['logp'] == logpval]
-            logs[i] = self.h_data['logs'][self.h_data['logp'] == logpval]
+        self.logrho = np.zeros((len(self.logpvals), len(self.logtvals)))
+        self.logs = np.zeros((len(self.logpvals), len(self.logtvals)))
+        for i, logpval in enumerate(self.logpvals):
+            self.logrho[i] = self.h_data['logrho'][self.h_data['logp'] == logpval]
+            self.logs[i] = self.h_data['logs'][self.h_data['logp'] == logpval]
 
             # class scipy.interpolate.RectBivariateSpline(x, y, z, bbox=[None, None, None, None], kx=3, ky=3, s=0)
             #     Bivariate spline approximation over a rectangular mesh.
@@ -37,17 +37,26 @@ class eos:
             #     s : float, optional
             #     Positive smoothing factor defined for estimation condition: sum((w[i]*(z[i]-s(x[i], y[i])))**2, axis=0) <= s Default is s=0, which is for interpolation.
 
-        kwargs = {'kx':3, 'ky':3}
-        self.get_logrho_h = lambda lgp, lgt: rbs(logpvals, logtvals, logrho, **kwargs)(lgp, lgt, grid=False)
-        self.get_logs_h = lambda lgp, lgt: rbs(logpvals, logtvals, logs, **kwargs)(lgp, lgt, grid=False)
-        self.get_sp_h = lambda lgp, lgt: rbs(logpvals, logtvals, logs, **kwargs)(lgp, lgt, grid=False, dx=1)
-        self.get_st_h = lambda lgp, lgt: rbs(logpvals, logtvals, logs, **kwargs)(lgp, lgt, grid=False, dy=1)
+        self.spline_kwargs = {'kx':3, 'ky':3}
+        self.he_eos = scvh.eos(path_to_data)
 
-        he_eos = scvh.eos(path_to_data)
-        self.get_logrho_he = lambda lgp, lgt: he_eos.get_he_logrho((lgp, lgt))
-        self.get_logs_he = lambda lgp, lgt: he_eos.get_he_logs((lgp, lgt))
-        self.get_sp_he = lambda lgp, lgt: he_eos.get_he_sp((lgp, lgt))
-        self.get_st_he = lambda lgp, lgt: he_eos.get_he_st((lgp, lgt))
+    def get_logrho_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False)
+    def get_logs_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False)
+    def get_sp_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    def get_st_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+
+    def get_logrho_he(self, lgp, lgt):
+        return self.he_eos.get_he_logrho((lgp, lgt))
+    def get_logs_he(self, lgp, lgt):
+        return self.he_eos.get_he_logs((lgp, lgt))
+    def get_sp_he(self, lgp, lgt):
+        return self.he_eos.get_he_sp((lgp, lgt))
+    def get_st_he(self, lgp, lgt):
+        return self.he_eos.get_he_st((lgp, lgt))
 
     def get(self, logp, logt, y):
         s_h = 10 ** self.get_logs_h(logp, logt)

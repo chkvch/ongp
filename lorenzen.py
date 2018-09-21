@@ -1,5 +1,6 @@
 from scipy import interpolate
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize
+from scipy.interpolate import splev
 import numpy as np
 import time
 import sys
@@ -21,91 +22,120 @@ class hhe_phase_diagram:
 
     for this dataset, applying this approach to a saturn-like adiabat seems to generally give Y inversions
     between 1 and 2 Mbar.  so something else might be in order -- perhaps first make x-P splines and then
-    interpolate in logT instead."""
+    interpolate in logT instead. the workaround implemented for now is to ignore the 1 Mbar data and
+    extrapolate down from higher P instead.
 
-    def __init__(self, path_to_data, order=3, smooth=0., t_offset=0., extrapolate_to_low_pressure=True):
+    """
 
-        log.debug('message')
-        self.path_to_lhs_data = '%s/lorenzen_lhs.dat' % path_to_data
-        self.path_to_rhs_data = '%s/lorenzen_rhs.dat' % path_to_data
+    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False):
+
+        if extrapolate_to_low_pressure:
+            raise NotImplementedError('extrapolate_to_low_pressure not implemented in lorenzen')
+
+        if not path_to_data:
+            path_to_data = 'data'
+
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
-        self.lhs_data = np.genfromtxt(self.path_to_lhs_data, names=self.columns)
-        self.rhs_data = np.genfromtxt(self.path_to_rhs_data, names=self.columns)
+        data = np.genfromtxt('{}/demixHHe_Lorenzen.dat'.format(path_to_data), names=self.columns)
 
-        # April 12 2017: implement t_offset inside Evolver.staticModel instead, so we don't
-        # need to create a new Evolver instance every time we want to change dtphase
-        #
-        # self.t_offset = t_offset
-        # self.lhs_data['t'] += self.t_offset
-        # self.rhs_data['t'] += self.t_offset
+        # for 1 Mbar curve, max T is reached for two consecutive points:
+        # [ 0.24755  0.29851]
+        # [ 1.  1.]
+        # [ 7141.  7141.]
+        # insert a tiny made-up bump so that critical temperature can be solved for.
+        k1, k2 = np.where(data['t'] == 7141.)[0]
+        self.data = {}
+        # self.data['p'] = np.insert(data['p'], k2, 1.)
+        # self.data['x'] = np.insert(data['x'], k2, 0.5 * (0.29851 + 0.24755))
+        # self.data['t'] = np.insert(data['t'], k2, 8141.)
+        self.data['p'] = np.delete(data['p'], k2)
+        self.data['x'] = np.delete(data['x'], k2)
+        self.data['t'] = np.delete(data['t'], k2)
 
-        self.p_grid = np.unique(self.lhs_data['p'])
+        self.pvals = np.unique(self.data['p'])
 
-        self.pmin = self.p_grid[0] # if doing extrapolate_to_low_p, could also decrease this to, e.g., 0.8 Mbar
-        self.pmax = self.p_grid[-1]
+        self.tck = {} # dict used to look up knots, coefficients, order of bspline for any p in self.pvals
+        self.tcrit = {} # maximum (critical) temperature of each spline
+        self.zcrit = {} # z value ("t" in tck, called z to avoid confusion with temperature) of critical temperature
+        # self.splinex = {} # dict used to look up x component of bspline curve for any p in self.pvals
+        # self.splinet = {} # dict used to look up t component of bspline curve for any p in self.pvals
 
-        '''option to remove the 1 Mbar curve and extrapolate down in P for those pressures instead.
-        this is motivated by the fact that the x-T curve for 1 Mbar is concave up toward low helium
-        concentrations, which tends to give non-monotone helium profiles for cool giant planets.
-        this might not be real.'''
-        self.extrapolate_to_low_pressure = extrapolate_to_low_pressure
-        if self.extrapolate_to_low_pressure:
-            self.p_grid = np.delete(self.p_grid, 0)
+        self.initialize_splines()
 
-        self.xt_splines_lhs = {}
-        for i, pval in enumerate(self.p_grid):
-            x = self.lhs_data['x'][self.lhs_data['p'] == pval]
-            t = self.lhs_data['t'][self.lhs_data['p'] == pval]
-            self.xt_splines_lhs[pval] = interpolate.splrep(t, x, s=smooth, k=order)
+    def initialize_tck(self, pval):
+        data = self.data
+        x = data['x'][data['p'] == pval]
+        t = data['t'][data['p'] == pval] * 1e-3
 
-    def xmax_lhs(self, pval, tval):
-        assert self.pmin <= pval < self.pmax, 'p value %f Mbar out of bounds' % pval
+        # z is "t" in b-spline language
+        z = np.linspace(0, 1, len(x) - 2)
+        z = np.append(np.zeros(3), z)
+        z = np.append(z, np.ones(3))
+        self.tck[pval] = [z, [x, t], 3]
 
-        if True:
-            if pval < 2. and self.extrapolate_to_low_pressure:
-                p_lo, p_hi = self.p_grid[0], self.p_grid[1]
-                # alpha_p will be negative.
-            else: # use the full tables; search for relevant p bin
-                p_bin = np.where(self.p_grid - pval > 0)[0][0]
-                p_lo, p_hi = self.p_grid[p_bin - 1], self.p_grid[p_bin]
+    def splinex(self, pval, z):
+        return splev(z, self.tck[pval])[0]
 
-            alpha_p = (np.log10(pval) - np.log10(p_lo)) / (np.log10(p_hi) - np.log10(p_lo)) # linear in logp
+    def splinet(self, pval, z):
+        return splev(z, self.tck[pval])[1]
 
-            # see the the scipy.interpolate.splev documentation
-            ext=0
-            res_lo_p = interpolate.splev(tval, self.xt_splines_lhs[p_lo], der=0, ext=ext)
-            res_hi_p = interpolate.splev(tval, self.xt_splines_lhs[p_hi], der=0, ext=ext)
+    def initialize_splines(self):
 
-            res = alpha_p * res_hi_p + (1. - alpha_p) * res_lo_p
+        for pval in self.pvals:
+            self.initialize_tck(pval)
 
-        else: # accomplishes the same thing as the above if k==1
-            res_at_p = np.zeros_like(self.p_grid)
-            for j, this_pval in enumerate(self.p_grid):
-                res_at_p[j] = interpolate.splev(tval, self.xt_splines_lhs[this_pval], der=0, ext=0)
-            pspline = interpolate.splrep(self.p_grid, res_at_p, s=0, k=1)
-            res = interpolate.splev(pval, pspline, der=0, ext=0)
+            # get z and x corresponding to t maximum (critical point) for this curve.
+            # this should be trivial to get from spline coefficients analytically,
+            # but get it numerically for convenience
+            sol = minimize(lambda z: self.splinet(pval, z) * -1, 0.5, tol=1e-3)
+            assert sol['success']
+            self.tcrit[pval] = sol['fun'] * -1
+            self.zcrit[pval] = sol['x'][0]
 
-        return res
+    def miscibility_gap(self, p, t):
+        '''for a given pressure and temperature, return the helium number fraction of the
+        helium-poor and helium-rich phases.
 
-    def ymax_lhs(self, pval, tval):
-        x = self.xmax_lhs(pval, tval)
-        return get_y(x)
+        args
+        p: pressure in Mbar = 1e12 dyne cm^-2
+        t: temperature in kK = 1e3 K
+        )
+        returns
+        (ylo, yhi): helium mass fractions of helium-poor and helium-rich phases
+        '''
+        if p < min(self.pvals):
+            raise ValueError('p value {} outside bounds for phase diagram'.format(p))
+        elif p > max(self.pvals):
+            raise ValueError('p value {} outside bounds for phase diagram'.format(p))
 
-    def tphase_lhs(self, xval, pval):
-        '''old-style interpolation for tphase from x, P. only using for testing at present.'''
-        from scipy.interpolate import griddata
-        return griddata(zip(self.lhs_data['x'], np.log10(self.lhs_data['p'])), self.lhs_data['t'], (xval, np.log10(pval)), method='linear')
+        plo = self.pvals[self.pvals < p][-1]
+        phi = self.pvals[self.pvals > p][0]
+        assert p > plo
+        assert p < phi
 
-    def show_phase_curves(self, ax=None, **kwargs):
-        import matplotlib.pyplot as plt
-        if not ax: ax = plt.gca()
-        ax.set_xlabel(r'$Y$')
-        ax.set_ylabel(r'$T$')
-        for pval in self.p_grid:
-            x = self.lhs_data['x'][self.lhs_data['p'] == pval]
-            t = self.lhs_data['t'][self.lhs_data['p'] == pval]
-            ax.plot(get_y(x), t, 'k-', label='%i Mbar' % pval, lw=1, **kwargs)
+        if t > self.tcrit[plo] or t > self.tcrit[phi]:
+            return 'stable', 'stable'
 
-        ax.set_xlim(0, 0.3)
-        ax.set_ylim(2e3, 8e3)
-        ax.legend(loc=4, fontsize=12)
+        dz = 1e-3
+        # for abundance in helium-poor phase, search between dz and z(tcrit)
+        # for abundance in helium-rich phase, search between z(tcrit) and 1-dz
+        try:
+            zlo_plo = brentq(lambda z: self.splinet(plo, z) - t, dz, self.zcrit[plo])
+            zhi_plo = brentq(lambda z: self.splinet(plo, z) - t, self.zcrit[plo], 1 - dz)
+            zlo_phi = brentq(lambda z: self.splinet(phi, z) - t, dz, self.zcrit[phi])
+            zhi_phi = brentq(lambda z: self.splinet(phi, z) - t, self.zcrit[phi], 1 - dz)
+        except ValueError:
+            return 'failed', 'failed'
+
+        xlo_plo = self.splinex(plo, zlo_plo)
+        xhi_plo = self.splinex(plo, zhi_plo)
+        xlo_phi = self.splinex(phi, zlo_phi)
+        xhi_phi = self.splinex(phi, zhi_phi)
+
+        # P interpolation is linear in logP
+        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+        # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+        xlo = alpha * xlo_phi + (1. - alpha) * xlo_plo
+        xhi = alpha * xhi_phi + (1. - alpha) * xhi_plo
+
+        return xlo, xhi
