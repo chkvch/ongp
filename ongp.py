@@ -9,6 +9,14 @@ try:
     from importlib import reload
 except:
     pass
+import gp_configs.app_config as app_cfg
+import gp_configs.model_config as model_cfg
+import logging
+import config_const as conf
+
+log = logging.getLogger(__name__)
+logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+log.setLevel(conf.log_level)
 
 class evol:
 
@@ -216,7 +224,7 @@ class evol:
                 params['mtot'] = const.mjup
             elif params['mtot'][0] == 's':
                 params['mtot'] = const.msat
-            elif params['mtot'][0] == 's':
+            elif params['mtot'][0] == 'u':
                 params['mtot'] = const.mura
             elif params['mtot'][0] == 'n':
                 params['mtot'] = const.mnep
