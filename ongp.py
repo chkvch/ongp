@@ -244,12 +244,17 @@ class evol:
         atm_type, atm_planet = self.evol_params['atm_option'].split() # e.g., 'f11_tables u'
         if 'teq' in params.keys():
             self.teq = params['teq']
-        else:
+        # else:
             # use a default value.
             # J is a mean of Hanel et al. 1981 and Pearl & Conrath 1991.
             # S i'll need to check.
             # U, N come from Pearl & Conrath 1991.
-            self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[atm_planet]
+            # self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[atm_planet]
+
+            # better: don't set. in set_atm, if no self.teq, then instead of calculating
+            # teff from teff^4 = tint^4 + teq^4, just get teff directly from model
+            # atmospheres.
+
         if atm_type == 'f11_tables':
             import f11_atm
             self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet)
@@ -973,8 +978,11 @@ class evol:
             elif self.surface_g * 1e-2 < min(self.atm.g_grid):
                 raise AtmError('surface gravity too low for atm tables. value = %g, minimum = %g' % (self.surface_g*1e-2, min(self.atm.g_grid)))
         try:
-            self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
-            self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
+            if hasattr(self, 'teq'):
+                self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
+                self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
+            else:
+                self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError as e:
             if self.z2:
@@ -1256,7 +1264,7 @@ class evol:
             self.history[name] = np.array([])
 
         keep_going = True
-        previous_entropy = 0
+        previous_entropy = None
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
         stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y1', 'walltime'
@@ -1281,8 +1289,8 @@ class evol:
                 done = True
             except Exception as e:
                 print('failed in building static model -- likely off eos or atm tables')
+                # done = True
                 raise
-                done = True
 
             if done:
                 # don't update any history info; save history to this point if output_prefix is specified
