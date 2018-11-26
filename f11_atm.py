@@ -18,7 +18,7 @@ class atm:
     doi:10.1088/0004-637X/729/1/32
     '''
 
-    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None):
+    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None, ):
 
         self.planet = planet
         # log.debug('planet is %s', self.planet)
