@@ -231,9 +231,6 @@ class eos:
     def get_chit(self, logp, logt, y):
         return self.get(logp, logt, y)['chit']
 
-    def get_rhot(self, logp, logt, y):
-        return self.get(logp, logt, y)['rhot']
-
     def get_cv(self, logp, logt, y):
         return self.get(logp, logt, y)['cv']
 

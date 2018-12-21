@@ -40,6 +40,7 @@ class eos:
         self.spline_kwargs = {'kx':3, 'ky':3}
         self.he_eos = scvh.eos(path_to_data)
 
+    # methods for getting pure hydrogen quantities by interpolating in mh13
     def get_logrho_h(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False)
     def get_logs_h(self, lgp, lgt):
@@ -48,7 +49,15 @@ class eos:
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
     def get_st_h(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    # def get_rhop_h(self, lgp, lgt):
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    # def get_rhot_h(self, lgp, lgt):
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    # rho_t and rho_p from MH13 tables are presenting some difficulties, e.g., rhot_h changes sign in the neighborhood of
+    # 1 Mbar in a Jupiter adiabat. instead get rhot_h and rhop_h from the scvh tables below. only really enters
+    # the calculation of brunt_B.
 
+    # methods for getting pure helium quantities by interpolating in scvh
     def get_logrho_he(self, lgp, lgt):
         return self.he_eos.get_he_logrho((lgp, lgt))
     def get_logs_he(self, lgp, lgt):
@@ -57,7 +66,16 @@ class eos:
         return self.he_eos.get_he_sp((lgp, lgt))
     def get_st_he(self, lgp, lgt):
         return self.he_eos.get_he_st((lgp, lgt))
+    def get_rhop_he(self, lgp, lgt):
+        return self.he_eos.get_he_rhop((lgp, lgt))
+    def get_rhot_he(self, lgp, lgt):
+        return self.he_eos.get_he_rhot((lgp, lgt))
+    def get_rhop_h(self, lgp, lgt):
+        return self.he_eos.get_h_rhop((lgp, lgt))
+    def get_rhot_h(self, lgp, lgt):
+        return self.he_eos.get_h_rhot((lgp, lgt))
 
+    # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
         s_h = 10 ** self.get_logs_h(logp, logt)
         s_he = 10 ** self.get_logs_he(logp, logt)
@@ -71,10 +89,39 @@ class eos:
         sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix/s*dlogsmix/dlogp
         grada = - sp / st
 
-        rhoinv = y / 10 ** self.get_logrho_he(logp, logt) + (1. - y) / 10 ** self.get_logrho_h(logp, logt)
-        logrho = np.log10(rhoinv ** -1.)
+        rho_h = 10 ** self.get_logrho_h(logp, logt)
+        rho_he = 10 ** self.get_logrho_he(logp, logt)
+        rhoinv = y / rho_he + (1. - y) / rho_h
+        rho = rhoinv ** -1.
+        logrho = np.log10(rho)
+        rhop_h = self.get_rhop_h(logp, logt)
+        rhot_h = self.get_rhot_h(logp, logt)
+        rhop_he = self.get_rhop_he(logp, logt)
+        rhot_he = self.get_rhot_he(logp, logt)
 
-        return {'grada':grada, 'logrho':logrho, 'logs':np.log10(s)}
+        rhot = (1. - y) * rho / rho_h * rhot_h + y * rho / rho_he * rhot_he
+        rhop = (1. - y) * rho / rho_h * rhop_h + y * rho / rho_he * rhop_he
+
+        chirho = 1. / rhop # dlnP/dlnrho|T
+        chit = -1. * rhot / rhop # dlnP/dlnT|rho
+        gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
+        chiy = -1. * rho * y * (1. / rho_he - 1. / rho_h) # dlnrho/dlnY|P,T
+
+        res =  {
+            'grada':grada,
+            'logrho':logrho,
+            'logs':np.log10(s),
+            'gamma1':gamma1,
+            'chirho':chirho,
+            'chit':chit,
+            'gamma1':gamma1,
+            'chiy':chiy,
+            'rho_h':rho_h,
+            'rho_he':rho_he,
+            'rhop':rhop,
+            'rhot':rhot
+            }
+        return res
 
     def get_grada(self, logp, logt, y):
         return self.get(logp, logt, y)['grada']
@@ -84,3 +131,27 @@ class eos:
 
     def get_logs(self, logp, logt, y):
         return self.get(logp, logt, y)['logs']
+
+    def get_gamma1(self, logp, logt, y):
+        return self.get(logp, logt, y)['gamma1']
+
+    # def get_chiy(self, logp, logt, y):
+    #     """dlogrho/dlogY at const p, t"""
+    #
+    #     f = self.fac_for_numerical_partials
+    #
+    #     y_lo = y * (1. - f)
+    #     y_hi = y * (1. + f)
+    #     if np.any(y_lo < 0.) or np.any(y_hi > 1.):
+    #         print('warning: chiy not calculable for y this close to 0 or 1. should change size of step for finite differences.')
+    #         return None
+    #
+    #     # logrho = self.get_logrho(logp, logt, y)
+    #     # logp_lo = self.rhot_get(logrho, logt, y_lo)['logp']
+    #     # logp_hi = self.rhot_get(logrho, logt, y_hi)['logp']
+    #
+    #     # return (logp_hi - logp_lo) / 2. / f
+    #
+    #     logrho_lo = self.get_logrho(logp, logt, y_lo)
+    #     logrho_hi = self.get_logrho(logp, logt, y_hi)
+    #     return (logrho_hi  - logrho_lo) / 2. / f

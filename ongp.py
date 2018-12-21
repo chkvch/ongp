@@ -256,8 +256,12 @@ class evol:
             # atmospheres.
 
         if atm_type == 'f11_tables':
-            import f11_atm
-            self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet)
+            import f11_atm; reload(f11_atm)
+            if 'atm_jupiter_modified_teq' in list(self.evol_params):
+                self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet,
+                    jupiter_modified_teq=self.evol_params['atm_jupiter_modified_teq'])
+            else:
+                self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet)
         elif atm_type == 'f11_fit':
             import f11_atm_fit
             self.atm = f11_atm_fit.atm(atm_planet)
@@ -369,7 +373,7 @@ class evol:
         self.chirho = np.zeros_like(self.p)
         self.chit = np.zeros_like(self.p)
         self.chiy = np.zeros_like(self.p)
-        self.dlogy_dlogp = np.zeros_like(self.p)
+        self.grady = np.zeros_like(self.p)
 
         # helium rain bookkeeping
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass
@@ -379,10 +383,11 @@ class evol:
         last_three_radii = 0, 0, 0
         for iteration in range(self.evol_params['max_iters_static']):
             self.iters += 1
-
             self.integrate_hydrostatic() # integrate momentum equation to get pressure
             self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
-            self.set_yz() # set y and z profiles
+            # set y and z profile assuming three-layer homogeneous. if doing helium rain (self.phase is set),
+            # Y profile wile be set appropriately later in equilibrium_Y iterations.
+            self.set_yz()
             if self.iters < 5:
                 self.integrate_temperature(brute_force_loop=True) # integrate gradt (usually grada) for envelope temp; core isothermal
             else:
@@ -423,13 +428,17 @@ class evol:
                     # this is new here -- copied from below where we'd ordinarily only compute this after we have a converged model.
                     # might cost some time because of the additional eos calls.
 
-                    self.chit[self.kcore:] = self.hhe_eos.get_chit(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    self.chirho[self.kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    self.chiy[self.kcore:] = self.hhe_eos.get_chiy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p)) # actual log rate of change of Y with P
-                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.dlogy_dlogp[self.kcore+1:]
-                    self.brunt_b[self.k_shell_top + 1] = 0.
-                    # print 'in internal brunt_b calculation: self.k_shell_top = %i; brunt_b[self.k_shell_top] == %g' % (self.k_shell_top, self.brunt_b[self.k_shell_top+1])
+                    # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
+                    # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1
+                    res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                    self.chit[self.kcore:] = res['chit']
+                    self.chirho[self.kcore:] = res['chirho']
+                    self.chiy[self.kcore:] = res['chiy']
+                    self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+                    self.grady[self.k_shell_top+1] = 0.
+                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
+                    # self.brunt_b[self.k_shell_top + 1] = 0.
+
                     assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
 
                     self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
@@ -472,10 +481,11 @@ class evol:
 
         self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
         self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
-        try:
-            self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
-        except:
-            pass
+        # try:
+            # self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        # except:
+            # pass
+        self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
 
         return self.rtot, self.t[-1], self.teff
 
@@ -504,111 +514,6 @@ class evol:
         res = root(zero_me, rho_now)
         assert res['success'], 'failed root find in get_rhoz_hm89_ice'
         return res.x
-
-    # def _equilibrium_y_profile(self, phase_t_offset, verbose=True, show_timing=False, minimum_y_is_envelope_y=False, transition_pressure=None):
-    #     '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
-    #     may require a helium-rich layer atop the core.'''
-    #     p = self.p * 1e-12 # Mbar
-    #     k1 = np.where(p > transition_pressure)[0][-1]
-    #     ymax1 = self.phase.ymax_lhs(p[k1], self.t[k1] - phase_t_offset)
-    #
-    #     if np.isnan(ymax1) or self.y[k1] < ymax1:
-    #         if verbose: print('first point at P > P_trans = %1.1f Mbar is stable to demixing. Y = %1.4f, Ymax = %1.4f' % (transition_pressure, self.y[k1], ymax1))
-    #         self.nz_gradient = 0
-    #         self.nz_shell = 0
-    #         return self.y
-    #
-    #     self.ystart = np.copy(self.y)
-    #     yout = np.copy(self.y)
-    #     yout[k1:] = ymax1 # homogeneous molecular envelope at this abundance
-    #     if verbose: print('demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], self.y[k1], '-->', yout[k1])
-    #
-    #     t0 = time.time()
-    #     rainout_to_core = False
-    #
-    #     # this can't go here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
-    #     # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
-    #     # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
-    #     # self.nz_gradient = 0
-    #     # self.k_shell_top = 0
-    #     self.k_gradient_top = k1
-    #     for k in np.arange(k1-1, self.kcore, -1): # inward from first point where P > P_trans
-    #         t1 = time.time()
-    #         # note that phase_t_offset is applied here; phase diagram simply sees different temperature
-    #         ymax = self.phase.ymax_lhs(p[k], self.t[k] - phase_t_offset)
-    #         if np.isnan(ymax):
-    #             raise ValueError('got nan from ymax_lhs in initial loop over zones. p, t = %f, %f' % (p[k], self.t[k]))
-    #         if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
-    #         if yout[k] < ymax:
-    #             if verbose: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1)
-    #             break
-    #         self.nz_gradient = 0
-    #         self.k_shell_top = 0
-    #         ystart = yout[k]
-    #         yout[k] = ymax
-    #
-    #         if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
-    #             yout[k:] = yout[k]
-    #
-    #         # difference between initial he mass and current proposed he mass above and including this zone
-    #         # must be in the deeper interior.
-    #         he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
-    #         enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
-    #         if not enclosed_envelope_mass > 0: # at core boundary
-    #             rainout_to_core = True
-    #             yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-    #             # assert this "should"
-    #             assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: gradient reaches core'
-    #             kbot = k
-    #             break
-    #         y_interior = he_mass_missing_above / enclosed_envelope_mass
-    #         if y_interior > 1:
-    #             # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
-    #             # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
-    #             # the global helium mass.
-    #             msg = 'would need Y > 1 in inner homog region; rainout to core.'
-    #             if verbose: print(msg)
-    #             rainout_to_core = True
-    #             yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-    #             # assert this "should"
-    #             # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
-    #             kbot = k
-    #             break
-    #         else:
-    #             yout[self.kcore:k] = y_interior
-    #             self.nz_gradient += 1
-    #
-    #     if verbose: print('he gradient over %i zones. rainout to core %s' % (self.nz_gradient, rainout_to_core))
-    #     if show_timing: print('t0 + %f seconds' % (time.time() - t0))
-    #
-    #     if verbose: print(self.mhe, np.dot(yout[self.kcore:], self.dm[self.kcore-1:]), np.dot(yout[self.kcore:self.nz-1], self.dm[self.kcore:]))
-    #
-    #     if rainout_to_core:
-    #         # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.
-    #         # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
-    #         if verbose: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
-    #         for k in np.arange(kbot, self.nz):
-    #             yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
-    #             # should fix following line for the case where there is no core
-    #             try:
-    #                 tentative_total_he_mass = np.dot(yout[self.kcore:], self.dm[self.kcore-1:])
-    #             except:
-    #                 raise RuntimeError('equilibrium_y_profile fails when have rainout to core and no core. (fixable.)')
-    #             if verbose: print('%5i %5i %10.5e %10.5e %10.5e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
-    #             if tentative_total_he_mass >= self.mhe:
-    #                 if verbose: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
-    #                 rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
-    #                 if verbose: print('satisfied he mass conservation to a relative precision of %f' % rel_mhe_error)
-    #                 # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
-    #                 self.nz_shell = k - self.kcore
-    #                 self.k_shell_top = k
-    #                 break
-    #
-    #     self.have_rainout = self.nz_gradient > 0
-    #     self.have_rainout_to_core = rainout_to_core
-    #     if rainout_to_core: assert self.k_shell_top
-    #
-    #     return yout
 
     def equilibrium_y_profile(self, phase_t_offset, verbosity=0, show_timing=False, minimum_y_is_envelope_y=False, ptrans=None):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
@@ -640,8 +545,6 @@ class evol:
         if type(xplo) is str:
             if xplo == 'stable':
                 if verbosity > 0: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing\n' % (ptrans))
-                self.nz_gradient = 0
-                self.nz_shell = 0
                 return self.y
             elif xplo == 'failed':
                 raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.1f, t = %.1f, t-t_offset=%.1f' % (p[k1], self.t[k1], self.t[k1] - phase_t_offset))
@@ -649,8 +552,6 @@ class evol:
             ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
             if self.y[k1] < ymax1:
                 if verbosity > 0: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing. t_offset=%f K, y=%1.4f, ymax=%1.4f\n' % (ptrans, phase_t_offset,  self.y[k1], ymax1))
-                self.nz_gradient = 0
-                self.nz_shell = 0
                 return self.y
 
         self.ystart = np.copy(self.y)
@@ -661,11 +562,6 @@ class evol:
         t0 = time.time()
         rainout_to_core = False
 
-        # can't set nz_gradient and k_shell_top here since equilibrium_y_profile is called during iterations until Y gradient stops changing.
-        # as far as this routine is concerned, in the last iteration it will find a stable Y configuration and thus count no gradient zones.
-        # instead, only initialize nz_gradient back to zero if this routine finds that Y must be redistributed.
-        # self.nz_gradient = 0
-        # self.k_shell_top = 0
         self.k_gradient_top = k1
         for k in np.arange(k1-1, self.kcore, -1): # inward from first point where p > ptrans
             t1 = time.time()
@@ -680,13 +576,12 @@ class evol:
             elif type(xplo) is np.float64:
                 ymax = get_y(self.z[k], get_yp(xplo))
                 if yout[k] < ymax:
-                    if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax, -1)
+                    if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax)
                     break
             else:
                 raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
             if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
 
-            self.nz_gradient = 0
             self.k_shell_top = 0
             ystart = yout[k]
             yout[k] = ymax
@@ -719,9 +614,10 @@ class evol:
                 break
             else:
                 # all good; uniformly distribute all helium that has rained out from above into deeper interior
-                if verbosity > 1: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
+                if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
                 yout[self.kcore:k] = y_interior
-                self.nz_gradient += 1 # this isn't being counted right, always  1
+
+
 
         if verbosity > 0: print('rainout to core %s' % rainout_to_core)
         if show_timing: print('t0 + %f seconds' % (time.time() - t0))
@@ -739,7 +635,6 @@ class evol:
                     rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
                     if verbosity > 1: print('satisfied he mass conservation to a relative precision of %f' % rel_mhe_error)
                     # yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
-                    self.nz_shell = k - self.kcore
                     self.k_shell_top = k
                     break
 
@@ -748,8 +643,8 @@ class evol:
         if rainout_to_core: assert self.k_shell_top
         if verbosity > 0: print()
 
-
-        # assert False
+        self.nz_gradient = len(np.where(np.diff(yout) < 0)[0])
+        self.nz_shell = max(0, self.k_shell_top - self.kcore)
 
         return yout
 
@@ -963,7 +858,7 @@ class evol:
             assert self.t1 == self.t[-1] # this should be true by construction (see integrate_temperature)
             k10 = np.where(self.p < 1e7)[0][0]
             tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
-            self.t10 = splev(1e7, tck)
+            self.t10 = np.float64(splev(1e7, tck))
             assert self.t1 > 0., 'bad t1 %g' % self.t1
         elif self.atm_which_t == 't10':
             assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
@@ -1029,10 +924,21 @@ class evol:
                 pass
 
         # ignoring the envelope z component when it comes to calculating chirho and chit
-        self.chirho[self.kcore:] = self.hhe_eos.get_chirho(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-        self.chit[self.kcore:] = self.hhe_eos.get_chit(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) # a final H/He eos call
+        self.chirho[self.kcore:] = res['chirho']
+        self.chit[self.kcore:] = res['chit']
+        self.gamma1[self.kcore:] = res['gamma1']
         self.gradt_direct[:self.kcore] = 0. # was previously self.gradt
         self.gradt_direct[self.kcore+1:] = np.diff(np.log(self.t[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # was previously self.gradt
+
+        # terms needed for calculation of the composition term brunt_B.
+        self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+        if self.k_shell_top:
+            self.grady[self.k_shell_top+1] = 0.
+        self.grady[np.where(np.isnan(self.grady))] = 0.
+        # this is the thermodynamic derivative (const P and T), for H-He.
+        self.dlogrho_dlogy = np.zeros_like(self.p)
+        self.dlogrho_dlogy[self.kcore:] = res['chiy']
 
         self.brunt_n2_direct = np.zeros_like(self.p)
         self.brunt_n2_direct[1:] = self.g[1:] / self.r[1:] * (dlnp_dlnr / self.gamma1[1:] - dlnrho_dlnr)
@@ -1043,21 +949,13 @@ class evol:
         self.brunt_n2_unno_direct[self.kcore+1:] = self.g[self.kcore+1:] * self.homology_v[self.kcore+1:] / self.r[self.kcore+1:] * \
             (self.dlogp_dlogrho[self.kcore:] ** -1. - self.gamma1[self.kcore+1:] ** -1.) # Unno 13.102
 
-        # terms needed for calculation of the composition term brunt_B.
-        if self.kcore > 0:
-            self.dlogy_dlogp[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # structure derivative # throws divide by zero encountered in log; fix me!
-        else:
-            self.dlogy_dlogp[1:] = np.diff(np.log(self.y)) / np.diff(np.log(self.p))
-        # this is the thermodynamic derivative (const P and T), for H-He.
-        self.dlogrho_dlogy = np.zeros_like(self.p)
-        self.dlogrho_dlogy[self.kcore:] = self.hhe_eos.get_dlogrho_dlogy(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-
         rho_z = np.zeros_like(self.p)
         rho_hhe = np.zeros_like(self.p)
         if np.any(self.z > 0.) and self.evol_params['z_eos_option']:
             rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
-        rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
-        rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
+        # rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
+        # rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
+        rho_hhe[self.kcore:] = 10 ** res['logrho']
         self.dlogrho_dlogz = np.zeros_like(self.p)
         # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
         self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
@@ -1074,7 +972,7 @@ class evol:
         # in envelope, Y gradient is crucial.
         self.brunt_n2_unno[self.kcore:] = self.g[self.kcore:] * self.homology_v[self.kcore:] / self.r[self.kcore:] * \
             (self.chit[self.kcore:] / self.chirho[self.kcore:] * (self.grada[self.kcore:] - self.gradt[self.kcore:]) + \
-            self.dlogrho_dlogy[self.kcore:] * self.dlogy_dlogp[self.kcore:])
+            self.dlogrho_dlogy[self.kcore:] * self.grady[self.kcore:])
 
         # akin to mike montgomery's form for brunt_B, which is how mesa does it by default (Paxton+2013)
         rho_this_pt_next_comp = np.zeros_like(self.p)
@@ -1123,20 +1021,16 @@ class evol:
         if self.evol_params['z_eos_option'] == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
             k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
             try:
-                if self.z1 > 0.:
+                if self.z1 > 0.: # use eq. (16) in ms.pdf for this derivative from additive volume mixture
                     self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = \
                             self.rho[self.kcore:k_t_boundary+1] \
                             * (self.z[self.kcore:k_t_boundary+1] / rho_z[self.kcore:k_t_boundary+1] \
                                 * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:k_t_boundary+1]), \
                                                                         np.log10(self.t[self.kcore:k_t_boundary+1])) \
                             + (1. - self.z[self.kcore:k_t_boundary+1]) / rho_hhe[self.kcore:k_t_boundary+1] \
-                                * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
-                                                        np.log10(self.t[self.kcore:k_t_boundary+1]),
-                                                        self.y[self.kcore:k_t_boundary+1])) # eq. (9) in equations.pdf
+                                * res['rhot'][:k_t_boundary+1-self.kcore]) # this funny slice is because res[...] only runs kcore to surface
                 else: # pure H/He, just ask SCvH
-                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:k_t_boundary+1]),
-                                                                                                    np.log10(self.t[self.kcore:k_t_boundary+1]),
-                                                                                                    self.y[self.kcore:k_t_boundary+1])
+                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = res['rhot'][:k_t_boundary+1]
             except:
                 print('failed in dlogrho_dlogt_const_p for hi-T part of envelope')
                 raise
@@ -1147,23 +1041,23 @@ class evol:
                                                     * self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), \
                                                                                                 np.log10(self.t[k_t_boundary+1:])) \
                                                     + (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] \
-                                                        * self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
-                                                                                np.log10(self.t[k_t_boundary+1:]), \
-                                                                                self.y[k_t_boundary+1:]))
+                                                        * res['rhot'][k_t_boundary+1-self.kcore:])
                 else:
-                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.hhe_eos.get_rhot(np.log10(self.p[k_t_boundary+1:]), \
-                                                                                np.log10(self.t[k_t_boundary+1:]), \
-                                                                                self.y[k_t_boundary+1:])
+                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = res['rhot'][k_t_boundary+1-self.kcore:]
             except:
                 print('failed in dlogrho_dlogt_const_p for lo-T part of envelope')
                 raise
 
         else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
             if self.evol_params['z_eos_option']:
-                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * (self.z[self.kcore:] / rho_z[self.kcore:] * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] * self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]))
+                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * \
+                    (self.z[self.kcore:] / rho_z[self.kcore:] \
+                    * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) \
+                    + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] \
+                    * res['rhot'])
             else:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
-                self.dlogrho_dlogt_const_p[self.kcore:] = self.hhe_eos.get_rhot(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
         if self.z2: # two-layer envelope in terms of Z
             self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
@@ -1267,9 +1161,11 @@ class evol:
         previous_entropy = None
         age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 's_mean', 'dt_yr', 'age_gyr', 'nz_gradient', 'nz_shell', 'y1', 'walltime'
+        stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
         start_time = time.time()
-        print(('%12s ' * len(stdout_columns)) % stdout_columns)
+        header_format = '{:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
+        stdout_format = '{:>6n} {:>6n} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
+        print(header_format.format(*stdout_columns))
         # the evolve loop
         dt_yr = 0.
         done = False
@@ -1441,8 +1337,9 @@ class evol:
                     raise
 
             if step % stdout_interval == 0 or step == nsteps - 1:
-                print('%12i %12i %12.3f %12.3f %12.3f %12.3e %12.3f %12.3e %12.3f %12i %12i %12.3f %12.3f' % \
-                    (step, self.iters, self.t1, self.t10, self.teff, self.rtot, np.mean(self.entropy[self.entropy > 0]), dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime))
+                stdout_data = step, self.iters, self.t1, self.t10, self.teff, \
+                    self.rtot, dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
+                print(stdout_format.format(*stdout_data))
 
             previous_entropy = self.entropy
 

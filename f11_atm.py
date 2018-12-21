@@ -18,7 +18,7 @@ class atm:
     doi:10.1088/0004-637X/729/1/32
     '''
 
-    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None, ):
+    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None, jupiter_modified_teq=None):
 
         self.planet = planet
         # log.debug('planet is %s', self.planet)
@@ -58,6 +58,16 @@ class atm:
         # log.debug('reading table from %s' % self.table_path)
         self.data = np.genfromtxt(self.table_path, delimiter='&', names=names, usecols=usecols[flux_level])
         file_length = len(open(self.table_path).readlines())
+
+        if jupiter_modified_teq:
+            # shift T_int column from the published one consistent with Teq=109.9 K to a different one
+            assert self.planet == 'jup', 'jupiter_modified_teq has no meaning unless planet is jup.'
+            # this option messes up the uniformity of the grid in T_int
+#            current_teq4 = self.data['teff'] ** 4 - self.data['tint'] ** 4
+#            self.data['tint'] = (self.data['tint'] ** 4 + current_teq4 - jupiter_modified_teq ** 4) ** 0.25
+            # this option works easily
+            self.data['tint'] = (self.data['tint'] ** 4 + 109.9 ** 4 - jupiter_modified_teq ** 4) ** 0.25
+        self.jupiter_modified_teq = jupiter_modified_teq
 
         for i in np.arange(0, file_length, g_step):
             self.data['g'][i+1:i+g_step] = self.data['g'][i]
