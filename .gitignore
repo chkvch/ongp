@@ -15,3 +15,4 @@ gp_configs
 sync_with_upstream.sh
 .pytest_cache/
 grada_nans.dat
+obsolete
