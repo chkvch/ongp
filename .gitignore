@@ -12,7 +12,7 @@ run.py
 gp_configs
 *~
 *.log
-sync_with_upstream.sh
 .pytest_cache/
 grada_nans.dat
 obsolete
+core_erosion

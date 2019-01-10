@@ -201,13 +201,13 @@ class evol:
         elif np.any(np.isnan(logt)):
             raise EOSError('have %i nans in logt' % len(logt[np.isnan(logt)]))
         elif np.any(y <= 0.):
-            raise EOSError('one or more bad y')
+            raise UnphysicalParameterError('one or more bad y')
         elif np.any(y >= 1.):
-            raise EOSError('one or more bad y')
+            raise UnphysicalParameterError('one or more bad y')
         elif np.any(z < 0.):
-            raise EOSError('one or more bad z')
+            raise UnphysicalParameterError('one or more bad z')
         elif np.any(z > 1.):
-            raise EOSError('one or more bad z')
+            raise UnphysicalParameterError('one or more bad z')
         rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
         rho_z = self.get_rho_z(logp, logt)
         rhoinv = (1. - z) / rho_hhe + z / rho_z
@@ -1099,31 +1099,27 @@ class evol:
         '''builds a sequence of static models with different surface temperatures and calculates the delta time between each pair
         using the energy equation dL/dm = -T * ds/dt where L is the intrinsic luminosity, m is the mass coordinate, T is the temperature,
         s is the specific entropy, and t is time.
-        important inputs are starting_t1 (say 1, 2, 3 thousand K) and min_t1 (put just beneath a realistic t1 for J/S/U/N or else it'll run off F11 atm tables.)
-        for now ignores the possibility of having two-layer envelope in terms of Y or Z'''
+        important inputs are start_t (say t1 = 1, 2, 3 thousand K) and end_t (put just beneath a realistic t1 for J/S/U/N or else it'll run off F11 atm tables.)
+        for now ignores the possibility of having two-layer envelope in terms of Y or Z.'''
 
-        if not 'mtot' in params.keys():
-            if hasattr(self, 'static_params'):
-                params['mtot'] = self.static_params['mtot']
-            else:
-                params['mtot'] = const.mjup
+        # necessaries
+        assert 'mtot' in list(params), 'must specify total mass.'
+        if 'yenv' in list(params): params['y1'] = params.pop('yenv')
+        if 'zenv' in list(params): params['z1'] = params.pop('zenv')
+        assert 'y1' in list(params), 'must specify y1.'
+        assert 'z1' in list(params), 'must specify z1.'
 
-        if 'yenv' in params.keys():
-            params['y1'] = params.pop('yenv')
-        if 'zenv' in params.keys():
-            params['z1'] = params.pop('zenv')
-        assert 'y1' in params.keys(), 'must specify y1'
-        assert 'z1' in params.keys(), 'must specify z1'
+        # defaults
         if not 'mcore' in params.keys():
             params['mcore'] = 0.
         if not 'start_t' in params.keys():
             params['start_t'] = 2e3
-        if not 'end_t' in params.keys():
-            params['end_t'] = 160.
         if not 'which_t' in params.keys():
             params['which_t'] = 't1'
-        if not 'nsteps' in params.keys():
-            params['nsteps'] = 100
+
+        if not 'timestep_stretch_factor' in list(params):
+            params['timestep_stretch_factor'] = 2
+        assert params['timestep_stretch_factor'] > 1, 'timestep_stretch_factor must be > 1, otherwise positive feedback'
 
         try:
             stdout_interval = params['stdout_interval']
@@ -1132,75 +1128,125 @@ class evol:
 
         self.evolve_params = params
 
-        import time
-
-        nsteps = params['nsteps']
         start_t = params['start_t']
         end_t = params['end_t']
         which_t = params['which_t']
 
-        # set array of surface temperatures to compute
-        if 'timesteps_ease_in' in params.keys():
-            if params['timesteps_ease_in']:
-                # make the first steps_to_ease_in steps more gradual in terms of d(dt)/d(step). only
-                # important if you want to resolve evolution at very early times (e.g., 1e3 years)
-                i = np.arange(nsteps)
-                ts = 0.5 * (start_t - end_t) * \
-                    (1. + np.tanh(np.pi * (i - 3. * nsteps / 5.) / (2. / 3) / nsteps))[::-1] + end_t
-        else:
-            ts = np.logspace(np.log10(end_t), np.log10(start_t), nsteps)[::-1]
+        # old way: set array of surface temperatures to compute, logarithmically distributed from the end
+        # nsteps = params['nsteps']
+        # ts = np.logspace(np.log10(end_t), np.log10(start_t), nsteps)[::-1]
 
-        self.history = {}
-        self.history_columns = 'step', 'age', 'dt_yr', 'radius', 'tint', 't1', 't10', 'teff', 'y1', 'lint', 'nz_gradient', 'nz_shell', 'iters', \
-            'mz_env', 'mz', 'bulk_z', 'dmcore_dt_guillot', 'int_dmcore_dt_guillot', 'dmcore_dt_garaud', 'int_dmcore_dt_garaud', \
-            'dmcore_dt_guillot_alternate', 'int_dmcore_dt_guillot_alternate'
-        for name in self.history_columns:
-            self.history[name] = np.array([])
-
-        keep_going = True
         previous_entropy = None
-        age_gyr = 0
         # these columns are for the realtime (e.g., notebook) output
         stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
         start_time = time.time()
         header_format = '{:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
         stdout_format = '{:>6n} {:>6n} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
         print(header_format.format(*stdout_columns))
-        # the evolve loop
-        dt_yr = 0.
-        done = False
-        for step, t in enumerate(ts):
-            # make sure only one of t1, t10 is provided to static
-            params[params['which_t']] = t
-            other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
-            try:
-                del(params[other_t])
-            except KeyError:
-                pass
-            try:
-                self.static(params) # pass the full evolve params; many won't be used, but shouldn't cause any problems
-                walltime = time.time() - start_time
-            except AtmError:
-                print('end because static model returned AtmError')
-                done = True
-            except Exception as e:
-                print('failed in building static model -- likely off eos or atm tables')
-                # done = True
-                raise
 
-            if done:
-                # don't update any history info; save history to this point if output_prefix is specified
-                if 'output_prefix' in params.keys():
-                    with open('%s.history' % params['output_prefix'], 'wb') as fw:
-                        pickle.dump(self.history, fw, 0)
-                    print('wrote history data to %s.history' % params['output_prefix'])
+        # the evolve loop
+        self.step = 0
+        self.age_gyr = 0
+        self.dt_yr = 0
+        self.status = 'okay'
+        delta_t = 2 # nominal temperature step in K, can scale as we go
+        prev_y1 = -1
+        done = False
+        while not done:
+
+            params[which_t] = start_t
+            other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
+            params.pop(other_t, None)
+
+            self.static(params) # pass the full evolve params; many won't be used
+            # normally we also catch AtmError (end gracefully with done=True) and raise others
+
+            if self.step > 0:
+                accept_step = False
+                titers = 0
+                while not accept_step:
+                    params[which_t] = previous_t - delta_t
+                    other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
+                    params.pop(other_t, None)
+
+                    self.static(params) # pass the full evolve params; many won't be used, but shouldn't cause any problems
+                    # normally we also catch AtmError (end gracefully with done=True) and raise others
+
+                    delta_s = self.entropy - previous_entropy
+                    delta_s *= const.kb / const.mp # now erg K^-1 g^-1
+                    int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
+                    dt = -1. * int_tdsdm / self.lint
+                    # now that have timestep based on total intrinsic luminosity,
+                    # calculate eps_grav to see distribution of energy generation
+                    eps_grav = -1. * self.t * delta_s / dt
+                    luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
+                    self.dt_yr = dt / const.secyear
+                    if self.dt_yr < 0:
+                        self.status = EnergyError('got negative timestep %f for step %i' % (dt, self.step))
+                        done = True
+                        break
+
+                    # # check resolution conditions
+                    # if self.dt_yr > params['max_timestep']:
+                    #     msg = 'exceeded max timestep, decrease temperature step'
+                    #     delta_t /= params['timestep_stretch_factor']
+                    # else: # check other conditions
+                    #     if prev_y1 - self.y[-1] > params['max_dy1']:
+                    #         msg = 'exceeded max y1 change, decrease temperature step'
+                    #         delta_t /= params['timestep_stretch_factor']
+                    #     else:
+                    #         msg = 'okay'
+                    #         accept_step = True
+                    # if msg != 'okay': print(titers, '%e'%self.dt_yr, msg, delta_t)
+
+                    delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                    if self.dt_yr < params['max_timestep']:
+                        accept_step = True
+                    else: # retry with smaller step
+                        print('timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep']))
+
+                    titers += 1
+
+                self.age_gyr += self.dt_yr * 1e-9
+                self.delta_s = delta_s # erg K^-1 g^-1
+                self.eps_grav = eps_grav
+                self.luminosity = luminosity
+                prev_y1 = self.y[-1]
+
+            if 'full_profiles' in list(params):
+                if params['full_profiles']:
+                    if not hasattr(self, 'profiles'): self.profiles = {}
+                    assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
+                    self.profiles[self.step] = self.get_profile()
+            self.append_history()
+
+            if self.status != 'okay':
+                print('stopping:', self.status)
                 break
 
+            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
+                walltime = time.time() - start_time
+                stdout_data = self.step, self.iters, self.t1, self.t10, self.teff, \
+                    self.rtot, self.dt_yr, self.age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
+                print(stdout_format.format(*stdout_data))
+
+            # catch stopping condition
+            if params[which_t] < end_t:
+                done = True
+            else:
+                previous_entropy = self.entropy
+                previous_t = params[which_t]
+                self.step += 1
+
+        if 'output_prefix' in list(params):
+            self.save_history(params['output_prefix'])
+
+    def append_history(self):
             history_qtys = {
-                'step': step,
+                'step': self.step,
                 'iters': self.iters,
-                'age': age_gyr,
-                'dt_yr': dt_yr,
+                'age': self.age_gyr,
+                'dt_yr': self.dt_yr,
                 'radius': self.rtot,
                 'tint': self.tint,
                 'lint': self.lint,
@@ -1212,145 +1258,72 @@ class evol:
                 'nz_shell': self.nz_shell,
                 'mz_env': self.mz_env,
                 'mz': self.mz,
-                'bulk_z': self.bulk_z
+                'bulk_z': self.bulk_z,
+                'status': self.status,
+                'kcore':self.kcore,
+                'ktrans':self.ktrans,
+                'k_shell_top':self.k_shell_top
                 }
 
+            if not hasattr(self, 'history'):
+                self.history = {}
+
             for key, qty in history_qtys.items():
+                if not key in list(self.history):
+                    self.history[key] = np.array([]) # initialize ndarray for this column
                 self.history[key] = np.append(self.history[key], qty)
 
-            if step > 0: # there is a timestep to speak of
-                delta_s = self.entropy - previous_entropy
-                delta_s *= const.kb / const.mp # now erg K^-1 g^-1
-                assert self.lint > 0, 'found negative intrinsic luminosity.'
-                int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
-                dt = -1. *  int_tdsdm / self.lint
-                if dt < 0: raise RuntimeError('got negative timestep %f for step %i' % (dt, step))
-                # now that have timestep based on total intrinsic luminosity,
-                # calculate eps_grav to see distribution of energy generation
-                eps_grav = -1. * self.t * delta_s / dt
-                luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
-                dt_yr = dt / const.secyear
-                age_gyr += dt_yr * 1e-9
+    def get_profile(self):
+        profile = {}
+        profile['p'] = np.copy(self.p)
+        profile['t'] = np.copy(self.t)
+        profile['rho'] = np.copy(self.rho)
+        profile['y'] = np.copy(self.y)
+        profile['z'] = np.copy(self.z)
+        profile['entropy'] = np.copy(self.entropy)
+        profile['r'] = np.copy(self.r)
+        profile['m'] = np.copy(self.m)
+        profile['g'] = np.copy(self.g)
+        profile['dlogp_dlogrho'] = np.copy(self.dlogp_dlogrho)
+        profile['gamma1'] = np.copy(self.gamma1)
+        profile['csound'] = np.copy(self.csound)
+        # profile['lamb_s12'] = np.copy(self.lamb_s12)
+        profile['brunt_n2'] = np.copy(self.brunt_n2)
+        # profile['brunt_n2_direct'] = self.brunt_n2_direct
+        profile['chirho'] = np.copy(self.chirho)
+        profile['chit'] = np.copy(self.chit)
+        profile['gradt'] = np.copy(self.gradt)
+        profile['grada'] = np.copy(self.grada)
+        profile['rf'] = np.copy(self.rf)
+        profile['mf'] = np.copy(self.mf)
+        # profile['pressure_scale_height'] = self.pressure_scale_height
+        try:
+            profile['dy'] = np.copy(self.y - self.ystart)
+        except AttributeError: # no phase separation for this step
+            pass
+        if self.step > 0:
+            profile['delta_s'] = np.copy(self.delta_s)
+            profile['eps_grav'] = np.copy(self.eps_grav)
+            profile['luminosity'] = np.copy(self.luminosity)
 
-                self.delta_s = delta_s # erg K^-1 g^-1
-                self.eps_grav = eps_grav
-                self.luminosity = luminosity
+        return profile
 
-                if 'luminosity_erosion_option' in params.keys():
-                    if params['luminosity_erosion_option']:
-                        # estimate of core erosion rate following Guillot+2003 chapter eq. 14. went into Moll, Garaud, Mankovich, Fortney ApJ 2017
-                        pomega = 0.3 # the order-unity factor from integration
-                        hp_core_top = self.pressure_scale_height[self.kcore + 1]
-                        r_first_convective_cell = self.r[self.kcore + 1] + hp_core_top # first convective cell extends ~ from core top to this radius
-                        l1 = self.luminosity[self.r > r_first_convective_cell][0]
-                        l_core_top = self.luminosity[self.kcore]
-                        r_core_top = self.r[self.kcore]
-                        m_core_top = self.m[self.kcore]
+    def dump_history(self, prefix):
+        with open('{}.history'.format(prefix), 'wb') as fw:
+            pickle.dump(self.history, fw, 0) # 0 means save as text
+        print('wrote history data to {}.history'.format(prefix))
 
-                        l = {'first_convective_cell':l1, 'core_top':l_core_top}[params['luminosity_erosion_option']]
-                        gammainv_erosion = params['gammainv_erosion']
-
-                        dmcore_dt_guillot = - gammainv_erosion / pomega * self.rtot * l / const.cgrav / self.mtot # g s^-1
-                        dmcore_dt_guillot_alternate = - gammainv_erosion / pomega * r_core_top * l / const.cgrav / m_core_top # g s^-1
-
-                        alpha_core_top = - self.hhe_eos.get_rhot(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore]) / self.t[self.kcore] # K^-1
-                        cp_hhe_core_top = self.hhe_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]), self.y[self.kcore])
-                        cp_z_core_top = self.z_eos.get_cp(np.log10(self.p[self.kcore]), np.log10(self.t[self.kcore]))
-                        cp_core_top = 0.5 *  cp_hhe_core_top + 0.5 * cp_z_core_top # erg g^-1 K^-1
-                        # print 'cp for gas, z, 50/50 mix', cp_hhe_core_top, cp_z_core_top, cp_core_top
-                        dmcore_dt_garaud = - gammainv_erosion * alpha_core_top * l / cp_core_top # g s^-1
-
-                        erosion_qtys = {
-                            'dmcore_dt_guillot': dmcore_dt_guillot, # g s^-1
-                            'int_dmcore_dt_guillot': trapz(self.history['dmcore_dt_guillot'], dx=self.history['dt_yr'][1:]*const.secyear), # g
-                            'dmcore_dt_guillot_alternate': dmcore_dt_guillot_alternate,
-                            'int_dmcore_dt_guillot_alternate': trapz(self.history['dmcore_dt_guillot_alternate'], dx=self.history['dt_yr'][1:]*const.secyear), # g
-                            'dmcore_dt_garaud': dmcore_dt_garaud,
-                            'int_dmcore_dt_garaud': trapz(self.history['dmcore_dt_garaud'], dx=self.history['dt_yr'][1:]*const.secyear) # g
-                        }
-
-                        for key, qty in erosion_qtys.items():
-                            self.history[key] = np.append(self.history[key], qty)
-
-            # history and profile quantities go in dictionaries which are pickled
-            if 'output_prefix' in params.keys():
-                assert type(params['output_prefix']) is str, 'output_prefix needs to be a string.'
-                self.profile = {}
-
-                # profile arrays
-                self.profile['p'] = self.p
-                self.profile['t'] = self.t
-                self.profile['rho'] = self.rho
-                self.profile['y'] = self.y
-                try:
-                    self.profile['dy'] = self.y - self.ystart
-                except AttributeError: # no phase separation for this step
-                    pass
-                self.profile['z'] = self.z
-                self.profile['entropy'] = self.entropy
-                self.profile['r'] = self.r
-                self.profile['m'] = self.m
-                self.profile['g'] = self.g
-                self.profile['dlogp_dlogrho'] = self.dlogp_dlogrho
-                self.profile['gamma1'] = self.gamma1
-                self.profile['csound'] = self.csound
-                self.profile['lamb_s12'] = self.lamb_s12
-                self.profile['brunt_n2'] = self.brunt_n2
-                self.profile['brunt_n2_direct'] = self.brunt_n2_direct
-                self.profile['chirho'] = self.chirho
-                self.profile['chit'] = self.chit
-                self.profile['gradt'] = self.gradt
-                self.profile['grada'] = self.grada
-                self.profile['rf'] = self.rf
-                self.profile['mf'] = self.mf
-                self.profile['pressure_scale_height'] = self.pressure_scale_height
-
-                # these only work if step > 0
-                if step > 0:
-                    self.profile['delta_s'] = self.delta_s
-                    self.profile['eps_grav'] = self.eps_grav
-                    self.profile['luminosity'] = self.luminosity
-
-                # profile scalars
-                self.profile['step'] = step
-                self.profile['age'] = age_gyr
-                self.profile['nz'] = self.nz
-                self.profile['kcore'] = self.kcore
-                self.profile['radius'] = self.rtot
-                self.profile['tint'] = self.tint
-                self.profile['lint'] = self.lint
-                self.profile['t1'] = self.t1
-                self.profile['t10'] = self.t10
-                self.profile['teff'] = self.teff
-                self.profile['y1'] = self.y[-1]
-                self.profile['nz_gradient'] = self.nz_gradient
-                self.profile['nz_shell'] = self.nz_shell
-                self.profile['mz_env'] = self.mz_env
-                self.profile['mz'] = self.mz
-                self.profile['bulk_z'] = self.bulk_z
-
-                with open('%s%i.profile' % (params['output_prefix'], step), 'w') as f:
-                    pickle.dump(self.profile, f, 0) # 0 means dump as text
-
-                if not keep_going:
-                    print ('stopping.')
-                    raise
-
-            if step % stdout_interval == 0 or step == nsteps - 1:
-                stdout_data = step, self.iters, self.t1, self.t10, self.teff, \
-                    self.rtot, dt_yr, age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
-                print(stdout_format.format(*stdout_data))
-
-            previous_entropy = self.entropy
-
-        if 'output_prefix' in params.keys():
-            with open('%s.history' % params['output_prefix'], 'wb') as fw:
-                pickle.dump(self.history, fw, 0)
-            print('wrote history data to {}.history'.format(params['output_prefix']))
-
+    def dump_profile(self, prefix):
+        assert type(prefix) is str, 'output_prefix needs to be a string.'
+        with open('{}{}.profile' % (prefix, step), 'w') as f:
+            pickle.dump(profile, f, 0) # 0 means dump as text
+        print('wrote profile data to {}{}.profile'.format(prefix, step))
 
     def smooth(self, array, std, type='flat'):
-        '''moving gaussian filter to smooth an array. wrote this to artificially smooth brunt composition term for seismology purposes.'''
+        '''
+        moving gaussian filter to smooth an array.
+        wrote this to artificially smooth brunt composition term for seismology diagnostic purposes.
+        '''
         width = 10 * std
         from scipy.signal import gaussian
         weights = gaussian(width, std=std)
@@ -1362,32 +1335,6 @@ class evol:
             except:
                 res[k] = array[k]
         return res
-
-    def basic_profile_plot(self, save_prefix=None):
-        import os
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'hspace':0.1})
-        ax[0].loglog(self.p, self.t); ax[0].set_ylabel(r'$T$')
-        ax[1].loglog(self.p, self.rho); ax[1].set_ylabel(r'$\rho$')
-        ax[-1].set_xlabel(r'$P$')
-        if save_prefix:
-            outdir = '%s/figs' % save_prefix
-            if not os.path.exists(outdir):
-                os.mkdir(outdir)
-            plt.savefig('%s/ptrho.pdf' % outdir, bbox_inches='tight')
-        fig, ax = plt.subplots(3, 1, figsize=(6, 8), sharex=True, gridspec_kw={'hspace':0.1})
-        ax[0].plot(self.rf, self.rho); ax[0].set_ylabel(r'$\rho$')
-        ax[1].plot(self.rf, self.y); ax[1].set_ylabel(r'$Y$')
-        ax[2].semilogy(self.rf, self.brunt_n2)
-        ax[2].semilogy(self.rf, self.lamb_s12)
-        ax[2].set_ylabel(r'$N^2,\ \ S_{\ell=1}^2$')
-        ax[2].set_ylim(1e-10, 1e-3)
-        ax[-1].set_xlabel(r'$r/R$')
-        if save_prefix:
-            outdir = '%s/figs' % save_prefix
-            if not os.path.exists(outdir):
-                os.mkdir(outdir)
-            plt.savefig('%s/rho_y_prop.pdf' % outdir, bbox_inches='tight')
 
     def save_profile(self, outfile,
                     save_gyre_model_with_profile=True,
@@ -1515,6 +1462,9 @@ class AtmError(Exception):
     pass
 
 class HydroError(Exception):
+    pass
+
+class EnergyError(Exception):
     pass
 
 class UnphysicalParameterError(Exception):
