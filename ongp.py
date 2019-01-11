@@ -23,7 +23,7 @@ class evol:
     def __init__(self, params, **mesh_params):
 
         if not 'path_to_data' in params.keys():
-            raise ValueError('must specify path to eos/atm data')
+            raise ValueError('must specify path_to_data indicating path to eos/atm data')
 
         if not 'hhe_eos_option' in params.keys():
             params['hhe_eos_option'] = 'scvh'
@@ -938,7 +938,10 @@ class evol:
         self.grady[np.where(np.isnan(self.grady))] = 0.
         # this is the thermodynamic derivative (const P and T), for H-He.
         self.dlogrho_dlogy = np.zeros_like(self.p)
-        self.dlogrho_dlogy[self.kcore:] = res['chiy']
+        try:
+            self.dlogrho_dlogy[self.kcore:] = res['chiy']
+        except:
+            pass
 
         self.brunt_n2_direct = np.zeros_like(self.p)
         self.brunt_n2_direct[1:] = self.g[1:] / self.r[1:] * (dlnp_dlnr / self.gamma1[1:] - dlnrho_dlnr)
@@ -1117,10 +1120,6 @@ class evol:
         if not 'which_t' in params.keys():
             params['which_t'] = 't1'
 
-        if not 'timestep_stretch_factor' in list(params):
-            params['timestep_stretch_factor'] = 2
-        assert params['timestep_stretch_factor'] > 1, 'timestep_stretch_factor must be > 1, otherwise positive feedback'
-
         try:
             stdout_interval = params['stdout_interval']
         except KeyError:
@@ -1138,10 +1137,10 @@ class evol:
 
         previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 't1', 't10', 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
+        stdout_columns = 'step', 'iters', 'limit', which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
         start_time = time.time()
-        header_format = '{:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
-        stdout_format = '{:>6n} {:>6n} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
+        header_format = '{:>6s} {:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
+        stdout_format = '{:>6n} {:>6n} {:>6s} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
         print(header_format.format(*stdout_columns))
 
         # the evolve loop
@@ -1152,6 +1151,7 @@ class evol:
         delta_t = 2 # nominal temperature step in K, can scale as we go
         prev_y1 = -1
         done = False
+        limit = 'ok'
         while not done:
 
             params[which_t] = start_t
@@ -1164,6 +1164,7 @@ class evol:
             if self.step > 0:
                 accept_step = False
                 titers = 0
+                limit = 'ok'
                 while not accept_step:
                     params[which_t] = previous_t - delta_t
                     other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
@@ -1186,24 +1187,18 @@ class evol:
                         done = True
                         break
 
-                    # # check resolution conditions
-                    # if self.dt_yr > params['max_timestep']:
-                    #     msg = 'exceeded max timestep, decrease temperature step'
-                    #     delta_t /= params['timestep_stretch_factor']
-                    # else: # check other conditions
-                    #     if prev_y1 - self.y[-1] > params['max_dy1']:
-                    #         msg = 'exceeded max y1 change, decrease temperature step'
-                    #         delta_t /= params['timestep_stretch_factor']
-                    #     else:
-                    #         msg = 'okay'
-                    #         accept_step = True
-                    # if msg != 'okay': print(titers, '%e'%self.dt_yr, msg, delta_t)
-
-                    delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
-                    if self.dt_yr < params['max_timestep']:
-                        accept_step = True
+                    if self.dt_yr < params['max_timestep']: # okay on timestep
+                        if prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
+                            delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                            accept_step = True
+                        else:
+                            delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 1.5
+                            # msg = 'y1 change {:.2e} exceeds limit {:.2e}; retry'.format(prev_y1-self.y[-1], params['max_dy1'])
+                            limit = 'dy1'
                     else: # retry with smaller step
-                        print('timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep']))
+                        delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                        # msg = 'timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep'])
+                        limit = 'dt'
 
                     titers += 1
 
@@ -1226,7 +1221,7 @@ class evol:
 
             if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
                 walltime = time.time() - start_time
-                stdout_data = self.step, self.iters, self.t1, self.t10, self.teff, \
+                stdout_data = self.step, self.iters, limit, params[which_t], self.teff, \
                     self.rtot, self.dt_yr, self.age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
                 print(stdout_format.format(*stdout_data))
 
