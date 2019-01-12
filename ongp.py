@@ -213,11 +213,15 @@ class evol:
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
 
-    def static(self, params):
+    def static(self, params, guess=None):
 
-        '''build a hydrostatic model with a given total mass mtot, 1-bar temperature t1, envelope helium mass fraction yenv,
-            envelope heavy element mass fraction zenv, and heavy-element core mass mcore. returns the number of iterations taken before
-            convergence, or -1 for failure to converge.'''
+        '''
+        build a single hydrostatic model.
+        the crucial independent variables are total mass, core mass, y1 and z1 (maybe y2 & z2 also),
+        and either t1 or t10.
+        can pass an ongp.evol instance to guess to use its current structure as a starting point for
+        hydro iterations.
+        '''
 
         if type(params['mtot']) is str:
             if params['mtot'][0] == 'j':
@@ -244,16 +248,6 @@ class evol:
         atm_type, atm_planet = self.evol_params['atm_option'].split() # e.g., 'f11_tables u'
         if 'teq' in params.keys():
             self.teq = params['teq']
-        # else:
-            # use a default value.
-            # J is a mean of Hanel et al. 1981 and Pearl & Conrath 1991.
-            # S i'll need to check.
-            # U, N come from Pearl & Conrath 1991.
-            # self.teq = {'jup':109., 'sat':81.3, 'u':58.2, 'n':46.6}[atm_planet]
-
-            # better: don't set. in set_atm, if no self.teq, then instead of calculating
-            # teff from teff^4 = tint^4 + teq^4, just get teff directly from model
-            # atmospheres.
 
         if atm_type == 'f11_tables':
             import f11_atm; reload(f11_atm)
@@ -268,9 +262,9 @@ class evol:
         else:
             raise ValueError('atm_type %s not recognized.' % atm_type)
 
-        if 'yenv' in params.keys():
+        if 'yenv' in list(params):
             params['y1'] = params.pop('yenv')
-        if 'zenv' in params.keys():
+        if 'zenv' in list(params):
             params['z1'] = params.pop('zenv')
 
         self.z1 = params['z1']
@@ -310,7 +304,7 @@ class evol:
         # initialize lagrangian mesh.
         if not 'mcore' in params.keys(): params['mcore'] = 0.
         mcore = params['mcore']
-        assert mcore * const.mearth < self.mtot, 'core mass must be (well) less than total mass.'
+        assert mcore * const.mearth < self.mtot, 'core mass must be less than total mass.'
         if mcore > 0.:
             t = np.linspace(0, 1, self.nz - 1)
             if self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
@@ -330,11 +324,8 @@ class evol:
         self.mcore = mcore
         self.dm = np.diff(self.m)
 
-        self.grada = np.zeros_like(self.m)
-
-        # first guess, values chosen just so that densities will be calculable
-        self.p[:] = 1e12
-        self.t[:] = 1e4
+        if not 'transition_pressure' in params.keys():
+            params['transition_pressure'] = 1.
 
         # set initial composition information. for now, envelope is homogeneous
         self.y[:] = 0.
@@ -344,27 +335,7 @@ class evol:
         assert self.z1 >= 0., 'got negative z1 %g' % self.z1
         self.z[self.kcore:] = self.z1
 
-        if not 'transition_pressure' in params.keys():
-            params['transition_pressure'] = 1.
-
         self.iters = 0
-
-        # get density everywhere based on primitive guesses
-        self.set_core_density()
-        self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
-
-        self.integrate_continuity() # rho, dm -> r
-        self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
-        self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
-
-        # now that we have pressure, try and locate transition pressure
-        self.locate_transition_pressure()
-        # set y2 and z2 if applicable
-        self.set_yz()
-
-        # recalculate densities based on possibly three-layer y, z
-        self.set_core_density()
-        self.set_envelope_density()
 
         # these used to be defined after iterations were completed, but they are needed for calculation
         # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
@@ -377,7 +348,39 @@ class evol:
 
         # helium rain bookkeeping
         self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass
-        self.k_shell_top = 0 # until a shell is found by equilibrium_y_profile
+        self.k_shell_top = None # until a shell is found by equilibrium_y_profile
+
+        if not guess:
+            self.grada = np.zeros_like(self.m)
+            # first guess, values chosen just so that densities will be calculable
+            self.p[:] = 1e12
+            self.t[:] = 1e4
+
+            # get density everywhere based on primitive guesses
+            self.set_core_density()
+            self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
+
+            self.integrate_continuity() # rho, dm -> r
+            self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
+            self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
+
+            # now that we have pressure, try and locate transition pressure
+            self.locate_transition_pressure()
+            # set y2 and z2 if applicable
+            self.set_yz()
+
+            # recalculate densities based on possibly three-layer y, z
+            self.set_core_density()
+            self.set_envelope_density()
+
+        else:
+            # use a starting guess that should be a lot closer. almost no difference in practice.
+            self.grada = np.copy(guess.grada)
+            self.p = np.copy(guess.p)
+            self.t = np.copy(guess.t)
+            self.rho = np.copy(guess.rho)
+            self.r = np.copy(guess.r)
+            del(guess)
 
         # relax to hydrostatic
         last_three_radii = 0, 0, 0
@@ -411,22 +414,39 @@ class evol:
             last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
 
         else:
-            return -1
+            raise ConvergenceError('{} exceeded max iterations {}'.format(iteration, self.evol_params['max_iters_static']))
 
         if params['verbose']: print('converged homogeneous model after %i iterations.' % self.iters)
+        if not hasattr(self, 'k_gradient_bottom'):
+            self.k_gradient_bottom = -1
 
-        if hasattr(self, 'phase'): # repeat hydro iterations, now including the phase diagram calculation (if modeling helium rain)
+        # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
+        if hasattr(self, 'phase'):
             last_three_radii = 0, 0, 0
             for iteration in range(self.evol_params['max_iters_static']):
                 self.iters_immiscibility = iteration + 1
 
                 self.integrate_hydrostatic()
+                self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
                 self.integrate_temperature() # sets grada for the last time
+
+                # this was after rrho if statement
+                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                            verbosity=params['rainout_verbosity'],
+                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
+                            ptrans=params['transition_pressure'])
+                if np.any(np.diff(self.y) < 0):
+                    self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1]
+                    self.k_gradient_bot = np.where(np.diff(self.y) < 0)[0][0]
+                else:
+                    self.k_gradient_top = None
+                    self.k_gradient_bot = None
 
                 if 'rrho_where_have_helium_gradient' in params.keys() and self.have_rainout:
                     # allow helium gradient regions to have superadiabatic temperature stratification.
-                    # this is new here -- copied from below where we'd ordinarily only compute this after we have a converged model.
-                    # might cost some time because of the additional eos calls.
+                    # this is new here -- copied from below where we'd ordinarily only compute this
+                    # after we have a converged model.
+                    # will cost some time because of the additional eos calls.
 
                     # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
                     # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1
@@ -434,21 +454,40 @@ class evol:
                     self.chit[self.kcore:] = res['chit']
                     self.chirho[self.kcore:] = res['chirho']
                     self.chiy[self.kcore:] = res['chiy']
-                    self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
-                    self.grady[self.k_shell_top+1] = 0.
-                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
-                    # self.brunt_b[self.k_shell_top + 1] = 0.
 
-                    assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
+                    self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+                    if self.k_shell_top:
+                        self.grady[self.k_shell_top+1] = 0. # ignore discontinuous step up to Y=0.95
+                    # more general way of doing it treats the similar discontinuity that exists
+                    # even before there is a a Y=0.95 shell.
+                    k_gradient_bottom = np.where(np.diff(self.y[self.kcore:]) / self.y[self.kcore:-1] < -0.1)[0]
+                    if np.any(k_gradient_bottom):
+                        if len(k_gradient_bottom) > 1:
+                            raise ValueError('more than one zone with dlny < -0.1')
+                        self.k_gradient_bottom = k_gradient_bottom[0] + self.kcore
+                        self.grady[self.k_gradient_bottom + 1] = 0.
+
+                    # self.grady = self.smooth(self.grady, 50)
+                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
+                    if self.k_shell_top:
+                        assert self.k_gradient_bot
+                        assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
+                        assert np.all(self.brunt_b[self.kcore+1:self.k_gradient_bot+1] == 0) # he shell itself should be uniform
 
                     self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
 
                     self.integrate_temperature(adiabatic=False)
 
-                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
-                            verbosity=params['rainout_verbosity'],
-                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
-                            ptrans=params['transition_pressure'])
+                # self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                #             verbosity=params['rainout_verbosity'],
+                #             minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
+                #             ptrans=params['transition_pressure'])
+                # if np.any(np.diff(self.y) < 0):
+                #     self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1]
+                #     self.k_gradient_bot = np.where(np.diff(self.y) < 0)[0][0]
+                # else:
+                #     self.k_gradient_top = None
+                #     self.k_gradient_bot = None
 
                 self.set_core_density()
                 self.set_envelope_density()
@@ -461,38 +500,26 @@ class evol:
                     with open('output/found_infinite_radius.dat', 'w') as f:
                         f.write('%12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r'))
                         for k in range(self.nz):
-                            in_core = k < self.kcore
-                            f.write('%12s %12g %12g %12g %12g %12g\n' % (in_core, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
+                            f.write('%12s %12g %12g %12g %12g %12g\n' % (k < self.kcore, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
                     print('saved output/found_infinite_radius.dat')
                     raise RuntimeError('found infinite total radius')
                 last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
+                # include a similar check on y1?
             else:
-                return -1
-
-            # if verbose: print('converged with new Y profile after %i iterations.' % self.iters_immiscibility)
+                raise ConvergenceError()
 
         # finalize hydrostatic profiles (maybe not necessary since we just did 20 iterations)
-        self.integrate_hydrostatic()
-        self.set_core_density()
-        self.set_envelope_density()
+        # self.integrate_hydrostatic()
+        # self.set_core_density()
+        # self.set_envelope_density()
 
         # finally, calculate lots of auxiliary quantities of interest
         self.rtot = self.r[-1]
-
         self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
         self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
-        # try:
-            # self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
-        # except:
-            # pass
         self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
 
-        return self.rtot, self.t[-1], self.teff
-
-
-
-
-
+        return
 
     # these implement the analytic p(rho) relations for "rock" and "ice" mixtures from Hubbard & Marley 1989
     def p_of_rho_hm89_rock(self, rho):
@@ -520,7 +547,9 @@ class evol:
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
+        # k1 = self.ktrans
         k1 = np.where(p > ptrans)[0][-1]
+        # assert k1 == self.ktrans, 'k1 {}, self.ktrans {}, ptrans {}'.format(k1, self.ktrans, ptrans)
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -534,7 +563,6 @@ class evol:
 
         get_xp = lambda yp: 1. / (1. + 4. * (1. - yp) / yp)
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
-
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
 
         if verbosity > 0: print('rainout iteration {}'.format(self.iters_immiscibility))
@@ -556,14 +584,13 @@ class evol:
 
         self.ystart = np.copy(self.y)
         yout = np.copy(self.y)
-        yout[k1:] = get_y(self.z[k1], get_yp(xplo)) # homogeneous molecular envelope at this abundance
+        yout[k1+1:] = get_y(self.z[k1], get_yp(xplo)) # homogeneous molecular envelope at this abundance
         if verbosity > 0: print('demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], 'env', self.y[k1], '-->', yout[k1])
 
         t0 = time.time()
         rainout_to_core = False
 
-        self.k_gradient_top = k1
-        for k in np.arange(k1-1, self.kcore, -1): # inward from first point where p > ptrans
+        for k in np.arange(k1, self.kcore, -1): # inward from first point where p > ptrans
             t1 = time.time()
             # note that phase_t_offset is applied here; phase diagram simply sees different temperature
             xplo, xphi = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
@@ -582,7 +609,7 @@ class evol:
                 raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
             if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
 
-            self.k_shell_top = 0
+            self.k_shell_top = None
             ystart = yout[k]
             yout[k] = ymax
 
@@ -644,7 +671,8 @@ class evol:
         if verbosity > 0: print()
 
         self.nz_gradient = len(np.where(np.diff(yout) < 0)[0])
-        self.nz_shell = max(0, self.k_shell_top - self.kcore)
+        if self.k_shell_top:
+            self.nz_shell = max(0, self.k_shell_top - self.kcore)
 
         return yout
 
@@ -1137,10 +1165,10 @@ class evol:
 
         previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 'limit', which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
+        stdout_columns = 'step', 'iters', 'retr', 'limit', which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
         start_time = time.time()
-        header_format = '{:>6s} {:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
-        stdout_format = '{:>6n} {:>6n} {:>6s} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
+        header_format = '{:>6s} {:>6s} {:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
+        stdout_format = '{:>6n} {:>6n} {:>6n} {:>6s} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
         print(header_format.format(*stdout_columns))
 
         # the evolve loop
@@ -1148,23 +1176,28 @@ class evol:
         self.age_gyr = 0
         self.dt_yr = 0
         self.status = 'okay'
-        delta_t = 2 # nominal temperature step in K, can scale as we go
+        delta_t = 5 # nominal temperature step in K, can scale as we go
         prev_y1 = -1
         done = False
-        limit = 'ok'
+        limit = ''
         while not done:
 
             params[which_t] = start_t
             other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
             params.pop(other_t, None)
 
-            self.static(params) # pass the full evolve params; many won't be used
+            if self.step > 0:
+                guess = self
+            else:
+                guess = None
+
+            self.static(params, guess) # pass the full evolve params; many won't be used
             # normally we also catch AtmError (end gracefully with done=True) and raise others
 
+            retries = 0
             if self.step > 0:
                 accept_step = False
-                titers = 0
-                limit = 'ok'
+                limit = ''
                 while not accept_step:
                     params[which_t] = previous_t - delta_t
                     other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
@@ -1183,7 +1216,7 @@ class evol:
                     luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
                     self.dt_yr = dt / const.secyear
                     if self.dt_yr < 0:
-                        self.status = EnergyError('got negative timestep %f for step %i' % (dt, self.step))
+                        self.status = EnergyError('got negative timestep {:.2e} for step {:n}'.format(dt, self.step))
                         done = True
                         break
 
@@ -1192,15 +1225,23 @@ class evol:
                             delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
                             accept_step = True
                         else:
-                            delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 1.5
+                            delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
                             # msg = 'y1 change {:.2e} exceeds limit {:.2e}; retry'.format(prev_y1-self.y[-1], params['max_dy1'])
                             limit = 'dy1'
                     else: # retry with smaller step
                         delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
-                        # msg = 'timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep'])
+                        # print('timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep']))
                         limit = 'dt'
 
-                    titers += 1
+                    retries += 1
+                    if retries == 10:
+                        self.status = ConvergenceError('reached max number of retries for evolve step')
+
+                # these are normally set in equilibrium_y_profile, but recalculate here in case
+                # self.y has changed since that routine was called. this can happen if a candidate
+                # static model saw rainout, but then evolve did a retry and subsequently found none.
+                self.nz_gradient = len(np.where(np.diff(self.y) < 0)[0])
+                # self.nz_shell = max(0, self.k_shell_top - self.kcore)
 
                 self.age_gyr += self.dt_yr * 1e-9
                 self.delta_s = delta_s # erg K^-1 g^-1
@@ -1217,11 +1258,12 @@ class evol:
 
             if self.status != 'okay':
                 print('stopping:', self.status)
+                print('y1 {}'.format(self.y[-1]))
                 break
 
             if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
                 walltime = time.time() - start_time
-                stdout_data = self.step, self.iters, limit, params[which_t], self.teff, \
+                stdout_data = self.step, self.iters, retries, limit, params[which_t], self.teff, \
                     self.rtot, self.dt_yr, self.age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
                 print(stdout_format.format(*stdout_data))
 
@@ -1257,7 +1299,9 @@ class evol:
                 'status': self.status,
                 'kcore':self.kcore,
                 'ktrans':self.ktrans,
-                'k_shell_top':self.k_shell_top
+                'k_shell_top':self.k_shell_top,
+                'k_gradient_bot':self.k_gradient_bot,
+                'k_gradient_top':self.k_gradient_top
                 }
 
             if not hasattr(self, 'history'):
@@ -1314,7 +1358,7 @@ class evol:
             pickle.dump(profile, f, 0) # 0 means dump as text
         print('wrote profile data to {}{}.profile'.format(prefix, step))
 
-    def smooth(self, array, std, type='flat'):
+    def smooth(self, array, std):
         '''
         moving gaussian filter to smooth an array.
         wrote this to artificially smooth brunt composition term for seismology diagnostic purposes.
@@ -1324,7 +1368,7 @@ class evol:
         weights = gaussian(width, std=std)
         res = np.zeros_like(array)
         for k in np.arange(len(array)):
-            window = array[k-width/2:k+width/2]
+            window = array[k-int(width/2):k+int(width/2)]
             try:
                 res[k] = np.dot(weights, window) / np.sum(weights)
             except:
@@ -1463,4 +1507,7 @@ class EnergyError(Exception):
     pass
 
 class UnphysicalParameterError(Exception):
+    pass
+
+class ConvergenceError(Exception):
     pass
