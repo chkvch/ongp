@@ -418,7 +418,7 @@ class evol:
 
         if params['verbose']: print('converged homogeneous model after %i iterations.' % self.iters)
         if not hasattr(self, 'k_gradient_bottom'):
-            self.k_gradient_bottom = -1
+            self.k_gradient_bot = -1
 
         # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
         if hasattr(self, 'phase'):
@@ -464,8 +464,8 @@ class evol:
                     if np.any(k_gradient_bottom):
                         if len(k_gradient_bottom) > 1:
                             raise ValueError('more than one zone with dlny < -0.1')
-                        self.k_gradient_bottom = k_gradient_bottom[0] + self.kcore
-                        self.grady[self.k_gradient_bottom + 1] = 0.
+                        self.k_gradient_bot = k_gradient_bottom[0] + self.kcore
+                        self.grady[self.k_gradient_bot + 1] = 0.
 
                     # self.grady = self.smooth(self.grady, 50)
                     self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
@@ -507,7 +507,9 @@ class evol:
                 # include a similar check on y1?
             else:
                 raise ConvergenceError()
-
+        else:
+            self.k_gradient_top = None
+            self.k_gradient_bot = None
         # finalize hydrostatic profiles (maybe not necessary since we just did 20 iterations)
         # self.integrate_hydrostatic()
         # self.set_core_density()
@@ -740,7 +742,10 @@ class evol:
             # this call to get grada is slow.
             # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
             # relies so heavily on interpolation in the hhe eos.
-            self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+            try:
+                self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+            except ValueError:
+                raise EOSError('failed in eos call for grada')
             self.grada_check_nans()
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
             if brute_force_loop:
@@ -1165,10 +1170,16 @@ class evol:
 
         previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 'retr', 'limit', which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', 'nz_grady', 'nz_shell', 'y1', 'et_s'
+        stdout_columns = 'step', 'iters', 'retr', 'limit', \
+            which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', \
+            'nz_grady', 'nz_shell', 'k_trans', 'k_grady', 'k_shell', 'y1', 'et_s'
         start_time = time.time()
-        header_format = '{:>6s} {:>6s} {:>6s} {:>6s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s}'
-        stdout_format = '{:>6n} {:>6n} {:>6n} {:>6s} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
+        header_format = '{:>6s} {:>6s} {:>6s} {:>6s} '
+        header_format += '{:>10s} {:>10s} {:>10s} {:>10s} {:>10s} '
+        header_format += '{:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s} '
+        stdout_format = '{:>6n} {:>6n} {:>6n} {:>6s} '
+        stdout_format += '{:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} '
+        stdout_format += '{:>10n} {:>10n} {:>10n} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
         print(header_format.format(*stdout_columns))
 
         # the evolve loop
@@ -1191,11 +1202,15 @@ class evol:
             else:
                 guess = None
 
-            self.static(params, guess) # pass the full evolve params; many won't be used
-            # normally we also catch AtmError (end gracefully with done=True) and raise others
+            try:
+                self.static(params, guess) # pass the full evolve params; many won't be used
+            except EOSError as e:
+                self.status = e
+            except AtmError as e:
+                self.status = e
 
             retries = 0
-            if self.step > 0:
+            if self.step > 0 and self.status is 'okay':
                 accept_step = False
                 limit = ''
                 while not accept_step:
@@ -1203,8 +1218,11 @@ class evol:
                     other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
                     params.pop(other_t, None)
 
-                    self.static(params) # pass the full evolve params; many won't be used, but shouldn't cause any problems
-                    # normally we also catch AtmError (end gracefully with done=True) and raise others
+                    try:
+                        self.static(params) # pass the full evolve params; many won't be used, but shouldn't cause any problems
+                    except Exception as e:
+                        self.status = e
+                        break # exit retry loop
 
                     delta_s = self.entropy - previous_entropy
                     delta_s *= const.kb / const.mp # now erg K^-1 g^-1
@@ -1215,27 +1233,43 @@ class evol:
                     eps_grav = -1. * self.t * delta_s / dt
                     luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
                     self.dt_yr = dt / const.secyear
-                    if self.dt_yr < 0:
-                        self.status = EnergyError('got negative timestep {:.2e} for step {:n}'.format(dt, self.step))
-                        done = True
-                        break
+                    # if self.dt_yr < 0:
+                    #     self.status = EnergyError('got negative timestep {:.2e} for step {:n}'.format(dt, self.step))
+                    #     done = True
+                    #     break
 
-                    if self.dt_yr < params['max_timestep']: # okay on timestep
+                    if self.dt_yr < 0: # this tends to happen if he shell top has not moved.
+                        # try larger step.
+                        delta_t *= 1.5
+                        msg = 'got dt<0; retry (timestep {:e}, delta_t {}, k_shell {})'.format(self.dt_yr, delta_t, self.k_shell_top)
+                        limit = 'dt<0'
+                        retries += 1
+                    elif self.dt_yr < params['max_timestep']: # okay on timestep
                         if prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
                             delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                            msg = 'ok'
                             accept_step = True
                         else:
-                            delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
-                            # msg = 'y1 change {:.2e} exceeds limit {:.2e}; retry'.format(prev_y1-self.y[-1], params['max_dy1'])
+                            if retries < 3:
+                                delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
+                            else:
+                                delta_t *= 0.5
+                            kshell = self.k_shell_top
+                            msg = 'y1 change {:.2e} exceeds limit {:.2e}; retry (timestep {:e}, delta_t {}, k_shell {})'.format(prev_y1-self.y[-1], params['max_dy1'], self.dt_yr, delta_t, self.k_shell_top)
                             limit = 'dy1'
+                            retries += 1
                     else: # retry with smaller step
                         delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
-                        # print('timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep']))
+                        msg = 'timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep'])
                         limit = 'dt'
+                        retries += 1
 
-                    retries += 1
+                    # if self.step > 0:
+                        # print(msg + ' (retries {})'.format(retries))
+
                     if retries == 10:
                         self.status = ConvergenceError('reached max number of retries for evolve step')
+                        break # exit retry loop
 
                 # these are normally set in equilibrium_y_profile, but recalculate here in case
                 # self.y has changed since that routine was called. this can happen if a candidate
@@ -1254,18 +1288,25 @@ class evol:
                     if not hasattr(self, 'profiles'): self.profiles = {}
                     assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
                     self.profiles[self.step] = self.get_profile()
+            self.walltime = time.time() - start_time
             self.append_history()
 
-            if self.status != 'okay':
+            if self.status != 'okay': limit = 'fail'
+
+            # realtime output
+            k_grady = self.k_gradient_top if self.k_gradient_top else -1
+            k_shell = self.k_shell_top if self.k_shell_top else -1
+            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
+                stdout_data = self.step, self.iters, retries, limit, \
+                    params[which_t], self.teff, self.rtot, self.dt_yr, self.age_gyr, \
+                    self.nz_gradient, self.nz_shell, self.ktrans, k_grady, k_shell, \
+                    self.y[-1], self.walltime
+                print(stdout_format.format(*stdout_data))
+
+            if self.status != 'okay': # stop gracefully and print reason
                 print('stopping:', self.status)
                 print('y1 {}'.format(self.y[-1]))
-                break
-
-            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
-                walltime = time.time() - start_time
-                stdout_data = self.step, self.iters, retries, limit, params[which_t], self.teff, \
-                    self.rtot, self.dt_yr, self.age_gyr, self.nz_gradient, self.nz_shell, self.y[-1], walltime
-                print(stdout_format.format(*stdout_data))
+                break # from top-level evolve loop
 
             # catch stopping condition
             if params[which_t] < end_t:
@@ -1301,7 +1342,8 @@ class evol:
                 'ktrans':self.ktrans,
                 'k_shell_top':self.k_shell_top,
                 'k_gradient_bot':self.k_gradient_bot,
-                'k_gradient_top':self.k_gradient_top
+                'k_gradient_top':self.k_gradient_top,
+                'walltime':self.walltime
                 }
 
             if not hasattr(self, 'history'):
