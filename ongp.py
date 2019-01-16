@@ -327,30 +327,31 @@ class evol:
         if not 'transition_pressure' in params.keys():
             params['transition_pressure'] = 1.
 
-        # set initial composition information. for now, envelope is homogeneous
-        self.y[:] = 0.
-        self.y[self.kcore:] = self.y1
-
-        self.z[:self.kcore] = 1.
-        assert self.z1 >= 0., 'got negative z1 %g' % self.z1
-        self.z[self.kcore:] = self.z1
-
         self.iters = 0
 
-        # these used to be defined after iterations were completed, but they are needed for calculation
-        # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
-        self.gradt = np.zeros_like(self.p)
-        self.brunt_b = np.zeros_like(self.p)
-        self.chirho = np.zeros_like(self.p)
-        self.chit = np.zeros_like(self.p)
-        self.chiy = np.zeros_like(self.p)
-        self.grady = np.zeros_like(self.p)
-
-        # helium rain bookkeeping
-        self.mhe = np.dot(self.y[1:], self.dm) # initial total he mass
-        self.k_shell_top = None # until a shell is found by equilibrium_y_profile
-
         if not guess:
+            # set initial composition information. for now, envelope is homogeneous
+            self.y[:] = 0.
+            self.y[self.kcore:] = self.y1
+
+            self.z[:self.kcore] = 1.
+            assert self.z1 >= 0., 'got negative z1 %g' % self.z1
+            self.z[self.kcore:] = self.z1
+
+
+            # these used to be defined after iterations were completed, but they are needed for calculation
+            # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
+            self.gradt = np.zeros_like(self.p)
+            self.brunt_b = np.zeros_like(self.p)
+            self.chirho = np.zeros_like(self.p)
+            self.chit = np.zeros_like(self.p)
+            self.chiy = np.zeros_like(self.p)
+            self.grady = np.zeros_like(self.p)
+
+            # helium rain bookkeeping
+            self.mhe = np.dot(self.y[:-1], self.dm) # initial total he mass
+            self.k_shell_top = None # until a shell is found by equilibrium_y_profile
+
             self.grada = np.zeros_like(self.m)
             # first guess, values chosen just so that densities will be calculable
             self.p[:] = 1e12
@@ -375,11 +376,8 @@ class evol:
 
         else:
             # use a starting guess that should be a lot closer. almost no difference in practice.
-            self.grada = np.copy(guess.grada)
-            self.p = np.copy(guess.p)
-            self.t = np.copy(guess.t)
-            self.rho = np.copy(guess.rho)
-            self.r = np.copy(guess.r)
+            for name in 'grada', 'p', 't', 'rho', 'r', 'y', 'z', 'gradt', 'brunt_b', 'chirho', 'chit', 'chiy', 'grady', 'mhe':
+                setattr(self, name, np.copy(getattr(guess, name)))
             del(guess)
 
         # relax to hydrostatic
@@ -1264,8 +1262,9 @@ class evol:
                         limit = 'dt'
                         retries += 1
 
-                    # if self.step > 0:
-                        # print(msg + ' (retries {})'.format(retries))
+                    if self.step > 0 and 'debug_retries' in list(params):
+                        if params['debug_retries']:
+                            print(msg + ' (retries {})'.format(retries))
 
                     if retries == 10:
                         self.status = ConvergenceError('reached max number of retries for evolve step')
@@ -1332,6 +1331,7 @@ class evol:
                 't10': self.t10,
                 'teff': self.teff,
                 'y1': self.y[-1],
+                'mhe':self.mhe,
                 'nz_gradient': self.nz_gradient,
                 'nz_shell': self.nz_shell,
                 'mz_env': self.mz_env,
