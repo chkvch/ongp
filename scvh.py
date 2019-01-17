@@ -77,11 +77,11 @@ class eos:
         self.get_h = {}
         self.get_he = {}
         for name in list(self.h_names):
-            # self.get_h[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_data_rect[name])
-            self.get_h[name] = rbs(self.logpvals, self.logtvals, self.h_data_rect[name])
+            self.get_h[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_data_rect[name])
+            # self.get_h[name] = rbs(self.logpvals, self.logtvals, self.h_data_rect[name])
         for name in list(self.he_names):
-            # self.get_he[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_data_rect[name])
-            self.get_he[name] = rbs(self.logpvals, self.logtvals, self.he_data_rect[name])
+            self.get_he[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_data_rect[name])
+            # self.get_he[name] = rbs(self.logpvals, self.logtvals, self.he_data_rect[name])
 
     def load(self):
         '''
@@ -401,32 +401,32 @@ class eos:
             return d_dlogp, d_dlogt
 
         res_h = {}
-        res_h['xh2'] = self.get_h['xh2'](*pair, grid=False)
-        res_h['xh'] = self.get_h['xh'](*pair, grid=False)
+        res_h['xh2'] = self.get_h['xh2'](pair)
+        res_h['xh'] = self.get_h['xh'](pair)
         res_h['xhe'] = np.zeros_like(pair[0])
         res_h['xhep'] = np.zeros_like(pair[0])
-        res_h['logrho'] = self.get_h['logrho'](*pair, grid=False)
-        res_h['logs'] = self.get_h['logs'](*pair, grid=False)
-        res_h['logu'] = self.get_h['logu'](*pair, grid=False)
-        res_h['rhot'] = self.get_h['rhot'](*pair, grid=False)
-        res_h['rhop'] = self.get_h['rhop'](*pair, grid=False)
-        res_h['st'] = self.get_h['st'](*pair, grid=False)
-        res_h['sp'] = self.get_h['sp'](*pair, grid=False)
-        res_h['grada'] = self.get_h['grada'](*pair, grid=False)
+        res_h['logrho'] = self.get_h['logrho'](pair)
+        res_h['logs'] = self.get_h['logs'](pair)
+        res_h['logu'] = self.get_h['logu'](pair)
+        res_h['rhot'] = self.get_h['rhot'](pair)
+        res_h['rhop'] = self.get_h['rhop'](pair)
+        res_h['st'] = self.get_h['st'](pair)
+        res_h['sp'] = self.get_h['sp'](pair)
+        res_h['grada'] = self.get_h['grada'](pair)
 
         res_he = {}
         res_he['xh2'] = np.zeros_like(pair[0])
         res_he['xh'] = np.zeros_like(pair[0])
-        res_he['xhe'] = self.get_he['xhe'](*pair, grid=False)
-        res_he['xhep'] = self.get_he['xhep'](*pair, grid=False)
-        res_he['logrho'] = self.get_he['logrho'](*pair, grid=False)
-        res_he['logs'] = self.get_he['logs'](*pair, grid=False)
-        res_he['logu'] = self.get_he['logu'](*pair, grid=False)
-        res_he['rhot'] = self.get_he['rhot'](*pair, grid=False)
-        res_he['rhop'] = self.get_he['rhop'](*pair, grid=False)
-        res_he['st'] = self.get_he['st'](*pair, grid=False)
-        res_he['sp'] = self.get_he['sp'](*pair, grid=False)
-        res_he['grada'] = self.get_he['grada'](*pair, grid=False)
+        res_he['xhe'] = self.get_he['xhe'](pair)
+        res_he['xhep'] = self.get_he['xhep'](pair)
+        res_he['logrho'] = self.get_he['logrho'](pair)
+        res_he['logs'] = self.get_he['logs'](pair)
+        res_he['logu'] = self.get_he['logu'](pair)
+        res_he['rhot'] = self.get_he['rhot'](pair)
+        res_he['rhop'] = self.get_he['rhop'](pair)
+        res_he['st'] = self.get_he['st'](pair)
+        res_he['sp'] = self.get_he['sp'](pair)
+        res_he['grada'] = self.get_he['grada'](pair)
 
         # assert not np.any(np.isnan(res_h['xh2'])), 'got nan in h eos call within overall P-T limits. probably off the original tables.'
         # assert not np.any(np.isnan(res_he['xhe'])), 'got nan in he eos call within overall P-T limits. probably off the original tables.'

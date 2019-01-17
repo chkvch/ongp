@@ -46,34 +46,34 @@ class eos:
     def get_logs_h(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False)
     def get_sp_h(self, lgp, lgt):
-        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dx=1, grid=False)
     def get_st_h(self, lgp, lgt):
-        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
     # def get_rhop_h(self, lgp, lgt):
-    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1)
     # def get_rhot_h(self, lgp, lgt):
-    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dy=1)
     # rho_t and rho_p from MH13 tables are presenting some difficulties, e.g., rhot_h changes sign in the neighborhood of
     # 1 Mbar in a Jupiter adiabat. instead get rhot_h and rhop_h from the scvh tables below. only really enters
     # the calculation of brunt_B.
 
     # methods for getting pure helium quantities by interpolating in scvh
     def get_logrho_he(self, lgp, lgt):
-        return self.he_eos.get_he['logrho'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['logrho']((lgp, lgt))
     def get_logs_he(self, lgp, lgt):
-        return self.he_eos.get_he['logs'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['logs']((lgp, lgt))
     def get_sp_he(self, lgp, lgt):
-        return self.he_eos.get_he['sp'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['sp']((lgp, lgt))
     def get_st_he(self, lgp, lgt):
-        return self.he_eos.get_he['st'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['st']((lgp, lgt))
     def get_rhop_he(self, lgp, lgt):
-        return self.he_eos.get_he['rhop'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['rhop']((lgp, lgt))
     def get_rhot_he(self, lgp, lgt):
-        return self.he_eos.get_he['rhot'](lgp, lgt, grid=False)
+        return self.he_eos.get_he['rhot']((lgp, lgt))
     def get_rhop_h(self, lgp, lgt):
-        return self.he_eos.get_h['rhop'](lgp, lgt, grid=False)
+        return self.he_eos.get_h['rhop']((lgp, lgt))
     def get_rhot_h(self, lgp, lgt):
-        return self.he_eos.get_h['rhot'](lgp, lgt, grid=False)
+        return self.he_eos.get_h['rhot']((lgp, lgt))
 
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
