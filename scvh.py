@@ -37,9 +37,6 @@ class eos:
         else:
             self.load()
 
-        self.h_names.remove('logp')
-        self.he_names.remove('logp')
-
         # set up reasonable rectangular grid in logP for the purposes of modelling Jupiter and Saturn-mass planets.
         # points not in the original tables will just return nans.
         self.logpvals = np.union1d(self.h_data[2.1]['logp'], self.h_data[5.06]['logp'])
@@ -63,23 +60,29 @@ class eos:
                 return 0
 
         for name in list(self.h_names):
+            if name == 'logp': continue
             self.h_data_rect[name] = np.zeros(basis_shape)
         for name in list(self.he_names):
+            if name == 'logp': continue
             self.he_data_rect[name] = np.zeros(basis_shape)
 
         for ip, logp in enumerate(self.logpvals):
             for it, logt in enumerate(self.logtvals):
                 for name in list(self.h_names):
+                    if name == 'logp': continue
                     self.h_data_rect[name][ip, it] = value_on_node('h', name, logp, logt)
                 for name in list(self.he_names):
+                    if name == 'logp': continue
                     self.he_data_rect[name][ip, it] = value_on_node('he', name, logp, logt)
 
         self.get_h = {}
         self.get_he = {}
         for name in list(self.h_names):
+            if name == 'logp': continue
             self.get_h[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_data_rect[name])
             # self.get_h[name] = rbs(self.logpvals, self.logtvals, self.h_data_rect[name])
         for name in list(self.he_names):
+            if name == 'logp': continue
             self.get_he[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_data_rect[name])
             # self.get_he[name] = rbs(self.logpvals, self.logtvals, self.he_data_rect[name])
 
@@ -161,8 +164,10 @@ class eos:
 
         with open('{}.pkl'.format(self.path_to_h_data), 'wb') as f:
             pickle.dump(self.h_data, f)
+            print('wrote cache to {}.pkl'.format(self.path_to_h_data))
         with open('{}.pkl'.format(self.path_to_he_data), 'wb') as f:
             pickle.dump(self.he_data, f)
+            print('wrote cache to {}.pkl'.format(self.path_to_he_data))
 
     # these wrapper functions are the ones meant to be called externally.
     def get(self, logp, logt, y):

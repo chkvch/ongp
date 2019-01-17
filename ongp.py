@@ -425,11 +425,10 @@ class evol:
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
                 self.integrate_temperature() # sets grada for the last time
 
-                # this was after rrho if statement
+                # this was originally after rrho if statement
                 self.y = self.equilibrium_y_profile(params['phase_t_offset'],
                             verbosity=params['rainout_verbosity'],
-                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
-                            ptrans=params['transition_pressure'])
+                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
                 if np.any(np.diff(self.y) < 0):
                     self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1] + 1
                     self.k_gradient_bot = np.where(np.diff(self.y) < 0)[0][0]
@@ -472,17 +471,6 @@ class evol:
                     self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
 
                     self.integrate_temperature(adiabatic=False)
-
-                # self.y = self.equilibrium_y_profile(params['phase_t_offset'],
-                #             verbosity=params['rainout_verbosity'],
-                #             minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
-                #             ptrans=params['transition_pressure'])
-                # if np.any(np.diff(self.y) < 0):
-                #     self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1]
-                #     self.k_gradient_bot = np.where(np.diff(self.y) < 0)[0][0]
-                # else:
-                #     self.k_gradient_top = None
-                #     self.k_gradient_bot = None
 
                 self.set_core_density()
                 self.set_envelope_density()
@@ -539,12 +527,13 @@ class evol:
         assert res['success'], 'failed root find in get_rhoz_hm89_ice'
         return res.x
 
-    def equilibrium_y_profile(self, phase_t_offset, verbosity=0, show_timing=False, minimum_y_is_envelope_y=False, ptrans=None):
+    def equilibrium_y_profile(self, phase_t_offset, verbosity=0, show_timing=False, minimum_y_is_envelope_y=False):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
         k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
+        ptrans = self.static_params['transition_pressure']
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -574,7 +563,7 @@ class evol:
         elif type(xplo) is np.float64:
             ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
             if self.y[k1] < ymax1:
-                if verbosity > 0: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing. t_offset=%f K, y=%1.4f, ymax=%1.4f\n' % (ptrans, phase_t_offset,  self.y[k1], ymax1))
+                if verbosity > 0: print('first zone with p>ptrans={:.1f} Mbar is stable to demixing. dt={:n} y={:.4f} ymax={:.4f}\n'.format(ptrans, phase_t_offset,  self.y[k1], ymax1))
                 return self.y
 
         self.ystart = np.copy(self.y)
@@ -615,8 +604,9 @@ class evol:
             # difference between initial he mass and current proposed he mass above and including this zone
             # must be deposited into the deeper interior.
             he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
-            enclosed_envelope_mass = np.sum(self.dm[self.kcore:k])
+            enclosed_envelope_mass = np.sum(self.dm[self.kcore:k-1]) # was previously :k
             if not enclosed_envelope_mass > 0: # at core boundary
+                if verbosity > 1: print('rainout to core because gradient reaches core')
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
                 # assert this "should"
@@ -628,7 +618,7 @@ class evol:
                 # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
                 # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
                 # the global helium mass.
-                if verbosity > 1: print('would need Y > 1 in inner homog region; rainout to core.')
+                if verbosity > 1: print('rainout to core because would need Y > 1 in inner homog region')
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
                 # assert this "should"
@@ -639,8 +629,6 @@ class evol:
                 # all good; uniformly distribute all helium that has rained out from above into deeper interior
                 if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
                 yout[self.kcore:k] = y_interior
-
-
 
         if verbosity > 0: print('rainout to core %s' % rainout_to_core)
         if show_timing: print('t0 + %f seconds' % (time.time() - t0))
@@ -735,7 +723,7 @@ class evol:
             try:
                 self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             except ValueError:
-                raise EOSError('failed in eos call for grada')
+                raise EOSError('failed in eos call for grada. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
             self.grada_check_nans()
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
             if brute_force_loop:
@@ -903,12 +891,12 @@ class evol:
                 self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10)
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError as e:
-            if self.z2:
-                print('z2, z1 = ', self.z2, self.z1)
-            else:
-                print('z1 = ', self.z1)
             if 'f(a) and f(b) must have different signs' in e.args[0]:
-                raise AtmError('atm.get_tint failed to bracket solution for root find. g=%g, t10=%g' % (self.surface_g*1e-2, self.t10))
+                if hasattr(self, 'teq'):
+                    fname = 'atm_get_tint'
+                else:
+                    fname = 'atm_get_tint_teff'
+                raise AtmError('%s failed to bracket solution for root find. g=%g, t10=%g' % (fname, self.surface_g*1e-2, self.t10))
             else:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
 
@@ -1177,7 +1165,7 @@ class evol:
         self.age_gyr = 0
         self.dt_yr = 0
         self.status = 'okay'
-        delta_t = 5 # nominal temperature step in K, can scale as we go
+        delta_t = params['initial_delta_t'] # nominal temperature step in K, can scale as we go
         prev_y1 = -1
         done = False
         limit = ''
@@ -1190,14 +1178,17 @@ class evol:
             if self.step > 0:
                 guess = self
             else:
-                guess = None
+                try:
+                    self.static(params) # pass the full evolve params; many won't be used
+                except EOSError as e:
+                    raise
+                    self.status = e
+                except AtmError as e:
+                    self.status = e
 
-            try:
-                self.static(params, guess) # pass the full evolve params; many won't be used
-            except EOSError as e:
-                self.status = e
-            except AtmError as e:
-                self.status = e
+                if self.status != 'okay':
+                    print('failed in initial model:', self.status)
+                    break
 
             retries = 0
             if self.step > 0 and self.status is 'okay':
@@ -1206,29 +1197,33 @@ class evol:
                 while not accept_step:
                     params[which_t] = previous_t - delta_t
                     other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
-                    params.pop(other_t, None)
+                    params.pop(other_t, None) # so that static doesn't get passed both t1 and t10
+
+                    # print('trying t=', params[which_t])
 
                     try:
-                        self.static(params) # pass the full evolve params; many won't be used, but shouldn't cause any problems
+                        self.static(params, None) # pass the full evolve params; many won't be used
+                        delta_s = self.entropy - previous_entropy
+                        delta_s *= const.kb / const.mp # now erg K^-1 g^-1
+                        int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
+                        dt = -1. * int_tdsdm / self.lint
+                        # now that have timestep based on total intrinsic luminosity,
+                        # calculate eps_grav to see distribution of energy generation
+                        eps_grav = -1. * self.t * delta_s / dt
+                        luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
+                        self.dt_yr = dt / const.secyear
+                    except EOSError as e:
+                        self.status = e
+                        break
+                    except AtmError as e:
+                        if 'failed to bracket' in e.args[0]: # probably off tables
+                            self.status = e
+                            break # exit retry loop
                     except Exception as e:
                         self.status = e
                         break # exit retry loop
 
-                    delta_s = self.entropy - previous_entropy
-                    delta_s *= const.kb / const.mp # now erg K^-1 g^-1
-                    int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
-                    dt = -1. * int_tdsdm / self.lint
-                    # now that have timestep based on total intrinsic luminosity,
-                    # calculate eps_grav to see distribution of energy generation
-                    eps_grav = -1. * self.t * delta_s / dt
-                    luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
-                    self.dt_yr = dt / const.secyear
-                    # if self.dt_yr < 0:
-                    #     self.status = EnergyError('got negative timestep {:.2e} for step {:n}'.format(dt, self.step))
-                    #     done = True
-                    #     break
-
-                    if self.dt_yr < 0: # this tends to happen if he shell top has not moved.
+                    if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
                         # try larger step.
                         delta_t *= 1.5
                         msg = 'got dt<0; retry (timestep {:e}, delta_t {}, k_shell {})'.format(self.dt_yr, delta_t, self.k_shell_top)
@@ -1236,27 +1231,36 @@ class evol:
                         retries += 1
                     elif self.dt_yr < params['max_timestep']: # okay on timestep
                         if prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
-                            delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
-                            msg = 'ok'
+                            f = (params['target_timestep'] / self.dt_yr) ** 0.5
+                            if f > params['max_delta_t_div_t']:
+                                f = params['max_delta_t_div_t']
+                                msg = 'max increase'
+                                limit = 'maxinc'
+                            else:
+                                msg = 'ok'
+                            delta_t *= f
                             accept_step = True
-                        else:
-                            if retries < 3:
+                        else: # dy1 too large
+                            if retries < 2:
                                 delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
                             else:
                                 delta_t *= 0.5
                             kshell = self.k_shell_top
-                            msg = 'y1 change {:.2e} exceeds limit {:.2e}; retry (timestep {:e}, delta_t {}, k_shell {})'.format(prev_y1-self.y[-1], params['max_dy1'], self.dt_yr, delta_t, self.k_shell_top)
+                            msg = 'y1 change {:.2e} exceeds limit {:.2e}'.format(prev_y1-self.y[-1], params['max_dy1'])
                             limit = 'dy1'
                             retries += 1
                     else: # retry with smaller step
-                        delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
-                        msg = 'timestep {:e} exceeds limit {:e}; retry'.format(self.dt_yr, params['max_timestep'])
+                        if retries < 2:
+                            delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                        else:
+                            delta_t *= 0.5
+                        msg = 'timestep {:e} exceeds limit {:e}'.format(self.dt_yr, params['max_timestep'])
                         limit = 'dt'
                         retries += 1
 
                     if self.step > 0 and 'debug_retries' in list(params):
                         if params['debug_retries']:
-                            print(msg + ' (retries {})'.format(retries))
+                            print(msg + ' (retries {}, delta_t {})'.format(retries, delta_t))
 
                     if retries == 10:
                         self.status = ConvergenceError('reached max number of retries for evolve step')
@@ -1296,8 +1300,7 @@ class evol:
                 print(stdout_format.format(*stdout_data))
 
             if self.status != 'okay': # stop gracefully and print reason
-                print('stopping:', self.status)
-                print('y1 {}'.format(self.y[-1]))
+                print('stopping:', self.status, 'y1={}'.format(self.y[-1]))
                 break # from top-level evolve loop
 
             # catch stopping condition

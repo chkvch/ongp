@@ -33,7 +33,7 @@ class hhe_phase_diagram:
             raise NotImplementedError('extrapolate_to_low_pressure not implemented in lorenzen')
 
         if not path_to_data:
-            path_to_data = 'data'
+            path_to_data = '/Users/chris/ongp/data'
 
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         data = np.genfromtxt('{}/demixHHe_Lorenzen.dat'.format(path_to_data), names=self.columns)
