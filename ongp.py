@@ -48,7 +48,7 @@ class evol:
                 self.z_eos = reos_water.eos(params['path_to_data'])
                 self.z_eos_low_t = aneos.eos(params['path_to_data'], 'water')
             elif 'aneos' in params['z_eos_option']:
-                material = z_eos_option.split()[1]
+                material = params['z_eos_option'].split()[1]
                 self.z_eos = aneos.eos(params['path_to_data'], material)
                 self.z_eos_low_t = None
             else:
@@ -99,9 +99,6 @@ class evol:
         # overwrite with any passed by user
         for key, value in mesh_params.items():
             self.mesh_params[key] = value
-
-        self.have_rainout = False # until proven guilty
-        self.have_rainout_to_core = False
 
         self.nz_gradient = 0
         self.nz_shell = 0
@@ -422,7 +419,7 @@ class evol:
         if hasattr(self, 'phase'):
             last_three_radii = 0, 0, 0
             for iteration in range(self.evol_params['max_iters_static']):
-                self.iters_immiscibility = iteration + 1
+                self.iters_rain = iteration + 1
 
                 self.integrate_hydrostatic()
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
@@ -434,13 +431,13 @@ class evol:
                             minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'],
                             ptrans=params['transition_pressure'])
                 if np.any(np.diff(self.y) < 0):
-                    self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1]
+                    self.k_gradient_top = np.where(np.diff(self.y) < 0)[0][-1] + 1
                     self.k_gradient_bot = np.where(np.diff(self.y) < 0)[0][0]
                 else:
                     self.k_gradient_top = None
                     self.k_gradient_bot = None
 
-                if 'rrho_where_have_helium_gradient' in params.keys() and self.have_rainout:
+                if 'rrho_where_have_helium_gradient' in params.keys() and self.nz_gradient > 0:
                     # allow helium gradient regions to have superadiabatic temperature stratification.
                     # this is new here -- copied from below where we'd ordinarily only compute this
                     # after we have a converged model.
@@ -547,9 +544,7 @@ class evol:
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
-        # k1 = self.ktrans
-        k1 = np.where(p > ptrans)[0][-1]
-        # assert k1 == self.ktrans, 'k1 {}, self.ktrans {}, ptrans {}'.format(k1, self.ktrans, ptrans)
+        k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -565,7 +560,7 @@ class evol:
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
 
-        if verbosity > 0: print('rainout iteration {}'.format(self.iters_immiscibility))
+        if verbosity > 0: print('rainout iteration {}'.format(self.iters_rain))
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
@@ -590,6 +585,8 @@ class evol:
         t0 = time.time()
         rainout_to_core = False
 
+        self.k_shell_top = None
+
         for k in np.arange(k1, self.kcore, -1): # inward from first point where p > ptrans
             t1 = time.time()
             # note that phase_t_offset is applied here; phase diagram simply sees different temperature
@@ -609,7 +606,6 @@ class evol:
                 raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
             if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
 
-            self.k_shell_top = None
             ystart = yout[k]
             yout[k] = ymax
 
@@ -665,14 +661,10 @@ class evol:
                     self.k_shell_top = k
                     break
 
-        self.have_rainout = self.nz_gradient > 0
-        self.have_rainout_to_core = rainout_to_core
         if rainout_to_core: assert self.k_shell_top
         if verbosity > 0: print()
 
         self.nz_gradient = len(np.where(np.diff(yout) < 0)[0])
-        if self.k_shell_top:
-            self.nz_shell = max(0, self.k_shell_top - self.kcore)
 
         return yout
 
@@ -1274,7 +1266,8 @@ class evol:
                 # self.y has changed since that routine was called. this can happen if a candidate
                 # static model saw rainout, but then evolve did a retry and subsequently found none.
                 self.nz_gradient = len(np.where(np.diff(self.y) < 0)[0])
-                # self.nz_shell = max(0, self.k_shell_top - self.kcore)
+                k_shell = self.k_shell_top if self.k_shell_top else -1
+                self.nz_shell = max(0, k_shell - self.kcore)
 
                 self.age_gyr += self.dt_yr * 1e-9
                 self.delta_s = delta_s # erg K^-1 g^-1
@@ -1396,9 +1389,9 @@ class evol:
 
     def dump_profile(self, prefix):
         assert type(prefix) is str, 'output_prefix needs to be a string.'
-        with open('{}{}.profile' % (prefix, step), 'w') as f:
-            pickle.dump(profile, f, 0) # 0 means dump as text
-        print('wrote profile data to {}{}.profile'.format(prefix, step))
+        with open('{}{}.profile' % (prefix, self.step), 'w') as f:
+            pickle.dump(self.get_profile(), f, 0) # 0 means dump as text
+        print('wrote profile data to {}{}.profile'.format(prefix, self.step))
 
     def smooth(self, array, std):
         '''

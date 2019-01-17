@@ -59,21 +59,21 @@ class eos:
 
     # methods for getting pure helium quantities by interpolating in scvh
     def get_logrho_he(self, lgp, lgt):
-        return self.he_eos.get_he_logrho((lgp, lgt))
+        return self.he_eos.get_he['logrho']((lgp, lgt))
     def get_logs_he(self, lgp, lgt):
-        return self.he_eos.get_he_logs((lgp, lgt))
+        return self.he_eos.get_he['logs']((lgp, lgt))
     def get_sp_he(self, lgp, lgt):
-        return self.he_eos.get_he_sp((lgp, lgt))
+        return self.he_eos.get_he['sp']((lgp, lgt))
     def get_st_he(self, lgp, lgt):
-        return self.he_eos.get_he_st((lgp, lgt))
+        return self.he_eos.get_he['st']((lgp, lgt))
     def get_rhop_he(self, lgp, lgt):
-        return self.he_eos.get_he_rhop((lgp, lgt))
+        return self.he_eos.get_he['rhop']((lgp, lgt))
     def get_rhot_he(self, lgp, lgt):
-        return self.he_eos.get_he_rhot((lgp, lgt))
+        return self.he_eos.get_he['rhot']((lgp, lgt))
     def get_rhop_h(self, lgp, lgt):
-        return self.he_eos.get_h_rhop((lgp, lgt))
+        return self.he_eos.get_h['rhop']((lgp, lgt))
     def get_rhot_h(self, lgp, lgt):
-        return self.he_eos.get_h_rhot((lgp, lgt))
+        return self.he_eos.get_h['rhot']((lgp, lgt))
 
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):

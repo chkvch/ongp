@@ -2,85 +2,22 @@ import numpy as np
 import const
 from scipy.interpolate import RegularGridInterpolator, splrep, splev
 from scipy.optimize import brentq
-import os
-import pickle
 
 class eos:
     def __init__(self, path_to_data, fac_for_numerical_partials=1e-10):
-        '''
-        load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
+        '''load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
+        to see the dependent variables available, check the attributes eos.h_names and eos.he_names.'''
 
-        the only user-facing method you should need is eos.get.
-
-        to see all dependent variables available, check the attributes eos.h_names and eos.he_names.
-        '''
+        self.path_to_data = path_to_data
 
         self.fac_for_numerical_partials = fac_for_numerical_partials
 
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06
 
-        self.path_to_h_data = '{}/scvh_h.dat'.format(path_to_data)
-        self.path_to_he_data = '{}/scvh_he.dat'.format(path_to_data)
-
-        if os.path.exists('{}/scvh_h.dat.pkl'.format(path_to_data)) and os.path.exists('{}/scvh_he.dat.pkl'.format(path_to_data)):
-            with open('{}/scvh_h.dat.pkl'.format(path_to_data), 'rb') as f:
-                self.h_data = pickle.load(f)
-            with open('{}/scvh_he.dat.pkl'.format(path_to_data), 'rb') as f:
-                self.he_data = pickle.load(f)
-            assert list(self.h_data) == list(self.he_data)
-            self.logtvals = list(self.h_data)
-            self.h_names = list(self.h_data[self.logtvals[0]])
-            self.he_names = list(self.he_data[self.logtvals[0]])
-        else:
-            self.load()
-
-        self.h_names.remove('logp')
-        self.he_names.remove('logp')
-
-        # set up reasonable rectangular grid in logP for the purposes of modelling Jupiter and Saturn-mass planets.
-        # points not in the original tables will just return nans.
-        self.logpvals = np.union1d(self.h_data[2.1]['logp'], self.h_data[5.06]['logp'])
-        self.logpmin, self.logpmax = 5.0, 14.0 # january 17 2017: had logpmax=17 for daniel
-        self.logpvals = self.logpvals[self.logpvals >= self.logpmin]
-        self.logpvals = self.logpvals[self.logpvals <= self.logpmax]
-
-        npts_t = len(self.logtvals)
-        npts_p = len(self.logpvals)
-        basis_shape = (npts_p, npts_t)
-
-        self.h_data_rect = {}
-        self.he_data_rect = {}
-
-        def value_on_node(table, var, logp, logt):
-            d = {'h':self.h_data, 'he':self.he_data}[table]
-            match = d[logt][var][d[logt]['logp'] == logp]
-            if len(match) == 1:
-                return match[0]
-            else:
-                return np.nan
-
-        for name in list(self.h_names):
-            self.h_data_rect[name] = np.zeros(basis_shape)
-        for name in list(self.he_names):
-            self.he_data_rect[name] = np.zeros(basis_shape)
-
-        for ip, logp in enumerate(self.logpvals):
-            for it, logt in enumerate(self.logtvals):
-                for name in list(self.h_names):
-                    self.h_data_rect[name][ip, it] = value_on_node('h', name, logp, logt)
-                for name in list(self.he_names):
-                    self.he_data_rect[name][ip, it] = value_on_node('he', name, logp, logt)
-
-        self.get_h = {}
-        self.get_he = {}
-        for name in list(self.h_names):
-            self.get_h[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_data_rect[name])
-        for name in list(self.he_names):
-            self.get_he[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_data_rect[name])
-
-    def load(self):
+        path_to_h_data = '%s/scvh_h.dat' % self.path_to_data
+        path_to_he_data = '%s/scvh_he.dat' % self.path_to_data
 
         # for logt = 3.38, 3.46, 3.54, extrapolate up to logp = 11.6, 11.8, 12.0
         # on isotherms. necessary to have these points for some cold Saturn models.
@@ -91,14 +28,14 @@ class eos:
         self.h_names = 'logp', 'xh2', 'xh', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.h_data = {}
         logtvals_h = np.array([])
-        with open(self.path_to_h_data) as fr:
+        with open(path_to_h_data) as fr:
             for i, line in enumerate(fr.readlines()):
                 if len(line.split()) is 2:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
                     # _data = np.genfromtxt(path_to_h_data, skip_header=i+1, max_rows=nrows, names=self.h_names)
-                    with open(self.path_to_h_data, "rb") as f:
+                    with open(path_to_h_data, "rb") as f:
                         from itertools import islice
                         _data = np.genfromtxt(islice(f, i+1, i+nrows+1), names=self.h_names)
 
@@ -121,14 +58,14 @@ class eos:
         self.he_names = 'logp', 'xhe', 'xhep', 'logrho', 'logs', 'logu', 'rhot', 'rhop', 'st', 'sp', 'grada'
         self.he_data = {}
         logtvals_he = np.array([])
-        with open(self.path_to_he_data) as fr:
+        with open(path_to_he_data) as fr:
             for i, line in enumerate(fr.readlines()):
                 if len(line.split()) is 2:
                     logt, nrows = line.split()
                     logt = float(logt)
                     nrows = int(nrows)
                     # _data = np.genfromtxt(path_to_he_data, skip_header=i+1, max_rows=nrows, names=self.he_names)
-                    with open(self.path_to_he_data, "rb") as f:
+                    with open(path_to_he_data, "rb") as f:
                         from itertools import islice
                         _data = np.genfromtxt(islice(f, i+1, i+nrows+1), names=self.he_names)
 
@@ -148,15 +85,90 @@ class eos:
 
                     logtvals_he = np.append(logtvals_he, logt)
 
-        assert np.all(logtvals_h == logtvals_he) # verify H and He are on the same temperature grid
+        assert np.all(logtvals_h == logtvals_he) # verify H an He are on the same temperature grid
         self.logtvals = logtvals_h
 
-        with open('{}.pkl'.format(self.path_to_h_data), 'wb') as f:
-            pickle.dump(self.h_data, f)
-        with open('{}.pkl'.format(self.path_to_he_data), 'wb') as f:
-            pickle.dump(self.he_data, f)
+        # set up reasonable rectangular grid in logP for the purposes of modelling Jupiter and Saturn-mass planets.
+        # points not in the original tables will just return nans.
+        self.logpvals = np.union1d(self.h_data[2.1]['logp'], self.h_data[5.06]['logp'])
+        self.logpmin, self.logpmax = 4.0, 17. # 14.0 # january 17 2017: extend to high p for daniel
+        self.logpvals = self.logpvals[self.logpvals >= self.logpmin]
+        self.logpvals = self.logpvals[self.logpvals <= self.logpmax]
+
+        npts_t = len(self.logtvals)
+        npts_p = len(self.logpvals)
+        basis_shape = (npts_p, npts_t)
+
+        self.h_xh2 = np.zeros(basis_shape)
+        self.h_xh = np.zeros(basis_shape)
+        self.h_logrho = np.zeros(basis_shape)
+        self.h_logs = np.zeros(basis_shape)
+        self.h_logu = np.zeros(basis_shape)
+        self.h_rhot = np.zeros(basis_shape)
+        self.h_rhop = np.zeros(basis_shape)
+        self.h_st = np.zeros(basis_shape)
+        self.h_sp = np.zeros(basis_shape)
+        self.h_grada = np.zeros(basis_shape)
+
+        self.he_xhe = np.zeros(basis_shape)
+        self.he_xhep = np.zeros(basis_shape)
+        self.he_logrho = np.zeros(basis_shape)
+        self.he_logs = np.zeros(basis_shape)
+        self.he_logu = np.zeros(basis_shape)
+        self.he_rhot = np.zeros(basis_shape)
+        self.he_rhop = np.zeros(basis_shape)
+        self.he_st = np.zeros(basis_shape)
+        self.he_sp = np.zeros(basis_shape)
+        self.he_grada = np.zeros(basis_shape)
+
+        for ip, logp in enumerate(self.logpvals):
+            for it, logt in enumerate(self.logtvals):
+                self.h_xh2[ip, it] = self.get_h_on_node('xh2', logp, logt)
+                self.h_xh[ip, it] = self.get_h_on_node('xh', logp, logt)
+                self.h_logrho[ip, it] = self.get_h_on_node('logrho', logp, logt)
+                self.h_logs[ip, it] = self.get_h_on_node('logs', logp, logt)
+                self.h_logu[ip, it] = self.get_h_on_node('logu', logp, logt)
+                self.h_rhot[ip, it] = self.get_h_on_node('rhot', logp, logt)
+                self.h_rhop[ip, it] = self.get_h_on_node('rhop', logp, logt)
+                self.h_st[ip, it] = self.get_h_on_node('st', logp, logt)
+                self.h_sp[ip, it] = self.get_h_on_node('sp', logp, logt)
+                self.h_grada[ip, it] = self.get_h_on_node('grada', logp, logt)
+
+                self.he_xhe[ip, it] = self.get_he_on_node('xhe', logp, logt)
+                self.he_xhep[ip, it] = self.get_he_on_node('xhep', logp, logt)
+                self.he_logrho[ip, it] = self.get_he_on_node('logrho', logp, logt)
+                self.he_logs[ip, it] = self.get_he_on_node('logs', logp, logt)
+                self.he_logu[ip, it] = self.get_he_on_node('logu', logp, logt)
+                self.he_rhot[ip, it] = self.get_he_on_node('rhot', logp, logt)
+                self.he_rhop[ip, it] = self.get_he_on_node('rhop', logp, logt)
+                self.he_st[ip, it] = self.get_he_on_node('st', logp, logt)
+                self.he_sp[ip, it] = self.get_he_on_node('sp', logp, logt)
+                self.he_grada[ip, it] = self.get_he_on_node('grada', logp, logt)
+
+        self.get_h_xh2 = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_xh2)
+        self.get_h_xh = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_xh)
+        self.get_h_logrho = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_logrho)
+        self.get_h_logs = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_logs)
+        self.get_h_logu = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_logu)
+        self.get_h_rhot = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_rhot)
+        self.get_h_rhop = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_rhop)
+        self.get_h_st = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_st)
+        self.get_h_sp = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_sp)
+        self.get_h_grada = RegularGridInterpolator((self.logpvals, self.logtvals), self.h_grada)
+
+        self.get_he_xhe = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_xhe)
+        self.get_he_xhep = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_xhep)
+        self.get_he_logrho = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_logrho)
+        self.get_he_logs = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_logs)
+        self.get_he_logu = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_logu)
+        self.get_he_rhot = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_rhot)
+        self.get_he_rhop = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_rhop)
+        self.get_he_st = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_st)
+        self.get_he_sp = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_sp)
+        self.get_he_grada = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_grada)
 
     # these wrapper functions are the ones meant to be called externally.
+
     def get(self, logp, logt, y):
         '''return all eos results for a (logp, logt) pair at any H-He mixture.'''
         if type(logp) is np.float64 or type(logp) is float: logp = np.array([logp])
@@ -254,13 +266,70 @@ class eos:
 
         return res
 
+    def get_chiy(self, logp, logt, y):
+        """dlogrho/dlogY at const p, t"""
 
-    # aka chi_y. since it's just additive volume, it's simple analytically
+        f = self.fac_for_numerical_partials
+
+        y_lo = y * (1. - f)
+        y_hi = y * (1. + f)
+        if np.any(y_lo < 0.) or np.any(y_hi > 1.):
+            print('warning: chiy not calculable for y this close to 0 or 1. should change size of step for finite differences.')
+            return None
+
+        # logrho = self.get_logrho(logp, logt, y)
+        # logp_lo = self.rhot_get(logrho, logt, y_lo)['logp']
+        # logp_hi = self.rhot_get(logrho, logt, y_hi)['logp']
+
+        # return (logp_hi - logp_lo) / 2. / f
+
+        logrho_lo = self.get_logrho(logp, logt, y_lo)
+        logrho_hi = self.get_logrho(logp, logt, y_hi)
+        return (logrho_hi  - logrho_lo) / 2. / f
+
+
+
+    # def get_dlogrho_dlogy_numerical(self, logp, logt, y, f=fac_for_numerical_partials):
+    #     y_lo = y * (1. - f)
+    #     y_hi = y * (1. + f)
+    #     if np.any(y_lo <= 0.) or np.any(y_hi >= 1.):
+    #         print 'warning: dlogrho_dlogy not calculable for y this close to 0 or 1. should change size of step for finite differences.'
+    #         return None
+    #
+    #     logrho_y_lo = self.get_logrho(logp, logt, y_lo)
+    #     logrho_y_hi = self.get_logrho(logp, logt, y_hi)
+    #
+    #     return (logrho_y_hi - logrho_y_lo) / (np.log10(y_hi) - np.log10(y_lo))
+
+    # actually, no need to do this numerically -- since it's just additive volume, it's simple analytically
     def get_dlogrho_dlogy(self, logp, logt, y):
         rho = 10 ** self.get_logrho(logp, logt, y)
-        rho_h = 10 ** self.get_h['logrho']((logp, logt))
-        rho_he = 10 ** self.get_he['logrho']((logp, logt))
+        rho_h = 10 ** self.get_h_logrho((logp, logt))
+        rho_he = 10 ** self.get_he_logrho((logp, logt))
         return -1. * rho * y * (1. / rho_he - 1. / rho_h)
+
+
+    # rest of these are only meant to be called internally
+
+    def get_h_on_node(self, qty, logp, logt):
+        '''return quantity `qty' at a single (logp, logt) pair *on* the hydrogen grid.
+        qty is a string corresponding to any one of the dependent variables, e.g., 'logs'.'''
+        data_for_this_logt = self.h_data[logt]
+        try:
+            # return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            return data_for_this_logt[qty][data_for_this_logt['logp'] == logp][0]
+        except IndexError: # off tables
+            return np.nan
+
+    def get_he_on_node(self, qty, logp, logt):
+        '''return quantity `qty' at a single (logp, logt) pair *on* the helium grid.
+        qty is a string corresponding to any one of the dependent variables, e.g., 'logs'.'''
+        data_for_this_logt = self.he_data[logt]
+        try:
+            # return data_for_this_logt[data_for_this_logt['logp'] == logp][qty][0]
+            return data_for_this_logt[qty][data_for_this_logt['logp'] == logp][0]
+        except IndexError: # off tables
+            return np.nan
 
     def get_hhe(self, pair, y):
         '''combines the results of the hydrogen and helium equations of state for an arbitrary
@@ -357,25 +426,25 @@ class eos:
 
             pair_p_plus = logp * (1. + f), logt
             pair_p_minus = logp * (1. - f), logt
-            xh2_p_plus = self.get_h['xh2'](pair_p_plus)
-            xh2_p_minus = self.get_h['xh2'](pair_p_minus)
-            xh_p_plus = self.get_h['xh'](pair_p_plus)
-            xh_p_minus = self.get_h['xh'](pair_p_minus)
-            xhe_p_plus = self.get_he['xhe'](pair_p_plus)
-            xhe_p_minus = self.get_he['xhe'](pair_p_minus)
-            xhep_p_plus = self.get_he['xhep'](pair_p_plus)
-            xhep_p_minus = self.get_he['xhep'](pair_p_minus)
+            xh2_p_plus = self.get_h_xh2(pair_p_plus)
+            xh2_p_minus = self.get_h_xh2(pair_p_minus)
+            xh_p_plus = self.get_h_xh(pair_p_plus)
+            xh_p_minus = self.get_h_xh(pair_p_minus)
+            xhe_p_plus = self.get_he_xhe(pair_p_plus)
+            xhe_p_minus = self.get_he_xhe(pair_p_minus)
+            xhep_p_plus = self.get_he_xhep(pair_p_plus)
+            xhep_p_minus = self.get_he_xhep(pair_p_minus)
 
             pair_t_plus = logp, logt * (1. + f)
             pair_t_minus = logp, logt * (1. - f)
-            xh2_t_plus = self.get_h['xh2'](pair_t_plus)
-            xh2_t_minus = self.get_h['xh2'](pair_t_minus)
-            xh_t_plus = self.get_h['xh'](pair_t_plus)
-            xh_t_minus = self.get_h['xh'](pair_t_minus)
-            xhe_t_plus = self.get_he['xhe'](pair_t_plus)
-            xhe_t_minus = self.get_he['xhe'](pair_t_minus)
-            xhep_t_plus = self.get_he['xhep'](pair_t_plus)
-            xhep_t_minus = self.get_he['xhep'](pair_t_minus)
+            xh2_t_plus = self.get_h_xh2(pair_t_plus)
+            xh2_t_minus = self.get_h_xh2(pair_t_minus)
+            xh_t_plus = self.get_h_xh(pair_t_plus)
+            xh_t_minus = self.get_h_xh(pair_t_minus)
+            xhe_t_plus = self.get_he_xhe(pair_t_plus)
+            xhe_t_minus = self.get_he_xhe(pair_t_minus)
+            xhep_t_plus = self.get_he_xhep(pair_t_plus)
+            xhep_t_minus = self.get_he_xhep(pair_t_minus)
 
             dxh2_dlogp = (xh2_p_plus - xh2_p_minus) / (2. * f)
             dxh_dlogp = (xh_p_plus - xh_p_minus) / (2. * f)
@@ -393,32 +462,32 @@ class eos:
             return d_dlogp, d_dlogt
 
         res_h = {}
-        res_h['xh2'] = self.get_h['xh2'](pair)
-        res_h['xh'] = self.get_h['xh'](pair)
+        res_h['xh2'] = self.get_h_xh2(pair)
+        res_h['xh'] = self.get_h_xh(pair)
         res_h['xhe'] = np.zeros_like(pair[0])
         res_h['xhep'] = np.zeros_like(pair[0])
-        res_h['logrho'] = self.get_h['logrho'](pair)
-        res_h['logs'] = self.get_h['logs'](pair)
-        res_h['logu'] = self.get_h['logu'](pair)
-        res_h['rhot'] = self.get_h['rhot'](pair)
-        res_h['rhop'] = self.get_h['rhop'](pair)
-        res_h['st'] = self.get_h['st'](pair)
-        res_h['sp'] = self.get_h['sp'](pair)
-        res_h['grada'] = self.get_h['grada'](pair)
+        res_h['logrho'] = self.get_h_logrho(pair)
+        res_h['logs'] = self.get_h_logs(pair)
+        res_h['logu'] = self.get_h_logu(pair)
+        res_h['rhot'] = self.get_h_rhot(pair)
+        res_h['rhop'] = self.get_h_rhop(pair)
+        res_h['st'] = self.get_h_st(pair)
+        res_h['sp'] = self.get_h_sp(pair)
+        res_h['grada'] = self.get_h_grada(pair)
 
         res_he = {}
         res_he['xh2'] = np.zeros_like(pair[0])
         res_he['xh'] = np.zeros_like(pair[0])
-        res_he['xhe'] = self.get_he['xhe'](pair)
-        res_he['xhep'] = self.get_he['xhep'](pair)
-        res_he['logrho'] = self.get_he['logrho'](pair)
-        res_he['logs'] = self.get_he['logs'](pair)
-        res_he['logu'] = self.get_he['logu'](pair)
-        res_he['rhot'] = self.get_he['rhot'](pair)
-        res_he['rhop'] = self.get_he['rhop'](pair)
-        res_he['st'] = self.get_he['st'](pair)
-        res_he['sp'] = self.get_he['sp'](pair)
-        res_he['grada'] = self.get_he['grada'](pair)
+        res_he['xhe'] = self.get_he_xhe(pair)
+        res_he['xhep'] = self.get_he_xhep(pair)
+        res_he['logrho'] = self.get_he_logrho(pair)
+        res_he['logs'] = self.get_he_logs(pair)
+        res_he['logu'] = self.get_he_logu(pair)
+        res_he['rhot'] = self.get_he_rhot(pair)
+        res_he['rhop'] = self.get_he_rhop(pair)
+        res_he['st'] = self.get_he_st(pair)
+        res_he['sp'] = self.get_he_sp(pair)
+        res_he['grada'] = self.get_he_grada(pair)
 
         # assert not np.any(np.isnan(res_h['xh2'])), 'got nan in h eos call within overall P-T limits. probably off the original tables.'
         # assert not np.any(np.isnan(res_he['xhe'])), 'got nan in he eos call within overall P-T limits. probably off the original tables.'
