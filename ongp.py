@@ -465,8 +465,8 @@ class evol:
                     self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
                     if self.k_shell_top:
                         assert self.k_gradient_bot
-                        assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
-                        assert np.all(self.brunt_b[self.kcore+1:self.k_gradient_bot+1] == 0) # he shell itself should be uniform
+                        # assert np.all(self.brunt_b[self.kcore+1:self.k_shell_top+1] == 0) # he shell itself should be uniform
+                        # assert np.all(self.brunt_b[self.kcore+1:self.k_gradient_bot+1] == 0) # he shell itself should be uniform
 
                     self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
 
@@ -553,14 +553,15 @@ class evol:
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
-        xplo, xphi = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
-        if type(xplo) is str:
-            if xplo == 'stable':
+        gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+        if type(gap) is str:
+            if gap == 'stable':
                 if verbosity > 0: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing\n' % (ptrans))
                 return self.y
-            elif xplo == 'failed':
+            elif gap == 'failed':
                 raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.1f, t = %.1f, t-t_offset=%.1f' % (p[k1], self.t[k1], self.t[k1] - phase_t_offset))
-        elif type(xplo) is np.float64:
+        elif type(gap) is tuple:
+            xplo, xphi = gap
             ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
             if self.y[k1] < ymax1:
                 if verbosity > 0: print('first zone with p>ptrans={:.1f} Mbar is stable to demixing. dt={:n} y={:.4f} ymax={:.4f}\n'.format(ptrans, phase_t_offset,  self.y[k1], ymax1))
@@ -579,14 +580,15 @@ class evol:
         for k in np.arange(k1, self.kcore, -1): # inward from first point where p > ptrans
             t1 = time.time()
             # note that phase_t_offset is applied here; phase diagram simply sees different temperature
-            xplo, xphi = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-            if type(xplo) is str:
-                if xplo == 'stable':
+            gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
+            if type(gap) is str:
+                if gap == 'stable':
                     if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k])
                     break
-                elif xplo == 'failed':
+                elif gap == 'failed':
                     raise ValueError('failed to get miscibility gap in initial loop over zones. p, t = %f Mbar, %f K' % (p[k], self.t[k]))
-            elif type(xplo) is np.float64:
+            elif type(gap) is tuple:
+                xplo, xphi = gap
                 ymax = get_y(self.z[k], get_yp(xplo))
                 if yout[k] < ymax:
                     if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax)
@@ -608,9 +610,10 @@ class evol:
             if not enclosed_envelope_mass > 0: # at core boundary
                 if verbosity > 1: print('rainout to core because gradient reaches core')
                 rainout_to_core = True
-                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-                # assert this "should"
-                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: gradient reaches core'
+                yout[self.kcore:k] = 0.
+                # double-check that we have overall "missing" helium, to be made up for in
+                # outward shell iterations
+                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe
                 kbot = k
                 break
             y_interior = he_mass_missing_above / enclosed_envelope_mass
@@ -620,9 +623,10 @@ class evol:
                 # the global helium mass.
                 if verbosity > 1: print('rainout to core because would need Y > 1 in inner homog region')
                 rainout_to_core = True
-                yout[self.kcore:k] = 0.95 # since this is < 1., should still have an overall 'missing' helium mass in envelope, to be made up during outward shell iterations.
-                # assert this "should"
-                # assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe, 'problem: proposed envelope already has mhe > mhe_initial, even before he shell iterations. case: y_interior = %f > 1. kcore=%i, k=%i' % (y_interior, self.kcore, k)
+                yout[self.kcore:k] = 0.
+                # double-check that we have overall "missing" helium, to be made up for in
+                # outward shell iterations
+                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe
                 kbot = k
                 break
             else:
@@ -637,8 +641,21 @@ class evol:
             # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.
             # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
             if verbosity > 1: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
-            for k in np.arange(kbot, self.nz):
-                yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
+            for k in np.arange(self.kcore, self.nz):
+            # for k in np.arange(kbot, self.nz):
+                # yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
+
+                # gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
+                gap = self.phase.miscibility_gap(p[k], 8.)
+                if type(gap) is str:
+                    assert xphi == 'stable'
+                    assert xplo == 'stable'
+                    if verbosity > 1: print('warmer than critical temperature at k={} p={:.4f} t-dt={:.1f}'.format(k, p[k], t[k] - phase_t_offset*1e-3))
+                    yout[k] = -1
+                elif type(gap) is tuple:
+                    xplo, xphi = gap
+                    yout[k] = get_y(self.z[k], get_yp(xphi))
+
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                 if verbosity > 1: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
                 if tentative_total_he_mass >= self.mhe:
@@ -1220,12 +1237,13 @@ class evol:
                             self.status = e
                             break # exit retry loop
                     except Exception as e:
+                        raise
                         self.status = e
                         break # exit retry loop
 
                     if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
                         # try larger step.
-                        delta_t *= 1.5
+                        delta_t *= np.sqrt(5.)
                         msg = 'got dt<0; retry (timestep {:e}, delta_t {}, k_shell {})'.format(self.dt_yr, delta_t, self.k_shell_top)
                         limit = 'dt<0'
                         retries += 1
