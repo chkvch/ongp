@@ -104,8 +104,10 @@ class hhe_phase_diagram:
         (ylo, yhi): helium mass fractions of helium-poor and helium-rich phases
         '''
         if p < min(self.pvals):
+            return 'failed'
             raise ValueError('p value {} outside bounds for phase diagram'.format(p))
         elif p > max(self.pvals):
+            return 'failed'
             raise ValueError('p value {} outside bounds for phase diagram'.format(p))
 
         plo = self.pvals[self.pvals < p][-1]
@@ -114,7 +116,7 @@ class hhe_phase_diagram:
         assert p < phi
 
         if t > self.tcrit[plo] or t > self.tcrit[phi]:
-            return 'stable', 'stable'
+            return 'stable'
 
         dz = 1e-3
         # for abundance in helium-poor phase, search between dz and z(tcrit)
@@ -125,7 +127,7 @@ class hhe_phase_diagram:
             zlo_phi = brentq(lambda z: self.splinet(phi, z) - t, dz, self.zcrit[phi])
             zhi_phi = brentq(lambda z: self.splinet(phi, z) - t, self.zcrit[phi], 1 - dz)
         except ValueError:
-            return 'failed', 'failed'
+            return 'failed'
 
         xlo_plo = self.splinex(plo, zlo_plo)
         xhi_plo = self.splinex(plo, zhi_plo)
