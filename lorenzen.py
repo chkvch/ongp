@@ -104,8 +104,10 @@ class hhe_phase_diagram:
         (ylo, yhi): helium mass fractions of helium-poor and helium-rich phases
         '''
         if p < min(self.pvals):
+            return 'failed'
             raise ValueError('p value {} outside bounds for phase diagram'.format(p))
         elif p > max(self.pvals):
+            return 'failed'
             raise ValueError('p value {} outside bounds for phase diagram'.format(p))
 
         plo = self.pvals[self.pvals < p][-1]

@@ -20,7 +20,7 @@ log.setLevel(conf.log_level)
 
 class evol:
 
-    def __init__(self, params, **mesh_params):
+    def __init__(self, params, mesh_params):
 
         if not 'path_to_data' in params.keys():
             raise ValueError('must specify path_to_data indicating path to eos/atm data')
@@ -78,8 +78,9 @@ class evol:
         self.evol_params = {
             'nz':1024,
             'radius_rtol':1e-5,
-            'max_iters_static':500,
-            'min_iters_static':12
+            'max_iters_static':50,
+            'min_iters_static':3,
+            'max_iters_static_before_rain':8
         }
         # overwrite with any passed by user
         for key, value in params.items():
@@ -93,8 +94,8 @@ class evol:
             'amplitude_surface_mesh_boost':1e5,
             'width_surface_mesh_boost':1e-2,
             'amplitude_core_mesh_boost':1e1,
-            'width_core_mesh_boost':1e-2,
-            'fmean_core_bdy_mesh_boost':2e-1
+            'width_core_mesh_boost':1e-1,
+            'fmean_core_bdy_mesh_boost':3e-1
             }
         # overwrite with any passed by user
         for key, value in mesh_params.items():
@@ -377,6 +378,10 @@ class evol:
                 setattr(self, name, np.copy(getattr(guess, name)))
             del(guess)
 
+        if 'debug_iterations' in params.keys():
+            if params['debug_iterations']:
+                t0 = time.time()
+
         # relax to hydrostatic
         last_three_radii = 0, 0, 0
         for iteration in range(self.evol_params['max_iters_static']):
@@ -396,12 +401,20 @@ class evol:
 
             if 'debug_iterations' in params.keys():
                 if params['debug_iterations']:
-                    print('iter=', self.iters, 'rtot=%g'%self.r[-1])
+                    et = time.time() - t0
+                    print('iter {:>2n}, rtot {:.5e}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.r[-1], self.ktrans, et*1e3))
+
+            # if going to repeat hydro iterations with rainout calculation, quit early even if
+            # radius is still changing, because iterations with rainout will take care of it
+            if hasattr(self, 'phase') and iteration >= self.evol_params['max_iters_static_before_rain']:
+                last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
+                break
 
             # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
             # radius_rtol over both of the last two iterations.
             if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                 if iteration >= self.evol_params['min_iters_static']:
+                    last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
                     break
             if not np.isfinite(self.r[-1]):
                 raise HydroError('found infinite total radius.')
@@ -417,7 +430,7 @@ class evol:
 
         # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
         if hasattr(self, 'phase'):
-            last_three_radii = 0, 0, 0
+            # last_three_radii = 0, 0, 0
             for iteration in range(self.evol_params['max_iters_static']):
                 self.iters_rain = iteration + 1
 
@@ -476,6 +489,10 @@ class evol:
                 self.set_envelope_density()
                 self.integrate_continuity()
 
+                if 'debug_iterations' in params.keys():
+                    if params['debug_iterations']:
+                        et = time.time() - t0
+                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.ktrans, et*1e3))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     break
 
@@ -485,7 +502,7 @@ class evol:
                         for k in range(self.nz):
                             f.write('%12s %12g %12g %12g %12g %12g\n' % (k < self.kcore, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
                     print('saved output/found_infinite_radius.dat')
-                    raise RuntimeError('found infinite total radius')
+                    raise ValueError('found infinite total radius')
                 last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
                 # include a similar check on y1?
             else:
@@ -549,7 +566,7 @@ class evol:
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
 
-        if verbosity > 0: print('rainout iteration {}'.format(self.iters_rain))
+        if verbosity > 0: print('iters {}, iters rain {}'.format(self.iters, self.iters_rain))
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
@@ -888,6 +905,7 @@ class evol:
             tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
             self.t10 = np.float64(splev(1e7, tck))
             assert self.t1 > 0., 'bad t1 %g' % self.t1
+            assert len(self.p[self.p < 1e7]) >= 5, 'fewer than 5 zones outside of 10 bars; atm likely not accurate'
         elif self.atm_which_t == 't10':
             assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
             self.t1 = -1
@@ -913,6 +931,10 @@ class evol:
                     fname = 'atm_get_tint'
                 else:
                     fname = 'atm_get_tint_teff'
+                with open('atm_fail.dat', 'w') as f:
+                    for p, t, y in zip(self.p, self.t, self.y):
+                        f.write('{:14g} {:14g} {:14g}\n'.format(p, t, y))
+                print('wrote p,t,y to atm_fail.dat')
                 raise AtmError('%s failed to bracket solution for root find. g=%g, t10=%g' % (fname, self.surface_g*1e-2, self.t10))
             else:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
@@ -1165,15 +1187,15 @@ class evol:
 
         previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
-        stdout_columns = 'step', 'iters', 'retr', 'limit', \
+        stdout_columns = 'step', 'iters', 'iters_he', 'retr', 'limit', \
             which_t, 'teff', 'radius', 'dt_yr', 'age_gyr', \
             'nz_grady', 'nz_shell', 'k_trans', 'k_grady', 'k_shell', 'y1', 'et_s'
         start_time = time.time()
-        header_format = '{:>6s} {:>6s} {:>6s} {:>6s} '
-        header_format += '{:>10s} {:>10s} {:>10s} {:>10s} {:>10s} '
+        header_format = '{:>6s} {:>6s} {:>8s} {:>6s} {:>6s} '
+        header_format += '{:>5s} {:>10s} {:>10s} {:>10s} {:>10s} '
         header_format += '{:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s} '
-        stdout_format = '{:>6n} {:>6n} {:>6n} {:>6s} '
-        stdout_format += '{:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} '
+        stdout_format = '{:>6n} {:>6n} {:>8n} {:>6n} {:>6s} '
+        stdout_format += '{:>5.1f} {:>10.3e} {:>10.3e} {:>10.3e} {:>10.3e} '
         stdout_format += '{:>10n} {:>10n} {:>10n} {:>10n} {:>10n} {:>6.3f} {:>8.1f}'
         print(header_format.format(*stdout_columns))
 
@@ -1186,103 +1208,160 @@ class evol:
         prev_y1 = -1
         done = False
         limit = ''
+
+        params[which_t] = start_t
+        other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
+        params.pop(other_t, None)
+
+        try:
+            self.static(params) # pass the full evolve params; many won't be used
+        except EOSError as e:
+            self.status = e
+        except AtmError as e:
+            self.status = e
+
+        if self.status != 'okay':
+            print('failed in initial model:', self.status)
+            raise self.status
+
+        previous_t = start_t
+        previous_entropy = self.entropy
+
         while not done:
+            retries = 0
+            accept_step = False
+            limit = ''
+            while not accept_step:
+                params[which_t] = previous_t - delta_t
+                other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
+                params.pop(other_t, None) # so that static doesn't get passed both t1 and t10
 
-            params[which_t] = start_t
-            other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
-            params.pop(other_t, None)
+                # print('trying t=', params[which_t])
 
-            if self.step > 0:
-                guess = self
-            else:
                 try:
-                    self.static(params) # pass the full evolve params; many won't be used
+                    self.static(params, None) # pass the full evolve params; many won't be used
+                    delta_s = self.entropy - previous_entropy
+                    delta_s *= const.kb / const.mp # now erg K^-1 g^-1
+                    int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
+                    dt = -1. * int_tdsdm / self.lint
+                    # now that have timestep based on total intrinsic luminosity,
+                    # calculate eps_grav to see distribution of energy generation
+                    eps_grav = -1. * self.t * delta_s / dt
+                    luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
+                    self.dt_yr = dt / const.secyear
                 except EOSError as e:
+                    self.status = e
+                    break
+                except AtmError as e:
+                    if 'failed to bracket' in e.args[0]: # probably off tables
+                        # self.status = e
+                        # break # exit retry loop
+                        delta_t /= 3.
+                        msg = '{:>50}'.format('AtmError, try smaller timestep')
+                        limit = 'atm'
+                        retries += 1
+                        continue
+                    else:
+                        raise
+                except Exception as e:
                     raise
                     self.status = e
-                except AtmError as e:
-                    self.status = e
+                    break # exit retry loop
 
-                if self.status != 'okay':
-                    print('failed in initial model:', self.status)
-                    break
-
-            retries = 0
-            if self.step > 0 and self.status is 'okay':
-                accept_step = False
-                limit = ''
-                while not accept_step:
-                    params[which_t] = previous_t - delta_t
-                    other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
-                    params.pop(other_t, None) # so that static doesn't get passed both t1 and t10
-
-                    # print('trying t=', params[which_t])
-
-                    try:
-                        self.static(params, None) # pass the full evolve params; many won't be used
-                        delta_s = self.entropy - previous_entropy
-                        delta_s *= const.kb / const.mp # now erg K^-1 g^-1
-                        int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
-                        dt = -1. * int_tdsdm / self.lint
-                        # now that have timestep based on total intrinsic luminosity,
-                        # calculate eps_grav to see distribution of energy generation
-                        eps_grav = -1. * self.t * delta_s / dt
-                        luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
-                        self.dt_yr = dt / const.secyear
-                    except EOSError as e:
-                        self.status = e
-                        break
-                    except AtmError as e:
-                        if 'failed to bracket' in e.args[0]: # probably off tables
-                            self.status = e
-                            break # exit retry loop
-                    except Exception as e:
-                        raise
-                        self.status = e
-                        break # exit retry loop
-
-                    if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
-                        # try larger step.
+                if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
+                    # try larger step.
+                    if retries == 0:
+                        delta_t = 1.
+                    elif retries == 1:
+                        delta_t = 2.
+                    else:
                         delta_t *= np.sqrt(5.)
-                        msg = 'got dt<0; retry (timestep {:e}, delta_t {}, k_shell {})'.format(self.dt_yr, delta_t, self.k_shell_top)
-                        limit = 'dt<0'
+                    msg = '{:>50}'.format('got dt<0; retry')
+                    limit = 'dt<0'
+                    retries += 1
+                elif self.dt_yr < params['max_timestep']: # okay on timestep
+                    if prev_y1 > 0. and prev_y1 - self.y[-1] < 0: # went up in y1, try a larger timestep
+                        msg = '{:>50}'.format('dy1 increased')
+                        limit = 'dy1<0'
+                        delta_t *= 1.5
                         retries += 1
-                    elif self.dt_yr < params['max_timestep']: # okay on timestep
-                        if prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
-                            f = (params['target_timestep'] / self.dt_yr) ** 0.5
-                            if f > params['max_delta_t_div_t']:
-                                f = params['max_delta_t_div_t']
-                                msg = 'max increase'
-                                limit = 'maxinc'
-                            else:
-                                msg = 'ok'
-                            delta_t *= f
-                            accept_step = True
-                        else: # dy1 too large
-                            if retries < 2:
-                                delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
-                            else:
-                                delta_t *= 0.5
-                            kshell = self.k_shell_top
-                            msg = 'y1 change {:.2e} exceeds limit {:.2e}'.format(prev_y1-self.y[-1], params['max_dy1'])
-                            limit = 'dy1'
-                            retries += 1
-                    else: # retry with smaller step
+                    elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
+                        f = (params['target_timestep'] / self.dt_yr) ** 0.5
+                        if f > params['max_delta_t_div_t'] and self.nz_gradient <= 0:
+                            # only worry about this for homogeneous phase
+                            f = params['max_delta_t_div_t']
+                            msg = '{:>50}'.format('max increase')
+                            limit = 'maxinc'
+                        else:
+                            msg = '{:>50}'.format('ok')
+                        delta_t *= f
+                        accept_step = True
+                    else: # dy1 too large
                         if retries < 2:
-                            delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                            delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
                         else:
                             delta_t *= 0.5
-                        msg = 'timestep {:e} exceeds limit {:e}'.format(self.dt_yr, params['max_timestep'])
-                        limit = 'dt'
+                        kshell = self.k_shell_top
+                        msg = '{:>50}'.format('dy1 {:.2e} > limit {:.2e}'.format(prev_y1-self.y[-1], params['max_dy1']))
+                        limit = 'dy1'
                         retries += 1
+                else: # retry with smaller step
+                    if retries < 2:
+                        delta_t *= (params['target_timestep'] / self.dt_yr) ** 0.5
+                    else:
+                        delta_t *= 0.5
+                    msg = '{:>50}'.format('timestep {:.2e} > limit {:.2e}'.format(self.dt_yr, params['max_timestep']))
+                    limit = 'dt'
+                    retries += 1
 
-                    if self.step > 0 and 'debug_retries' in list(params):
-                        if params['debug_retries']:
-                            print(msg + ' (retries {}, delta_t {})'.format(retries, delta_t))
+                if abs(delta_t) > params['max_abs_delta_t']:
+                    limit = 'maxdt1'
+                    msg = '{:>50}'.format('delta_t {:.2f} > limit {:.2f}'.format(delta_t, params['max_abs_delta_t']))
+                    delta_t = params['max_abs_delta_t']
 
-                    if retries == 10:
-                        self.status = ConvergenceError('reached max number of retries for evolve step')
-                        break # exit retry loop
+                if self.step > 0 and 'debug_retries' in list(params):
+                    if params['debug_retries']:
+                        dy1 = prev_y1-self.y[-1] if prev_y1 > 0 else 0
+                        print(msg + ' (retries {:>2n}, delta_t {:>5.2f}, dt_yr {:>10.2e}, dy1 {:>5.3f})'.format(retries, delta_t, self.dt_yr, dy1))
+
+                if retries == 10:
+                    self.status = ConvergenceError('reached max number of retries for evolve step')
+                    break # exit retry loop
+
+            if self.status != 'okay': limit = 'fail'
+
+            if 'full_profiles' in list(params):
+                if params['full_profiles']:
+                    if not hasattr(self, 'profiles'): self.profiles = {}
+                    assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
+                    self.profiles[self.step] = self.get_profile()
+            self.walltime = time.time() - start_time
+            self.append_history()
+
+            # realtime output
+            k_grady = self.k_gradient_top if self.k_gradient_top else -1
+            k_shell = self.k_shell_top if self.k_shell_top else -1
+            iters_rain = self.iters_rain if hasattr(self, 'iters_rain') else -1
+            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
+                stdout_data = self.step, self.iters, iters_rain, retries, limit, \
+                    params[which_t], self.teff, self.rtot, self.dt_yr, self.age_gyr, \
+                    self.nz_gradient, self.nz_shell, self.ktrans, k_grady, k_shell, \
+                    self.y[-1], self.walltime
+                print(stdout_format.format(*stdout_data))
+
+            if self.status != 'okay': # stop gracefully and print reason
+                print('stopping:', self.status, 'y1={}'.format(self.y[-1]))
+                break # from top-level evolve loop
+
+            # catch stopping condition
+            if params[which_t] < end_t:
+                # took a good last step
+                done = True
+            else:
+                # took a normal good step
+                previous_entropy = self.entropy
+                previous_t = params[which_t]
+                self.step += 1
 
                 # these are normally set in equilibrium_y_profile, but recalculate here in case
                 # self.y has changed since that routine was called. this can happen if a candidate
@@ -1297,37 +1376,6 @@ class evol:
                 self.luminosity = luminosity
                 prev_y1 = self.y[-1]
 
-            if 'full_profiles' in list(params):
-                if params['full_profiles']:
-                    if not hasattr(self, 'profiles'): self.profiles = {}
-                    assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
-                    self.profiles[self.step] = self.get_profile()
-            self.walltime = time.time() - start_time
-            self.append_history()
-
-            if self.status != 'okay': limit = 'fail'
-
-            # realtime output
-            k_grady = self.k_gradient_top if self.k_gradient_top else -1
-            k_shell = self.k_shell_top if self.k_shell_top else -1
-            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
-                stdout_data = self.step, self.iters, retries, limit, \
-                    params[which_t], self.teff, self.rtot, self.dt_yr, self.age_gyr, \
-                    self.nz_gradient, self.nz_shell, self.ktrans, k_grady, k_shell, \
-                    self.y[-1], self.walltime
-                print(stdout_format.format(*stdout_data))
-
-            if self.status != 'okay': # stop gracefully and print reason
-                print('stopping:', self.status, 'y1={}'.format(self.y[-1]))
-                break # from top-level evolve loop
-
-            # catch stopping condition
-            if params[which_t] < end_t:
-                done = True
-            else:
-                previous_entropy = self.entropy
-                previous_t = params[which_t]
-                self.step += 1
 
         if 'output_prefix' in list(params):
             self.save_history(params['output_prefix'])
@@ -1370,6 +1418,7 @@ class evol:
 
     def get_profile(self):
         profile = {}
+        profile['k'] = np.arange(self.nz)
         profile['p'] = np.copy(self.p)
         profile['t'] = np.copy(self.t)
         profile['rho'] = np.copy(self.rho)
