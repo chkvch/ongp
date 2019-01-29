@@ -20,7 +20,7 @@ log.setLevel(conf.log_level)
 
 class evol:
 
-    def __init__(self, params, mesh_params):
+    def __init__(self, params, mesh_params={}):
 
         if not 'path_to_data' in params.keys():
             raise ValueError('must specify path_to_data indicating path to eos/atm data')
@@ -436,7 +436,7 @@ class evol:
 
                 self.integrate_hydrostatic()
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
-                self.integrate_temperature() # sets grada for the last time
+                self.integrate_temperature() # sets grada for the last time this rain iter
 
                 # this was originally after rrho if statement
                 self.y = self.equilibrium_y_profile(params['phase_t_offset'],
@@ -484,6 +484,11 @@ class evol:
                     self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
 
                     self.integrate_temperature(adiabatic=False)
+
+                # one more time
+                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                            verbosity=params['rainout_verbosity'],
+                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
 
                 self.set_core_density()
                 self.set_envelope_density()
@@ -1232,6 +1237,7 @@ class evol:
             accept_step = False
             limit = ''
             while not accept_step:
+                old_delta_t = delta_t
                 params[which_t] = previous_t - delta_t
                 other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
                 params.pop(other_t, None) # so that static doesn't get passed both t1 and t10
@@ -1322,7 +1328,7 @@ class evol:
                 if self.step > 0 and 'debug_retries' in list(params):
                     if params['debug_retries']:
                         dy1 = prev_y1-self.y[-1] if prev_y1 > 0 else 0
-                        print(msg + ' (retries {:>2n}, delta_t {:>5.2f}, dt_yr {:>10.2e}, dy1 {:>5.3f})'.format(retries, delta_t, self.dt_yr, dy1))
+                        print(msg + ' (retries {:>2n}, delta_t {:>5.2f}, dt_yr {:>10.2e}, dy1 {:>5.3f}, new_delta_t {:>5.2f})'.format(retries, old_delta_t, self.dt_yr, dy1, delta_t))
 
                 if retries == 10:
                     self.status = ConvergenceError('reached max number of retries for evolve step')
