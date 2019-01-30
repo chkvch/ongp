@@ -591,7 +591,43 @@ class evol:
 
         self.ystart = np.copy(self.y)
         yout = np.copy(self.y)
-        yout[k1+1:] = get_y(self.z[k1], get_yp(xplo)) # homogeneous molecular envelope at this abundance
+
+        # ymax_k1 = get_y(self.z[k1], get_yp(xplo)) # homogeneous molecular envelope at this abundance
+        # yout[k1+1:] = ymax_k1
+
+        # new: instead of molecular envelope at the same abundance as first zone with p > ptrans,
+        # set it by querying the phase diagram at *exactly* p=ptrans, with t interpolated within
+        # the current profile. should allow y1 to vary smoothly from one adiabat to the next instead
+        # of sometimes "jumping" as the exact zone where p first > ptrans moves over an evolve step.
+        #
+        # k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
+        # ptrans = self.static_params['transition_pressure']
+
+        ttrans = np.float64(splev(ptrans*1e12, splrep(self.p[k1-2:k1+2][::-1], self.t[k1-2:k1+2][::-1], k=3))) * 1e-3
+        # print(self.p[k1-2:k1+2])
+        # print(self.t[k1-2:k1+2])
+        # print(ptrans, ttrans, phase_t_offset)
+        # assert self.t[k1-1] < ttrans
+        if int(ptrans) is ptrans: ptrans += 1e-14
+        gap = self.phase.miscibility_gap(ptrans, ttrans - phase_t_offset * 1e-3)
+        assert type(gap) is tuple, 'p>ptrans demixes, but failed to interpolate ymax for p=ptrans'
+        xplo, xphi = gap
+        ymaxtrans = get_y(self.z[k1], get_yp(xplo))
+
+        # gap = self.phase.miscibility_gap(p[k1+1], t[k1+1] - phase_t_offset * 1e-3)
+        # assert type(gap) is tuple, 'p>ptrans demixes, but failed to interpolate ymax for p=ptrans'
+        # xplo, xphi = gap
+        # ymax_kp1 = get_y(self.z[k1+1], get_yp(xplo))
+        #
+        # assert self.y[k1+1] > ymax1, 'p>ptrans demixes, and got ymax(p=ptrans), but is >= current y1'
+        # print('z_k1, ztrans, z_kp1 = {}, {}, {}'.format(self.z[k1], self.z[k1], self.z[k1+1]))
+        # print('p_k1, ptrans, p_kp1 = {}, {}, {}'.format(p[k1], ptrans, p[k1+1]))
+        # print('t_k1, ttrans, t_kp1 = {}, {}, {}'.format(t[k1], ttrans, t[k1+1]))
+        # print('y_k1, ytrans, y_kp1 = {}, {}, {}'.format(ymax_k1, ymaxtrans, ymax_kp1))
+        # assert False
+
+        yout[k1+1:] = ymaxtrans # k1+1 == self.ktrans # homogeneous molecular envelope at this abundance
+
         if verbosity > 0: print('demix', k1, self.m[k1] / self.m[-1], p[k1], self.t[k1], 'env', self.y[k1], '-->', yout[k1])
 
         t0 = time.time()
