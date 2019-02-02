@@ -43,7 +43,7 @@ class evol:
         if params['z_eos_option']:
             # initialize z equation of state
             import aneos
-            import reos_water
+            import reos_water; reload(reos_water)
             if params['z_eos_option'] == 'reos water':
                 self.z_eos = reos_water.eos(params['path_to_data'])
                 self.z_eos_low_t = aneos.eos(params['path_to_data'], 'water')
@@ -354,6 +354,7 @@ class evol:
             # first guess, values chosen just so that densities will be calculable
             self.p[:] = 1e12
             self.t[:] = 1e4
+            self.ktrans = int(self.nz / 2)
 
             # get density everywhere based on primitive guesses
             self.set_core_density()
@@ -524,7 +525,10 @@ class evol:
         self.rtot = self.r[-1]
         self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
         self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
-        self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        try:
+            self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        except:
+            pass
 
         return
 
@@ -796,7 +800,19 @@ class evol:
             # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
             # relies so heavily on interpolation in the hhe eos.
             try:
-                self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                if 'switch_z_grada' in list(self.static_params):
+                    if self.static_params['switch_z_grada']:
+                        if self.z1 < 0.5 and self.z2 < 0.5:
+                            self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                        else:
+                            # get grada from z eos for kcore:ktrans
+                            assert self.z1 < 0.5
+                            self.grada[self.ktrans:] = self.hhe_eos.get_grada(np.log10(self.p[self.ktrans:]), np.log10(self.t[self.ktrans:]), self.y[self.ktrans:])
+                            self.grada[self.kcore:self.ktrans] = self.z_eos.get_grada(np.log10(self.p[self.kcore:self.ktrans]), np.log10(self.t[self.kcore:self.ktrans]))
+                    else:
+                        self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                else:
+                        self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             except ValueError:
                 raise EOSError('failed in eos call for grada. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
             self.grada_check_nans()
@@ -873,7 +889,7 @@ class evol:
             try:
                 assert self.y2 > 0, 'if you want a Y-free envelope, no need to specify y2.'
                 assert self.y2 < 1., 'set_yz got bad y %f' % self.y2
-                assert self.y2 >= self.y1, 'no y inversion allowed.'
+                # assert self.y2 >= self.y1, 'no y inversion allowed.' # e.g., Fortney+2011 U and N
             except AssertionError as e:
                 raise UnphysicalParameterError(e.args[0])
             self.y[self.kcore:self.ktrans] = self.y2
@@ -988,13 +1004,47 @@ class evol:
         # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
         self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
 
+        if self.z2: # two-layer envelope in terms of Z
+            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
+            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
+            self.mz_env = self.mz_env_outer + self.mz_env_inner
+            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
+            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+        else:
+            # Z uniform in envelope, Z=1 in core.
+            self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
+            self.mz = self.mz_env + self.mcore * const.mearth
+
+        self.bulk_z = self.mz / self.mtot
+        self.ysurf = self.y[-1]
+        self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
+
+        # axial moment of inertia if spherical, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
+        self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
+
+        self.pressure_scale_height = self.p / self.rho / self.g
+        self.mf = self.m / self.mtot
+        self.rf = self.r / self.rtot
+
+        if 'skip_extra_derivatives' in list(self.static_params):
+            if self.static_params['skip_extra_derivatives']:
+                return
+
         self.gamma1 = np.zeros_like(self.p)
         self.csound = np.zeros_like(self.p)
         self.gradt_direct = np.zeros_like(self.p)
 
         if self.kcore > 0 and self.evol_params['z_eos_option']: # compute gamma1 in core
             self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        if 'switch_z_grada' in list(self.static_params):
+            if self.static_params['switch_z_grada']:
+                assert self.z2 > 0.5
+                self.gamma1[self.kcore:self.ktrans] = self.z_eos.get_gamma1(np.log10(self.p[self.kcore:self.ktrans]), np.log10(self.t[self.kcore:self.ktrans]))
+                self.gamma1[self.ktrans:] = self.z_eos.get_gamma1(np.log10(self.p[self.ktrans:]), np.log10(self.t[self.ktrans:]))
+            else:
+                self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        else:
+            self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
         self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
 
@@ -1010,6 +1060,7 @@ class evol:
                 self.chit[:self.kcore] = self.z_eos.get_chit(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
                 self.grada[:self.kcore] = (1. - self.chirho[:self.kcore] / self.gamma1[:self.kcore]) / self.chit[:self.kcore] # e.g., Unno's equations 13.85, 13.86
             except AttributeError:
+                raise
                 print("warning: z_eos_option '%s' does not provide methods for get_chirho and get_chit." % self.evol_params['z_eos_option'])
                 print('cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.')
                 pass
@@ -1153,27 +1204,6 @@ class evol:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
-        if self.z2: # two-layer envelope in terms of Z
-            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
-            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
-            self.mz_env = self.mz_env_outer + self.mz_env_inner
-            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
-            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
-        else:
-            # Z uniform in envelope, Z=1 in core.
-            self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
-            self.mz = self.mz_env + self.mcore * const.mearth
-
-        self.bulk_z = self.mz / self.mtot
-        self.ysurf = self.y[-1]
-        self.envelope_mean_y = np.dot(self.dm[self.kcore:], self.y[self.kcore:-1]) / np.sum(self.dm[self.kcore:])
-
-        # axial moment of inertia if spherical, in units of mtot * rtot ** 2. moi of a thin spherical shell is 2 / 3 * m * r ** 2
-        self.nmoi = 2. / 3 * trapz(self.r ** 2, x=self.m) / self.mtot / self.rtot ** 2
-
-        self.pressure_scale_height = self.p / self.rho / self.g
-        self.mf = self.m / self.mtot
-        self.rf = self.r / self.rtot
 
     def set_entropy(self):
         # set entropy in envelope (ignore z contribution in envelope)
@@ -1204,12 +1234,24 @@ class evol:
         assert 'z1' in list(params), 'must specify z1.'
 
         # defaults
-        if not 'mcore' in params.keys():
+        if not 'mcore' in list(params):
             params['mcore'] = 0.
-        if not 'start_t' in params.keys():
+        if not 'start_t' in list(params):
             params['start_t'] = 2e3
-        if not 'which_t' in params.keys():
+        if not 'which_t' in list(params):
             params['which_t'] = 't1'
+        if not 'initial_delta_t' in list(params):
+            params['initial_delta_t'] = 5.
+        if not 'max_timestep' in list(params):
+            params['max_timestep'] = 2e8
+        if not 'target_timestep' in list(params):
+            params['target_timestep'] = 1e8
+        if not 'max_dy1' in list(params):
+            params['max_dy1'] = 1.5e-2
+        if not 'max_delta_t_div_t' in list(params):
+            params['max_delta_t_div_t'] = 2
+        if not 'max_abs_delta_t' in list(params):
+            params['max_abs_delta_t'] = 30.
 
         try:
             stdout_interval = params['stdout_interval']

@@ -1,146 +1,123 @@
+from scipy.interpolate import RectBivariateSpline as rbs
+import scvh
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import RegularGridInterpolator
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
+from scipy.interpolate import splrep, splev
 
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
 
 class eos:
-
     def __init__(self, path_to_data):
 
-        path = '%s/reos_water_pt.dat' % path_to_data
-
-        # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
-
-        log.debug('message')
-        self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
-        self.data = np.genfromtxt(path, names=self.names)
+        self.columns = 'logrho', 'logt', 'logp', 'logu', 'logs'
+        self.path = '{}/reos_water_pt.dat'.format(path_to_data)
+        self.data = np.genfromtxt(self.path, names=self.columns, usecols=(0, 1, 2, 3, 4))
 
         self.logpvals = np.unique(self.data['logp'])
         self.logtvals = np.unique(self.data['logt'])
 
-        self.logpmin = min(self.logpvals)
-        self.logpmax = max(self.logpvals)
-        self.logtmin = min(self.logtvals)
-        self.logtmax = max(self.logtvals)
-
-        self.nptsp = len(self.logpvals)
-        self.nptst = len(self.logtvals)
-
-        self.logrho_on_pt = np.zeros((self.nptsp, self.nptst))
-        self.logu_on_pt = np.zeros((self.nptsp, self.nptst))
-        self.logs_on_pt = np.zeros((self.nptsp, self.nptst))
-        self.chit_on_pt = np.zeros((self.nptsp, self.nptst))
-        self.chirho_on_pt = np.zeros((self.nptsp, self.nptst))
-        self.gamma1_on_pt = np.zeros((self.nptsp, self.nptst))
-
+        self.logrho = np.zeros((len(self.logpvals), len(self.logtvals)))
+        self.logu = np.zeros((len(self.logpvals), len(self.logtvals)))
+        self.logs = np.zeros((len(self.logpvals), len(self.logtvals)))
         for i, logpval in enumerate(self.logpvals):
-            data_this_logp = self.data[self.data['logp'] == logpval]
-            for j, logtval in enumerate(self.logtvals):
-                data_this_logp_logt = data_this_logp[data_this_logp['logt'] == logtval]
-                self.logrho_on_pt[i, j] = data_this_logp_logt['logrho']
-                self.logu_on_pt[i, j] = data_this_logp_logt['logu']
-                self.logs_on_pt[i, j] = data_this_logp_logt['logs']
-                self.chit_on_pt[i, j] = data_this_logp_logt['chit']
-                self.chirho_on_pt[i, j] = data_this_logp_logt['chirho']
-                self.gamma1_on_pt[i, j] = data_this_logp_logt['gamma1']
+            self.logrho[i] = self.data['logrho'][self.data['logp'] == logpval]
+            self.logu[i] = self.data['logu'][self.data['logp'] == logpval]
+            self.logs[i] = self.data['logs'][self.data['logp'] == logpval]
 
-        pt_basis = (self.logpvals, self.logtvals)
-        self._get_logrho = RegularGridInterpolator(pt_basis, self.logrho_on_pt, bounds_error=False)
-        self._get_logu = RegularGridInterpolator(pt_basis, self.logu_on_pt)
-        self._get_logs = RegularGridInterpolator(pt_basis, self.logs_on_pt)
-        self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_pt)
-        self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_pt)
-        self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_pt)
+            if np.any(np.isnan(self.logrho[i])):
+                okay = np.where(np.logical_not(np.isnan(self.logrho[i])))[0]
+                bad = np.where(np.isnan(self.logrho[i]))[0]
+                tck = splrep(self.logtvals[okay], self.logrho[i, okay], k=1)
+                self.logrho[i, bad] = splev(self.logtvals[bad], tck, ext=0)
+            if np.any(np.isnan(self.logu[i])):
+                okay = np.where(np.logical_not(np.isnan(self.logu[i])))[0]
+                bad = np.where(np.isnan(self.logu[i]))[0]
+                tck = splrep(self.logtvals[okay], self.logu[i, okay], k=1)
+                self.logu[i, bad] = splev(self.logtvals[bad], tck, ext=0)
+            if np.any(np.isnan(self.logs[i])):
+                okay = np.where(np.logical_not(np.isnan(self.logs[i])))[0]
+                bad = np.where(np.isnan(self.logs[i]))[0]
+                tck = splrep(self.logtvals[okay], self.logs[i, okay], k=1)
+                self.logs[i, bad] = splev(self.logtvals[bad], tck, ext=0)
 
-    def get_logrho(self, logp, logt):
-        return self._get_logrho((logp, logt))
+            # class scipy.interpolate.RectBivariateSpline(x, y, z, bbox=[None, None, None, None], kx=3, ky=3, s=0)
+            #     Bivariate spline approximation over a rectangular mesh.
 
-    def get_logu(self, logp, logt):
-        return self._get_logu((logp, logt))
+            #     Can be used for both smoothing and interpolating data.
 
-    def get_logs(self, logp, logt):
-        return self._get_logs((logp, logt)) # + 10. # kJ/g/K to erg/g/K
+            #     x,y : array_like
+            #     1-D arrays of coordinates in strictly ascending order.
 
-    def get_chit(self, logp, logt):
-        return self._get_chit((logp, logt))
+            #     z : array_like
+            #     2-D array of data with shape (x.size,y.size).
 
-    def get_chirho(self, logp, logt):
-        return self._get_chirho((logp, logt))
+            #     bbox : array_like, optional
+            #     Sequence of length 4 specifying the boundary of the rectangular approximation domain. By default, bbox=[min(x,tx),max(x,tx), min(y,ty),max(y,ty)].
+
+            #     kx, ky : ints, optional
+            #     Degrees of the bivariate spline. Default is 3.
+
+            #     s : float, optional
+            #     Positive smoothing factor defined for estimation condition: sum((w[i]*(z[i]-s(x[i], y[i])))**2, axis=0) <= s Default is s=0, which is for interpolation.
+
+        self.spline_kwargs = {'kx':3, 'ky':3}
+
+    # from scipy/interpolate.fitpack/parder.f:
+    # c    ier=10: invalid input data (see restrictions)
+    # c
+    # c  restrictions:
+    # c   mx >=1, my >=1, 0 <= nux < kx, 0 <= nuy < ky, kwrk>=mx+my
+    # c   lwrk>=mx*(kx+1-nux)+my*(ky+1-nuy)+(nx-kx-1)*(ny-ky-1),
+    # c   tx(kx+1) <= x(i-1) <= x(i) <= tx(nx-kx), i=2,...,mx
+    # c   ty(ky+1) <= y(j-1) <= y(j) <= ty(ny-ky), j=2,...,my
+
+
+    def get_logrho(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp[::-1], lgt[::-1], grid=False)[::-1]
+    def get_logu(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logu, **self.spline_kwargs)(lgp[::-1], lgt[::-1], grid=False)[::-1]
+    def get_logs(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp[::-1], lgt[::-1], grid=False)[::-1]
+    def get_sp(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp[::-1], lgt[::-1], dx=1, grid=False)[::-1]
+    def get_st(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp[::-1], lgt[::-1], dy=1, grid=False)[::-1]
+    def get_rhop(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp[::-1], lgt[::-1], dx=1, grid=False)[::-1]
+    def get_rhot(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp[::-1], lgt[::-1], dy=1, grid=False)[::-1]
+
+    # general method for getting eos quantities
+    def get(self, logp, logt):
+        logs = self.get_logs(logp, logt)
+        sp = self.get_sp(logp, logt)
+        st = self.get_st(logp, logt)
+        grada = - sp / st
+
+        logrho = self.get_logrho(logp, logt)
+        rhop = self.get_rhop(logp, logt)
+        rhot = self.get_rhot(logp, logt)
+
+        chirho = 1. / rhop # dlnP/dlnrho|T
+        chit = -1. * rhot / rhop # dlnP/dlnT|rho
+        gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
+
+        logu = self.get_logu(logp, logt)
+
+        res =  {
+            'grada':grada,
+            'logrho':logrho,
+            'logs':logs,
+            'gamma1':gamma1,
+            'chirho':chirho,
+            'chit':chit,
+            'rhop':rhop,
+            'rhot':rhot,
+            'logu':logu
+            }
+        return res
+
+    # convenience methods
+    def get_grada(self, logp, logt):
+        return self.get(logp, logt)['grada']
 
     def get_gamma1(self, logp, logt):
-        return self._get_gamma1((logp, logt))
-
-    def get_dlogrho_dlogp_const_t(self, logp, logt, f=1e-1):
-        logp_lo = logp - np.log10(1. - f)
-        logp_hi = logp + np.log10(1. + f)
-        logrho_lo = self.get_logrho(logp_lo, logt)
-        logrho_hi = self.get_logrho(logp_hi, logt)
-        return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
-
-    def get_dlogrho_dlogt_const_p(self, logp, logt, f=1e-1):
-        logt_lo = logt + np.log10(1. - f)
-        logt_hi = logt + np.log10(1. + f)
-        logrho_lo = self.get_logrho(logp, logt_lo)
-        logrho_hi = self.get_logrho(logp, logt_hi)
-        return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
-
-    def get_dlogs_dlogp_const_t(self, logp, logt, f=1e-1):
-        # logp_lo = logp - np.log10(1. - f)
-        # logp_hi = logp + np.log10(1. + f)
-        logp_lo = logp - f
-        logp_hi = logp + f
-        logs_lo = self.get_logs(logp_lo, logt)
-        logs_hi = self.get_logs(logp_hi, logt)
-        return (logs_hi - logs_lo) / (logp_hi - logp_lo)
-
-    def get_dlogs_dlogt_const_p(self, logp, logt, f=1e-1):
-        # logt_lo = logt - np.log10(1. - f)
-        # logt_hi = logt + np.log10(1. + f)
-        logt_lo = logt - f
-        logt_hi = logt + f
-        logs_lo = self.get_logs(logp, logt_lo)
-        logs_hi = self.get_logs(logp, logt_hi)
-        return (logs_hi - logs_lo) / (logt_hi - logt_lo)
-
-    def get_cp(self, logp, logt):
-        rhop = self.get_dlogrho_dlogp_const_t(logp, logt)
-        rhot = self.get_dlogrho_dlogt_const_p(logp, logt)
-        rho = 10 ** self.get_logrho(logp, logt)
-        sp = self.get_dlogs_dlogp_const_t(logp, logt)
-        st = self.get_dlogs_dlogt_const_p(logp, logt)
-        s = 10 ** self.get_logs(logp, logt)
-        dpdt_const_rho = - 10 ** logp / 10 ** logt * rhot / rhop
-        dudt_const_rho = s * (st - sp * rhot / rhop)
-        dpdu_const_rho = dpdt_const_rho / rho / dudt_const_rho
-        gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
-        gamma1 = self.get_gamma1(logp, logt) # (gamma3 - 1.) / res['grada']
-        chirho = rhop ** -1
-        chit = dpdt_const_rho * 10 ** logt / 10 ** logp
-        cv = chit * 10 ** logp / (rho * 10 ** logt * (gamma3 - 1.))
-        cp = cv + 10 ** logp * chit ** 2 / (rho * 10 ** logt * chirho)
-        return cp
-
-    def get_grada(self, logp, logt):
-        rhop = self.get_dlogrho_dlogp_const_t(logp, logt)
-        rhot = self.get_dlogrho_dlogt_const_p(logp, logt)
-        rho = 10 ** self.get_logrho(logp, logt)
-        sp = self.get_dlogs_dlogp_const_t(logp, logt)
-        st = self.get_dlogs_dlogt_const_p(logp, logt)
-        s = 10 ** self.get_logs(logp, logt)
-        dpdt_const_rho = - 10 ** logp / 10 ** logt * rhot / rhop
-        dudt_const_rho = s * (st - sp * rhot / rhop)
-        dpdu_const_rho = dpdt_const_rho / rho / dudt_const_rho
-        gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
-        gamma1 = self.get_gamma1(logp, logt) # (gamma3 - 1.) / res['grada']
-        # gamma3 = 1 + dpdt / (din * dedt) ! C&G 9.93
-        # grad_ad = dtdp_cs_hhe/(tin * inv_pres)
-        # gamma1 = (gamma3 - 1) / grad_ad ! C&G 9.88 & 9.89
-        grada = dpdu_const_rho / gamma1
-        return grada
+        return self.get(logp, logt)['gamma1']
