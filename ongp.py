@@ -1516,10 +1516,16 @@ class evol:
         profile['gamma1'] = np.copy(self.gamma1)
         profile['csound'] = np.copy(self.csound)
         # profile['lamb_s12'] = np.copy(self.lamb_s12)
-        profile['brunt_n2'] = np.copy(self.brunt_n2)
+        try:
+            profile['brunt_n2'] = np.copy(self.brunt_n2)
+        except:
+            pass
         # profile['brunt_n2_direct'] = self.brunt_n2_direct
-        profile['chirho'] = np.copy(self.chirho)
-        profile['chit'] = np.copy(self.chit)
+        try:
+            profile['chirho'] = np.copy(self.chirho)
+            profile['chit'] = np.copy(self.chit)
+        except:
+            pass
         profile['gradt'] = np.copy(self.gradt)
         profile['grada'] = np.copy(self.grada)
         profile['rf'] = np.copy(self.rf)
