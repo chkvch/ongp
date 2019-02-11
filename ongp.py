@@ -37,10 +37,13 @@ class evol:
         elif params['hhe_eos_option'] == 'mh13_scvh':
             import mh13_scvh; reload(mh13_scvh)
             self.hhe_eos = mh13_scvh.eos(params['path_to_data'])
+        elif params['hhe_eos_option'] == 'chabrier':
+            import chabrier; reload(chabrier)
+            self.hhe_eos = chabrier.eos(params['path_to_data'])
         else:
             print('hydrogen-helium eos option {} not recognized'.format(params['hhe_eos_option']))
 
-        if params['z_eos_option']:
+        if 'z_eos_option' in list(params):
             # initialize z equation of state
             import aneos
             import reos_water
