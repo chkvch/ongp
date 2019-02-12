@@ -29,7 +29,7 @@ class evol:
             params['hhe_eos_option'] = 'scvh'
         # initialize hydrogen-helium equation of state
         if params['hhe_eos_option'] == 'scvh':
-            import scvh
+            import scvh; reload(scvh)
             self.hhe_eos = scvh.eos(params['path_to_data'])
         elif params['hhe_eos_option'] == 'reos3b':
             import reos3b
@@ -81,6 +81,7 @@ class evol:
         self.evol_params = {
             'nz':1024,
             'radius_rtol':1e-5,
+            'y1_rtol':1e-4,
             'max_iters_static':50,
             'min_iters_static':3,
             'max_iters_static_before_rain':8
@@ -431,6 +432,7 @@ class evol:
         if not hasattr(self, 'k_gradient_bottom'):
             self.k_gradient_bot = -1
 
+        last_three_y1 = 0, 0, 0
         # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
         if hasattr(self, 'phase'):
             # last_three_radii = 0, 0, 0
@@ -439,7 +441,7 @@ class evol:
 
                 self.integrate_hydrostatic()
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
-                self.integrate_temperature() # sets grada for the last time this rain iter
+                self.integrate_temperature()
 
                 # this was originally after rrho if statement
                 self.y = self.equilibrium_y_profile(params['phase_t_offset'],
@@ -460,10 +462,12 @@ class evol:
 
                     # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
                     # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1
-                    res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    self.chit[self.kcore:] = res['chit']
-                    self.chirho[self.kcore:] = res['chirho']
-                    self.chiy[self.kcore:] = res['chiy']
+
+                    # new: moved these to self.integrate_temperature, since an eos call happens there anyway
+                    # res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+                    # self.chit[self.kcore:] = res['chit']
+                    # self.chirho[self.kcore:] = res['chirho']
+                    # self.chiy[self.kcore:] = res['chiy']
 
                     self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
                     if self.k_shell_top:
@@ -500,9 +504,10 @@ class evol:
                 if 'debug_iterations' in params.keys():
                     if params['debug_iterations']:
                         et = time.time() - t0
-                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.ktrans, et*1e3))
+                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.4f}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1], self.ktrans, et*1e3))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
-                    break
+                    if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
+                        break
 
                 if not np.isfinite(self.r[-1]):
                     with open('output/found_infinite_radius.dat', 'w') as f:
@@ -512,6 +517,7 @@ class evol:
                     print('saved output/found_infinite_radius.dat')
                     raise ValueError('found infinite total radius')
                 last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
+                last_three_y1 = last_three_y1[1], last_three_y1[2], self.y[-1]
                 # include a similar check on y1?
             else:
                 raise ConvergenceError()
@@ -593,8 +599,9 @@ class evol:
                 return self.y
 
         self.ystart = np.copy(self.y)
-        yout = np.copy(self.y)
+        yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
 
+        # previously:
         # ymax_k1 = get_y(self.z[k1], get_yp(xplo)) # homogeneous molecular envelope at this abundance
         # yout[k1+1:] = ymax_k1
 
@@ -610,8 +617,8 @@ class evol:
         # print(self.p[k1-2:k1+2])
         # print(self.t[k1-2:k1+2])
         # print(ptrans, ttrans, phase_t_offset)
-        # assert self.t[k1-1] < ttrans
-        if int(ptrans) is ptrans: ptrans += 1e-14
+
+        if int(ptrans) == ptrans: ptrans += 1e-14
         gap = self.phase.miscibility_gap(ptrans, ttrans - phase_t_offset * 1e-3)
         assert type(gap) is tuple, 'p>ptrans demixes, but failed to interpolate ymax for p=ptrans'
         xplo, xphi = gap
@@ -791,18 +798,34 @@ class evol:
             self.t[-1] = self.t10
         else:
             raise ValueError("atm_which_t must be one of 't1', 't10'")
-        if adiabatic:
-            self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
-            # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
 
-            # this call to get grada is slow.
-            # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
-            # relies so heavily on interpolation in the hhe eos.
+        self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
+        # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
+
+        # this call to get grada is slow.
+        # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
+        # relies so heavily on interpolation in the hhe eos.
+        # try:
+            # self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        # except ValueError:
+            # raise EOSError('failed in eos call for grada. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
+        # new: get eos res and set chirho, chit as well, as long as we're doing an eos call. then don't have to
+        # get those separately in evaluation of superadiabatic gradt for helium gradient region
+        try:
+            res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+            self.grada[self.kcore:] = res['grada']
+            self.chit[self.kcore:] = res['chit']
+            self.chirho[self.kcore:] = res['chirho']
             try:
-                self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-            except ValueError:
-                raise EOSError('failed in eos call for grada. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
-            self.grada_check_nans()
+                self.chiy[self.kcore:] = res['chiy']
+            except KeyError:
+                print(list(res))
+                raise
+        except ValueError:
+            raise EOSError('failed in eos call. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
+
+        self.grada_check_nans()
+        if adiabatic:
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
             if brute_force_loop:
                 for k in np.arange(self.nz)[::-1]: # surface to center
@@ -1381,6 +1404,8 @@ class evol:
                     assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
                     self.profiles[self.step] = self.get_profile()
             self.walltime = time.time() - start_time
+            self.delta_t = delta_t
+            self.delta_y1 = prev_y1 - self.y[-1]
             self.append_history()
 
             # realtime output
@@ -1450,7 +1475,9 @@ class evol:
                 'k_shell_top':self.k_shell_top,
                 'k_gradient_bot':self.k_gradient_bot,
                 'k_gradient_top':self.k_gradient_top,
-                'walltime':self.walltime
+                'walltime':self.walltime,
+                'delta_t':self.delta_t,
+                'delta_y1':self.delta_y1
                 }
 
             if not hasattr(self, 'history'):

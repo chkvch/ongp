@@ -566,6 +566,7 @@ class eos:
         res['gamma1'] = gamma1
         res['chirho'] = res['rhop'] ** -1 # rhop = dlogrho/dlogp|t
         res['chit'] = dpdt_const_rho * 10 ** logt / 10 ** logp
+        res['chiy'] = -1. * 10 ** res['logrho'] * y * (1. / 10 ** res_he['logrho'] - 1. / 10 ** res_h['logrho']) # dlnrho/dlnY|P,T
 
         # from mesa's scvh in mesa/eos/eosPT_builder/src/scvh_eval.f
         # 1005:      Cv = chiT * P / (rho * T * (gamma3 - 1)) ! C&G 9.93
