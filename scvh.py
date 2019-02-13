@@ -86,6 +86,11 @@ class eos:
             self.get_he[name] = RegularGridInterpolator((self.logpvals, self.logtvals), self.he_data_rect[name])
             # self.get_he[name] = rbs(self.logpvals, self.logtvals, self.he_data_rect[name])
 
+        del(self.h_data)
+        del(self.he_data)
+        del(self.h_data_rect)
+        del(self.he_data_rect)
+
     def load(self):
         '''
         read the ascii scvh tables into handier python dicts. this is called by __init__ unless

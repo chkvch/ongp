@@ -80,11 +80,11 @@ class evol:
         # defaults for other params
         self.evol_params = {
             'nz':1024,
-            'radius_rtol':1e-5,
+            'radius_rtol':1e-4,
             'y1_rtol':1e-4,
             'max_iters_static':50,
             'min_iters_static':3,
-            'max_iters_static_before_rain':8
+            'max_iters_static_before_rain':3
         }
         # overwrite with any passed by user
         for key, value in params.items():
@@ -395,10 +395,11 @@ class evol:
             # set y and z profile assuming three-layer homogeneous. if doing helium rain (self.phase is set),
             # Y profile wile be set appropriately later in equilibrium_Y iterations.
             self.set_yz()
-            if self.iters < 5:
-                self.integrate_temperature(brute_force_loop=True) # integrate gradt (usually grada) for envelope temp; core isothermal
-            else:
-                self.integrate_temperature(brute_force_loop=False)
+            # if self.iters < 5:
+            #     self.integrate_temperature(brute_force_loop=True) # integrate gradt (usually grada) for envelope temp; core isothermal
+            # else:
+            #     self.integrate_temperature(brute_force_loop=False)
+            self.integrate_temperature(brute_force_loop=True) # brute force seems necessary for reliable precision)
             self.set_core_density()
             self.set_envelope_density()
             self.integrate_continuity() # get zone radii from their densities via continuity equation
@@ -493,10 +494,10 @@ class evol:
                     self.integrate_temperature(adiabatic=False)
 
                 # one more time
-                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
-                            verbosity=params['rainout_verbosity'],
-                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
-
+                # self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                #             verbosity=params['rainout_verbosity'],
+                #             minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
+                #
                 self.set_core_density()
                 self.set_envelope_density()
                 self.integrate_continuity()
@@ -506,7 +507,9 @@ class evol:
                         et = time.time() - t0
                         print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.4f}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1], self.ktrans, et*1e3))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
+                    # print('rain iter {}: radius ok'.format(self.iters_rain))
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
+                        # print('rain iter {}: y1 okay'.format(self.iters_rain))
                         break
 
                 if not np.isfinite(self.r[-1]):
@@ -580,7 +583,7 @@ class evol:
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
 
-        if verbosity > 0: print('iters {}, iters rain {}'.format(self.iters, self.iters_rain))
+        if verbosity > 0: print('iters {}, iters rain {}, rtot {:12.6e}, y1 {:8.4f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1]))
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
@@ -590,7 +593,7 @@ class evol:
                 if verbosity > 0: print('first zone with p>ptrans=%1.1f Mbar is stable to demixing\n' % (ptrans))
                 return self.y
             elif gap == 'failed':
-                raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.1f, t = %.1f, t-t_offset=%.1f' % (p[k1], self.t[k1], self.t[k1] - phase_t_offset))
+                raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k1], t[k1], t[k1] - phase_t_offset*1e-3))
         elif type(gap) is tuple:
             xplo, xphi = gap
             ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
@@ -786,7 +789,7 @@ class evol:
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
 
 
-    def integrate_temperature(self, adiabatic=True, brute_force_loop=False):
+    def integrate_temperature(self, adiabatic=True, brute_force_loop=True):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
         adiabatic gradient here (as well as later) is ignoring any z contribution.
@@ -816,11 +819,7 @@ class evol:
             self.grada[self.kcore:] = res['grada']
             self.chit[self.kcore:] = res['chit']
             self.chirho[self.kcore:] = res['chirho']
-            try:
-                self.chiy[self.kcore:] = res['chiy']
-            except KeyError:
-                print(list(res))
-                raise
+            self.chiy[self.kcore:] = res['chiy']
         except ValueError:
             raise EOSError('failed in eos call. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
 
@@ -969,7 +968,7 @@ class evol:
         if self.atm_which_t == 't1': # interpolate in existing t profile to find t10
             assert self.t1 == self.t[-1] # this should be true by construction (see integrate_temperature)
             k10 = np.where(self.p < 1e7)[0][0]
-            tck = splrep(self.p[k10-5:k10+5][::-1], self.t[k10-5:k10+5][::-1], k=3) # cubic
+            tck = splrep(self.p[k10-2:k10+2][::-1], self.t[k10-2:k10+2][::-1], k=3) # cubic
             self.t10 = np.float64(splev(1e7, tck))
             assert self.t1 > 0., 'bad t1 %g' % self.t1
             assert len(self.p[self.p < 1e7]) >= 5, 'fewer than 5 zones outside of 10 bars; atm likely not accurate'
@@ -1307,15 +1306,16 @@ class evol:
                 # print('trying t=', params[which_t])
 
                 try:
-                    self.static(params, None) # pass the full evolve params; many won't be used
-                    delta_s = self.entropy - previous_entropy
-                    delta_s *= const.kb / const.mp # now erg K^-1 g^-1
-                    int_tdsdm = trapz(self.t * delta_s, dx=self.dm)
-                    dt = -1. * int_tdsdm / self.lint
+                    self.static(params, self) # pass the full evolve params; many won't be used
+                    self.delta_s = self.entropy - previous_entropy
+                    self.delta_s *= const.kb / const.mp # now erg K^-1 g^-1
+                    self.tds = self.t * self.delta_s
+                    self.int_tdsdm = trapz(self.t * self.delta_s, dx=self.dm)
+                    dt = -1. * self.int_tdsdm / self.lint
                     # now that have timestep based on total intrinsic luminosity,
                     # calculate eps_grav to see distribution of energy generation
-                    eps_grav = -1. * self.t * delta_s / dt
-                    luminosity = np.insert(cumtrapz(eps_grav, dx=self.dm), 0, 0.)
+                    self.eps_grav = -1. * self.t * self.delta_s / dt
+                    self.luminosity = np.insert(cumtrapz(self.eps_grav, dx=self.dm), 0, 0.)
                     self.dt_yr = dt / const.secyear
                 except EOSError as e:
                     self.status = e
@@ -1337,6 +1337,22 @@ class evol:
                     break # exit retry loop
 
                 if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
+                    with open('negative_timestep.pkl', 'wb') as f:
+                        data = {}
+                        data['p'] = self.p
+                        data['t'] = self.t
+                        data['rho'] = self.rho
+                        data['y'] = self.y
+                        data['z'] = self.z
+                        data['grada'] = self.grada
+                        data['entropy'] = self.entropy
+                        data['delta_s'] = self.delta_s
+                        data['int_tdsdm'] = self.int_tdsdm
+                        data['eps_grav'] = self.eps_grav
+                        pickle.dump(data, f)
+                    self.status = RuntimeError('negative timestep')
+                    break
+
                     # try larger step.
                     if retries == 0:
                         delta_t = 1.
@@ -1405,7 +1421,7 @@ class evol:
                     self.profiles[self.step] = self.get_profile()
             self.walltime = time.time() - start_time
             self.delta_t = delta_t
-            self.delta_y1 = prev_y1 - self.y[-1]
+            self.delta_y1 = prev_y1 - self.y[-1] if prev_y1 > 0 else 0
             self.append_history()
 
             # realtime output
@@ -1441,9 +1457,9 @@ class evol:
                 self.nz_shell = max(0, k_shell - self.kcore)
 
                 self.age_gyr += self.dt_yr * 1e-9
-                self.delta_s = delta_s # erg K^-1 g^-1
-                self.eps_grav = eps_grav
-                self.luminosity = luminosity
+                # self.delta_s = delta_s # erg K^-1 g^-1
+                # self.eps_grav = eps_grav
+                # self.luminosity = luminosity
                 prev_y1 = self.y[-1]
 
 
@@ -1485,7 +1501,11 @@ class evol:
 
             for key, qty in history_qtys.items():
                 if not key in list(self.history):
-                    self.history[key] = np.array([]) # initialize ndarray for this column
+                    # initialize ndarray for this column
+                    if key in ('step', 'iters', 'nz_gradient', 'nz_shell', 'kcore', 'ktrans', 'k_shell_top', 'k_gradient_bot', 'k_gradient_top'):
+                        self.history[key] = np.array([], dtype=int)
+                    else:
+                        self.history[key] = np.array([])
                 self.history[key] = np.append(self.history[key], qty)
 
     def get_profile(self):
@@ -1520,6 +1540,7 @@ class evol:
         if self.step > 0:
             profile['delta_s'] = np.copy(self.delta_s)
             profile['eps_grav'] = np.copy(self.eps_grav)
+            profile['tds'] = np.copy(self.tds)
             profile['luminosity'] = np.copy(self.luminosity)
 
         return profile

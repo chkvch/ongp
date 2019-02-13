@@ -1,5 +1,9 @@
 from scipy.interpolate import RectBivariateSpline as rbs
-import scvh
+try:
+    from importlib import reload
+except:
+    pass
+import scvh; reload(scvh)
 import numpy as np
 
 class eos:
@@ -16,6 +20,8 @@ class eos:
         for i, logpval in enumerate(self.logpvals):
             self.logrho[i] = self.h_data['logrho'][self.h_data['logp'] == logpval]
             self.logs[i] = self.h_data['logs'][self.h_data['logp'] == logpval]
+
+        del(self.h_data)
 
             # class scipy.interpolate.RectBivariateSpline(x, y, z, bbox=[None, None, None, None], kx=3, ky=3, s=0)
             #     Bivariate spline approximation over a rectangular mesh.
@@ -49,6 +55,7 @@ class eos:
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dx=1, grid=False)
     def get_st_h(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
+
     # def get_rhop_h(self, lgp, lgt):
     #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1)
     # def get_rhot_h(self, lgp, lgt):
