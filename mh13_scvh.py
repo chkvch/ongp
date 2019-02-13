@@ -13,13 +13,19 @@ class eos:
         self.h_data = np.genfromtxt(self.h_path, skip_header=16, names=self.columns)
 
         self.logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 14.])
+        self.logpvals = self.logpvals[self.logpvals > 5.8]
         self.logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 14.])
+        self.logtvals = self.logtvals[self.logtvals < 5]
 
         self.logrho = np.zeros((len(self.logpvals), len(self.logtvals)))
         self.logs = np.zeros((len(self.logpvals), len(self.logtvals)))
         for i, logpval in enumerate(self.logpvals):
-            self.logrho[i] = self.h_data['logrho'][self.h_data['logp'] == logpval]
-            self.logs[i] = self.h_data['logs'][self.h_data['logp'] == logpval]
+            logrho_this_p = self.h_data['logrho'][self.h_data['logp'] == logpval]
+            logs_this_p = self.h_data['logs'][self.h_data['logp'] == logpval]
+            logt_this_p = self.h_data['logt'][self.h_data['logp'] == logpval]
+            for j, logtval in enumerate(self.logtvals):
+                self.logrho[i, j] = logrho_this_p[logt_this_p == logtval]
+                self.logs[i, j] = logs_this_p[logt_this_p == logtval]
 
         del(self.h_data)
 

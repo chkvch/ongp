@@ -6,6 +6,7 @@ class eos:
     def __init__(self, path_to_data):
 
         npts_t = 121
+        npts_t -= 60 # skip logT < 5; there are 60 such points
         npts_p = 441
         # - The (log T, log P) tables include NT=121 isotherms
         # between logT=2.0 and logT=8.0 with a step dlogT=0.05.
@@ -29,6 +30,8 @@ class eos:
                 for i, line in enumerate(f.readlines()):
                     if line[0] == '#':
                         if '=' in line:
+                            if float(line.split()[-1]) > 5:
+                                continue
                             with open(path, 'rb') as g:
                                 chunk = np.genfromtxt(islice(g, i+1, i+npts_p+1), names=columns)
                             for name in columns:
