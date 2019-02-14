@@ -454,7 +454,7 @@ class evol:
                 else:
                     self.k_gradient_top = None
                     self.k_gradient_bot = None
-                    
+
                 if 'rrho_where_have_helium_gradient' in params.keys() and self.nz_gradient > 0:
                     # allow helium gradient regions to have superadiabatic temperature stratification.
                     # this is new here -- copied from below where we'd ordinarily only compute this
@@ -605,15 +605,17 @@ class evol:
         elif type(gap) is tuple:
             xplo, xphi = gap
             ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
+            self.ymax_trans = ymax1
             if self.nz_gradient > 0:
                 if ymax1 >= 0.27:
                     if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
                     return self.y
                 else:
-                    # expect rainout; keep going
+                    # expect rainout; proceed with rainout calculation
                     pass
             elif self.y[k1] < ymax1:
                 if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
+                # track value (> initial Y) so that we can anticipate rain onset
                 return self.y
 
         self.ystart = np.copy(self.y)
@@ -1325,6 +1327,7 @@ class evol:
         prev_y1 = -1
         done = False
         limit = ''
+        self.ymax_trans = None
 
         params[which_t] = start_t
         other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
@@ -1345,6 +1348,7 @@ class evol:
         previous_entropy = self.entropy
 
         while not done:
+            self.delta_t = delta_t
             retries = 0
             accept_step = False
             limit = ''
@@ -1458,7 +1462,6 @@ class evol:
                     assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
                     self.profiles[self.step] = self.get_profile()
             self.walltime = time.time() - start_time
-            self.delta_t = delta_t
             self.delta_y1 = prev_y1 - self.y[-1] if prev_y1 > 0 else 0
             self.append_history()
 
@@ -1503,6 +1506,25 @@ class evol:
                 # self.luminosity = luminosity
                 prev_y1 = np.copy(self.y[-1])
 
+                if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0:
+                    # judge whether approaching rainout onset
+                    ymax = self.history['ymax_trans'][self.history['ymax_trans'] != None]
+                    t1 = self.history['t1'][self.history['ymax_trans'] != None]
+                    if len(ymax) > 2:
+                        target_y1 = self.y[-1] - params['max_dy1']
+
+                        # tck = splrep(ymax[::-1], dt1[::-1], k=1)
+                        #
+                        isort = np.argsort(t1)
+                        tck_ = splrep(t1[isort], ymax[isort], k=1)
+                        projected_ymax = np.float64(splev(self.t1 - delta_t, tck_))
+
+                        # print('{} ymax={}, projected_ymax={}'.format(self.step, self.ymax_trans, projected_ymax))
+
+                        if projected_ymax < 0.28:
+                            # delta_t /= 3.
+                            # delta_t *= 1e6 / self.dt_yr
+                            delta_t = 0.3
 
         if 'output_prefix' in list(params):
             self.save_history(params['output_prefix'])
@@ -1534,7 +1556,8 @@ class evol:
                 'k_gradient_top':self.k_gradient_top,
                 'walltime':self.walltime,
                 'delta_t':self.delta_t,
-                'delta_y1':self.delta_y1
+                'delta_y1':self.delta_y1,
+                'ymax_trans':self.ymax_trans
                 }
 
             if not hasattr(self, 'history'):

@@ -1,6 +1,6 @@
 from scipy import interpolate
 from scipy.optimize import brentq, minimize
-from scipy.interpolate import splev
+from scipy.interpolate import splrep, splev
 # from scipy.interpolate import BSpline
 import numpy as np
 import time
@@ -82,6 +82,9 @@ class hhe_phase_diagram:
         self.t_clean = {}
         self.minmax_z = {}
 
+        self.tck_xlo = {}
+        self.tck_xhi = {}
+
         for pval in self.pvals:
 
             x = self.data['x'][self.data['p'] == pval]
@@ -149,6 +152,12 @@ class hhe_phase_diagram:
                     x = x[:-8]
                     t = t[:-8]
 
+            if np.any(np.diff(t) == 0.):
+                # this is a problem for third option in miscibility_gap below, which interpolates
+                # with t as an independent variable
+                assert(len(t[:-1][np.diff(t) == 0.])) == 1.
+                t[:-1][np.diff(t) == 0.] += 1e-10
+
             z = np.linspace(0, 1, len(x) - 2)
             z = np.append(np.zeros(3), z)
             z = np.append(z, np.ones(3))
@@ -158,20 +167,32 @@ class hhe_phase_diagram:
 
             # get z and x corresponding to t maximum (critical point) for this curve.
             # this should be trivial to get from spline coefficients analytically,
-            # but get it numerically for convenience
+            # but get it numerically for convenience. only needs to be done once.
             def one_div_t_this_spline(z):
                 return self.splinet(pval, z) * -1
-            sol = minimize(one_div_t_this_spline, 0.5, tol=1e-3)
+            sol = minimize(one_div_t_this_spline, 0.5, tol=1e-5)
             assert sol['success']
-            self.tcrit[pval] = sol['fun'] * -1
-            self.zcrit[pval] = sol['x'][0]
+            self.tcrit[pval] = tcrit = sol['fun'] * -1
+            self.zcrit[pval] = zcrit = sol['x'][0]
 
-            # # provide min and max values of z for sake of root find bounds in miscibility_gap
+            # add critical point from spline to data
+            i = np.where(np.linspace(0, 1, len(t)) > zcrit)[0][0]
+            # t = np.insert(t, i, tcrit)
+            # x = np.insert(x, i, self.splinex(pval, zcrit))
+
+            # provide min and max values of z for sake of root find bounds in miscibility_gap
             self.minmax_z[pval] = z[0], z[-1]
             # # provide scrubbed versions for diagnostic purposes
             self.x_clean[pval] = x
             self.t_clean[pval] = t
 
+            k = 3
+            if t[i-1] != t[i]:
+                self.tck_xlo[pval] = splrep(t[:i], x[:i], k=k)
+                self.tck_xhi[pval] = splrep(t[i:][::-1], x[i:][::-1], k=k)
+            else:
+                self.tck_xlo[pval] = splrep(t[:i], x[:i], k=k)
+                self.tck_xhi[pval] = splrep(t[i-1:][::-1], x[i-1:][::-1], k=k)
 
     def miscibility_gap(self, p, t):
         '''for a given pressure and temperature, return the helium number fraction of the
@@ -199,7 +220,7 @@ class hhe_phase_diagram:
         if t > self.tcrit[plo] or t > self.tcrit[phi]:
             return 'stable'
 
-        if False:
+        if False: # old way: root find for x(T=Tphase) on bsplines
             zmin_plo, zmax_plo = self.minmax_z[plo]
             zmin_phi, zmax_phi = self.minmax_z[phi]
             # for abundance in helium-poor phase, search between zmin and z(tcrit)
@@ -217,7 +238,7 @@ class hhe_phase_diagram:
             xlo_phi = self.splinex(phi, zlo_phi)
             xhi_phi = self.splinex(phi, zhi_phi)
 
-        else:
+        elif False: # new way: crude, fast linear interpolation for x(T=Tphase)
             zcrit_plo = np.where(self.t_clean[plo] == max(self.t_clean[plo]))[0][0]
             zcrit_phi = np.where(self.t_clean[phi] == max(self.t_clean[phi]))[0][0]
 
@@ -256,6 +277,15 @@ class hhe_phase_diagram:
             except IndexError:
                 return 'failed'
 
+        else: # third way: higher-order interpolant on either he-poor or he-rich segment of phase curve
+            try:
+                xlo_plo = splev(t, self.tck_xlo[plo])
+                xhi_plo = splev(t, self.tck_xhi[plo])
+                xlo_phi = splev(t, self.tck_xlo[phi])
+                xhi_phi = splev(t, self.tck_xhi[phi])
+            except Exception as e:
+                print(e.args)
+                return 'failed'
 
         # P interpolation is linear in logP
         alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
@@ -264,3 +294,12 @@ class hhe_phase_diagram:
         xhi = alpha * xhi_phi + (1. - alpha) * xhi_plo
 
         return xlo, xhi
+
+    def get_tcrit(self, p):
+        plo = self.pvals[self.pvals < p][-1]
+        phi = self.pvals[self.pvals > p][0]
+        assert p > plo
+        assert p < phi
+
+        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+        return alpha * self.tcrit[phi] + (1. - alpha) * self.tcrit[plo]
