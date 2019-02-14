@@ -135,12 +135,19 @@ class hhe_phase_diagram:
                 del(x, t, z)
                 x = x_
                 t = t_
+                # prune unnecessary parts that remain (identified by eye)
                 if pval == 1:
                     x = x[2:]
                     t = t[2:]
                 elif pval == 2:
                     x = x[4:]
                     t = t[4:]
+                elif pval == 10:
+                    x = x[:-4]
+                    t = t[:-4]
+                elif pval == 24:
+                    x = x[:-8]
+                    t = t[:-8]
 
             z = np.linspace(0, 1, len(x) - 2)
             z = np.append(np.zeros(3), z)
@@ -175,7 +182,7 @@ class hhe_phase_diagram:
         t: temperature in kK = 1e3 K
         )
         returns
-        (ylo, yhi): helium mass fractions of helium-poor and helium-rich phases
+        (xplo, xphi): helium number fractions (relative to just h+he) of helium-poor and helium-rich phases
         '''
         if p < min(self.pvals):
             return 'failed'
@@ -192,22 +199,63 @@ class hhe_phase_diagram:
         if t > self.tcrit[plo] or t > self.tcrit[phi]:
             return 'stable'
 
-        zmin_plo, zmax_plo = self.minmax_z[plo]
-        zmin_phi, zmax_phi = self.minmax_z[phi]
-        # for abundance in helium-poor phase, search between zmin and z(tcrit)
-        # for abundance in helium-rich phase, search between z(tcrit) and zmax
-        try:
-            zlo_plo = brentq(lambda z: self.splinet(plo, z) - t, zmin_plo, self.zcrit[plo])
-            zhi_plo = brentq(lambda z: self.splinet(plo, z) - t, self.zcrit[plo], zmax_plo)
-            zlo_phi = brentq(lambda z: self.splinet(phi, z) - t, zmin_phi, self.zcrit[phi])
-            zhi_phi = brentq(lambda z: self.splinet(phi, z) - t, self.zcrit[phi], zmax_phi) # this one fails
-        except ValueError as e:
-            return 'failed'
+        if False:
+            zmin_plo, zmax_plo = self.minmax_z[plo]
+            zmin_phi, zmax_phi = self.minmax_z[phi]
+            # for abundance in helium-poor phase, search between zmin and z(tcrit)
+            # for abundance in helium-rich phase, search between z(tcrit) and zmax
+            try:
+                zlo_plo = brentq(lambda z: self.splinet(plo, z) - t, zmin_plo, self.zcrit[plo])
+                zhi_plo = brentq(lambda z: self.splinet(plo, z) - t, self.zcrit[plo], zmax_plo)
+                zlo_phi = brentq(lambda z: self.splinet(phi, z) - t, zmin_phi, self.zcrit[phi])
+                zhi_phi = brentq(lambda z: self.splinet(phi, z) - t, self.zcrit[phi], zmax_phi)
+            except ValueError as e:
+                return 'failed'
 
-        xlo_plo = self.splinex(plo, zlo_plo)
-        xhi_plo = self.splinex(plo, zhi_plo)
-        xlo_phi = self.splinex(phi, zlo_phi)
-        xhi_phi = self.splinex(phi, zhi_phi)
+            xlo_plo = self.splinex(plo, zlo_plo)
+            xhi_plo = self.splinex(plo, zhi_plo)
+            xlo_phi = self.splinex(phi, zlo_phi)
+            xhi_phi = self.splinex(phi, zhi_phi)
+
+        else:
+            zcrit_plo = np.where(self.t_clean[plo] == max(self.t_clean[plo]))[0][0]
+            zcrit_phi = np.where(self.t_clean[phi] == max(self.t_clean[phi]))[0][0]
+
+            try:
+                ts = self.t_clean[plo][:zcrit_plo+1]
+                xs = self.x_clean[plo][:zcrit_plo+1]
+                it = np.where(ts > t)[0][0]
+                t1, t2 = ts[it-1], ts[it]
+                x1, x2 = xs[it-1], xs[it]
+                alpha = (t - t1) / (t2 - t1)
+                xlo_plo = (1. - alpha) * x1 + alpha * x2
+
+                ts = self.t_clean[plo][zcrit_plo:]
+                xs = self.x_clean[plo][zcrit_plo:]
+                it = np.where(ts < t)[0][0]
+                t1, t2 = ts[it-1], ts[it]
+                x1, x2 = xs[it-1], xs[it]
+                alpha = (t - t1) / (t2 - t1)
+                xhi_plo = (1. - alpha) * x1 + alpha * x2
+
+                ts = self.t_clean[phi][:zcrit_phi+1]
+                xs = self.x_clean[phi][:zcrit_phi+1]
+                it = np.where(ts > t)[0][0]
+                t1, t2 = ts[it-1], ts[it]
+                x1, x2 = xs[it-1], xs[it]
+                alpha = (t - t1) / (t2 - t1)
+                xlo_phi = (1. - alpha) * x1 + alpha * x2
+
+                ts = self.t_clean[phi][zcrit_phi:]
+                xs = self.x_clean[phi][zcrit_phi:]
+                it = np.where(ts < t)[0][0]
+                t1, t2 = ts[it-1], ts[it]
+                x1, x2 = xs[it-1], xs[it]
+                alpha = (t - t1) / (t2 - t1)
+                xhi_phi = (1. - alpha) * x1 + alpha * x2
+            except IndexError:
+                return 'failed'
+
 
         # P interpolation is linear in logP
         alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
