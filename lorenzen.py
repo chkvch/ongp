@@ -92,9 +92,9 @@ class hhe_phase_diagram:
                 t = t[x > 3e-3]
                 x = x[x > 3e-3]
 
-                if pval == 24: # discard points corresponding to Y<0.2 or so
-                    t = t[x > 1e-1]
-                    x = x[x > 1e-1]
+                # if pval == 24: # discard points corresponding to Y<0.2 or so
+                #     t = t[x > 1e-1]
+                #     x = x[x > 1e-1]
 
                 # z is "t" in b-spline language
                 z = np.linspace(0, 1, len(x) - 2)
@@ -129,7 +129,8 @@ class hhe_phase_diagram:
                         x_ = np.append(x_, xval)
                         t_ = np.append(t_, tval)
 
-                print('{}: {} -> {}'.format(pval, len(x), len(x_)))
+                # print numbers to give an idea of downsampling
+                # print('{}: {} -> {}'.format(pval, len(x), len(x_)))
 
                 del(x, t, z)
                 x = x_
@@ -191,24 +192,16 @@ class hhe_phase_diagram:
         if t > self.tcrit[plo] or t > self.tcrit[phi]:
             return 'stable'
 
-        # dz = 1e-3
         zmin_plo, zmax_plo = self.minmax_z[plo]
         zmin_phi, zmax_phi = self.minmax_z[phi]
-        # for abundance in helium-poor phase, search between zlo and z(tcrit)
-        # for abundance in helium-rich phase, search between z(tcrit) and zhi
+        # for abundance in helium-poor phase, search between zmin and z(tcrit)
+        # for abundance in helium-rich phase, search between z(tcrit) and zmax
         try:
             zlo_plo = brentq(lambda z: self.splinet(plo, z) - t, zmin_plo, self.zcrit[plo])
-            # print(zlo_plo)
             zhi_plo = brentq(lambda z: self.splinet(plo, z) - t, self.zcrit[plo], zmax_plo)
-            # print(zhi_plo)
             zlo_phi = brentq(lambda z: self.splinet(phi, z) - t, zmin_phi, self.zcrit[phi])
-            # print(zlo_phi)
             zhi_phi = brentq(lambda z: self.splinet(phi, z) - t, self.zcrit[phi], zmax_phi) # this one fails
-            # print(zhi_phi)
         except ValueError as e:
-            print(e.args[0])
-            print('plo, p, phi', plo, p, phi)
-            print('tcrit_plo, t, tcrit_phi', self.tcrit[plo], t, self.tcrit[phi])
             return 'failed'
 
         xlo_plo = self.splinex(plo, zlo_plo)
