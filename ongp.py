@@ -732,15 +732,16 @@ class evol:
                     yout[k] = get_y(self.z[k], get_yp(xphi))
 
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
+                # tentative_total_he_mass = np.dot(yout[self.kcore+1:], self.dm[self.kcore:])
                 if verbosity > 1: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
                 if tentative_total_he_mass >= self.mhe:
                     if verbosity > 1: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
 
                     if 'adjust_shell_top_mass' in list(self.static_params):
-                        # experimental: move this mass coordinate to satisfy global he conservation
                         if self.static_params['adjust_shell_top_mass']:
+                            # experimental: move this mass coordinate to satisfy global he conservation
                             if 'adjust_shell_top_abundance' in list(self.static_params):
-                                assert not self.static_params['adjust_shell_top_abundance'] # choose one or the other
+                                assert not self.static_params['adjust_shell_top_abundance'] # user must choose one or the other
                             delta = tentative_total_he_mass - self.mhe # > 0
                             dm_in = self.dm[k] + delta / (yout[k+1] - yout[k])
                             dm_out = (self.dm[k] + self.dm[k+1]) - dm_in
@@ -753,37 +754,42 @@ class evol:
                             self.m[k] = self.m[k-1] + self.dm[k]
                             self.m[k+1] = self.m[k] + self.dm[k+1]
 
-                            tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
-
                     if 'adjust_shell_top_abundance' in list(self.static_params):
                         if self.static_params['adjust_shell_top_abundance']:
-                            if 'adjust_shell_top_mass' in list(self.static_params):
-                                assert not self.static_params['adjust_shell_top_mass'] # choose one or the other
                             # experimental: conserve He exactly by setting an intermediate abundance at shell top zone
-                            yout[k] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k] * self.dm[k-1])) / self.dm[k-1]
+                            if 'adjust_shell_top_mass' in list(self.static_params):
+                                assert not self.static_params['adjust_shell_top_mass'] # user must choose one or the other
 
-                            # if yout[k] < yout[k+1]:
-                            #     # intermediate zone has Y less than zone above it. shell needs to step back.
-                            #     gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-                            #     assert type(gap) is tuple
-                            #     xplo, xphi = gap
-                            #     yout[k] = get_y(self.z[k], get_yp(xplo))
-                            #     yout[k-1] = 0.
-                            #     yout[k-1] = (self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.dm[k-1]
-                            #
-                            #     # yout[k-1] = (self.mhe - (np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) - yout[k-1] * self.dm[k-2])) / self.dm[k-2]
-                            #     # assert yout[k-1] < yout[k-2]
-                            #     # assert yout[k-1] > yout[k]
-                            #     print(yout[k-2:k+3])
-                            #
-                            #     tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
-                            #     self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
-                            #     print(self.rel_mhe_error)
-                            #     assert False, 'okay'
+                            ##### self.mhe = np.dot(self.y[:-1], self.dm) # initial total he mass
+                            mhe_missing = self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
+                            yout[k] += mhe_missing / self.dm[k]
+                            if yout[k] > yout[k-1] and k > self.kcore:
+                                print('surprise in adjust shell top abundance')
+                                print('k', k, 'kcore', self.kcore)
+                                self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
+                                print(yout[k-2:k+3], self.rel_mhe_error)
+                                # "intermediate" zone came out with Y > Y of shell-top zone.
+                                # current zone is thus the new shell top; next zone out gets intermediate abundance.
+                                gap = self.phase.miscibility_gap(p[k], 8.)
+                                assert type(gap) is tuple
+                                xplo, xphi = gap
+                                mhe_k_1 = yout[k] * self.dm[k-1]
+                                yout[k] = get_y(self.z[k], get_yp(xphi))
+                                mhe_k_2 = yout[k] * self.dm[k-1]
+                                mhe_kp1 = yout[k+1] * self.dm[k]
+                                self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
+                                print(yout[k-2:k+3], self.rel_mhe_error)
+                                yout[k+1] = (mhe_kp1 + mhe_k_1 - mhe_k_2) / self.dm[k]
+                                self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
+                                print(yout[k-2:k+3], self.rel_mhe_error)
 
-                            tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
-                            self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
+                                tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
+                                self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
+                                print(self.rel_mhe_error)
+                                assert False
 
+
+                    tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                     self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
                     if verbosity > 1: print('satisfied he mass conservation to a relative precision of %f' % self.rel_mhe_error)
 
@@ -793,6 +799,9 @@ class evol:
         if rainout_to_core: assert self.k_shell_top
 
         # self.nz_gradient = len(np.where(np.diff(yout) < 0)[0])
+
+        if np.any(yout > 1.):
+            raise UnphysicalParameterError('one or more bad y in equilibrium_y_profile')
 
         return yout
 
