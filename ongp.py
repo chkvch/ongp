@@ -82,7 +82,7 @@ class evol:
             'nz':1024,
             'radius_rtol':1e-4,
             'y1_rtol':1e-4,
-            'max_iters_static':50,
+            'max_iters_static':100,
             'min_iters_static':3,
             'max_iters_static_before_rain':3
         }
@@ -531,7 +531,7 @@ class evol:
                 last_three_y1 = last_three_y1[1], last_three_y1[2], self.y[-1]
                 # include a similar check on y1?
             else:
-                raise ConvergenceError()
+                raise ConvergenceError('static model iters {} exceeded max_iters_static {}'.format(self.iters_rain, self.evol_params['max_iters_static']))
         else:
             self.k_gradient_top = None
             self.k_gradient_bot = None
@@ -1071,18 +1071,41 @@ class evol:
         self.g = const.cgrav * self.m / self.r ** 2
         self.g[0] = self.g[1] # hack so that we don't get infs in, e.g., pressure scale height. won't effect anything
 
+        hhe_res_env = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+
         # this is a structure derivative, not a thermodynamic one. wherever the profile is a perfect adiabat, this is also gamma1.
         self.dlogp_dlogrho = np.diff(np.log(self.p)) / np.diff(np.log(self.rho))
 
         self.gamma1 = np.zeros_like(self.p)
+        self.gamma3 = np.zeros_like(self.p)
         self.csound = np.zeros_like(self.p)
         self.gradt_direct = np.zeros_like(self.p)
 
         if self.kcore > 0 and self.evol_params['z_eos_option']: # compute gamma1 in core
             self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        self.gamma1[self.kcore:] = self.hhe_eos.get_gamma1(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+        self.gamma1[self.kcore:] = hhe_res_env['gamma1']
+        self.gamma3[self.kcore:] = hhe_res_env['gamma3']
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
         self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
+
+        # ignoring the envelope z component here
+        self.chirho[self.kcore:] = hhe_res_env['chirho']
+        self.chit[self.kcore:] = hhe_res_env['chit']
+        self.gradt_direct[:self.kcore] = 0.
+        self.gradt_direct[self.kcore+1:] = np.diff(np.log(self.t[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+
+        # terms needed for calculation of the composition term brunt_B.
+        # Feb 13 2019: this is already calculated in static for models with helium gradients.
+        # self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+        # if self.k_shell_top:
+        #     self.grady[self.k_shell_top+1] = 0.
+        # self.grady[np.where(np.isnan(self.grady))] = 0.
+        # this is the thermodynamic derivative (const P and T), for H-He.
+        self.dlogrho_dlogy = np.zeros_like(self.p)
+        try:
+            self.dlogrho_dlogy[self.kcore:] = hhe_res_env['chiy']
+        except:
+            pass
 
         self.delta_nu = (2. * trapz(self.csound ** -1, x=self.r)) ** -1 * 1e6 # the large frequency separation in uHz
         self.delta_nu_env = (2. * trapz(self.csound[self.kcore:] ** -1, x=self.r[self.kcore:])) ** -1 * 1e6
@@ -1100,27 +1123,6 @@ class evol:
                 print('cannot calculate things like grada in core and so this model may not be suited for eigenmode calculations.')
                 pass
 
-        # ignoring the envelope z component when it comes to calculating chirho and chit
-        res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:]) # a final H/He eos call
-        self.chirho[self.kcore:] = res['chirho']
-        self.chit[self.kcore:] = res['chit']
-        self.gamma1[self.kcore:] = res['gamma1']
-        self.gradt_direct[:self.kcore] = 0. # was previously self.gradt
-        self.gradt_direct[self.kcore+1:] = np.diff(np.log(self.t[self.kcore:])) / np.diff(np.log(self.p[self.kcore:])) # was previously self.gradt
-
-        # terms needed for calculation of the composition term brunt_B.
-        # Feb 13 2019: this is already calculated in static for models with helium gradients.
-        # self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
-        # if self.k_shell_top:
-        #     self.grady[self.k_shell_top+1] = 0.
-        # self.grady[np.where(np.isnan(self.grady))] = 0.
-        # this is the thermodynamic derivative (const P and T), for H-He.
-        self.dlogrho_dlogy = np.zeros_like(self.p)
-        try:
-            self.dlogrho_dlogy[self.kcore:] = res['chiy']
-        except:
-            pass
-
         self.brunt_n2_direct = np.zeros_like(self.p)
         self.brunt_n2_direct[1:] = self.g[1:] / self.r[1:] * (dlnp_dlnr / self.gamma1[1:] - dlnrho_dlnr)
 
@@ -1134,9 +1136,7 @@ class evol:
         rho_hhe = np.zeros_like(self.p)
         if np.any(self.z > 0.) and self.evol_params['z_eos_option']:
             rho_z[self.z > 0.] = self.get_rho_z(np.log10(self.p[self.z > 0.]), np.log10(self.t[self.z > 0.]))
-        # rho_hhe[self.y > 0.] = 10 ** self.hhe_eos.get_logrho(np.log10(self.p[self.y > 0.]), np.log10(self.t[self.y > 0.]), self.y[self.y > 0.])
-        # rho_hhe[self.y == 0.] = 10 ** self.hhe_eos.get_h_logrho((np.log10(self.p[self.y == 0]), np.log10(self.t[self.y == 0.])))
-        rho_hhe[self.kcore:] = 10 ** res['logrho']
+        rho_hhe[self.kcore:] = 10 ** hhe_res_env['logrho']
         self.dlogrho_dlogz = np.zeros_like(self.p)
         # dlogrho_dlogz is only calculable where all of X, Y, and Z are non-zero.
         self.dlogrho_dlogz[self.z * self.y > 0.] = -1. * self.rho[self.z * self.y > 0.] * self.z[self.z * self.y > 0.] * (rho_z[self.z * self.y > 0.] ** -1 - rho_hhe[self.z * self.y > 0.] ** -1)
@@ -1209,7 +1209,7 @@ class evol:
                                 * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:k_t_boundary+1]), \
                                                                         np.log10(self.t[self.kcore:k_t_boundary+1])) \
                             + (1. - self.z[self.kcore:k_t_boundary+1]) / rho_hhe[self.kcore:k_t_boundary+1] \
-                                * res['rhot'][:k_t_boundary+1-self.kcore]) # this funny slice is because res[...] only runs kcore to surface
+                                * hhe_res_env['rhot'][:k_t_boundary+1-self.kcore]) # this funny slice is because res[...] only runs kcore to surface
                 else: # pure H/He, just ask SCvH
                     self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = res['rhot'][:k_t_boundary+1]
             except:
@@ -1222,7 +1222,7 @@ class evol:
                                                     * self.z_eos_low_t.get_dlogrho_dlogt_const_p(np.log10(self.p[k_t_boundary+1:]), \
                                                                                                 np.log10(self.t[k_t_boundary+1:])) \
                                                     + (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] \
-                                                        * res['rhot'][k_t_boundary+1-self.kcore:])
+                                                        * hhe_res_env['rhot'][k_t_boundary+1-self.kcore:])
                 else:
                     self.dlogrho_dlogt_const_p[k_t_boundary+1:] = res['rhot'][k_t_boundary+1-self.kcore:]
             except:
@@ -1606,6 +1606,7 @@ class evol:
         profile['rf'] = np.copy(self.rf)
         profile['mf'] = np.copy(self.mf)
         profile['grady'] = np.copy(self.grady)
+        profile['brunt_b'] = np.copy(self.brunt_b)
         # profile['pressure_scale_height'] = self.pressure_scale_height
         try:
             profile['dy'] = np.copy(self.y - self.ystart)

@@ -91,12 +91,14 @@ class eos:
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
         s_h = 10 ** self.get_logs_h(logp, logt)
-        s_he = 10 ** self.get_logs_he(logp, logt)
         sp_h = self.get_sp_h(logp, logt)
         st_h = self.get_st_h(logp, logt)
+
+        s_he = 10 ** self.get_logs_he(logp, logt)
         sp_he = self.get_sp_he(logp, logt)
         st_he = self.get_st_he(logp, logt)
 
+        # smix = 10 ** self.he_eos.get_logsmix(logp, logt, y)
         s = (1. - y) * s_h + y * s_he # + smix
         st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix/s*dlogsmix/dlogt
         sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix/s*dlogsmix/dlogp
@@ -117,22 +119,48 @@ class eos:
 
         chirho = 1. / rhop # dlnP/dlnrho|T
         chit = -1. * rhot / rhop # dlnP/dlnT|rho
-        gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
+        # gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
         chiy = -1. * rho * y * (1. / rho_he - 1. / rho_h) # dlnrho/dlnY|P,T
+
+        # from scvh.py
+        # dpdt_const_rho = - 10 ** logp / 10 ** logt * res['rhot'] / res['rhop']
+        # dudt_const_rho = s * (res['st'] - res['sp'] * res['rhot'] / res['rhop'])
+        # dpdu_const_rho = dpdt_const_rho / 10 ** res['logrho'] / dudt_const_rho
+        # gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
+        # gamma1 = (gamma3 - 1.) / res['grada']
+        # res['gamma3'] = gamma3
+        # res['gamma1'] = gamma1
+        # res['chirho'] = res['rhop'] ** -1 # rhop = dlogrho/dlogp|t
+        # res['chit'] = dpdt_const_rho * 10 ** logt / 10 ** logp
+        # res['chiy'] = -1. * 10 ** res['logrho'] * y * (1. / 10 ** res_he['logrho'] - 1. / 10 ** res_h['logrho']) # dlnrho/dlnY|P,T
+        # # from mesa's scvh in mesa/eos/eosPT_builder/src/scvh_eval.f
+        # # 1005:      Cv = chiT * P / (rho * T * (gamma3 - 1)) ! C&G 9.93
+        # # 1006:      Cp = Cv + P * chiT**2 / (Rho * T * chiRho) ! C&G 9.86
+        # res['cv'] = res['chit'] * 10 ** logp / (10 ** res['logrho'] * 10 ** logt * (gamma3 - 1.)) # erg g^-1 K^-1
+        # res['cp'] = res['cv'] + 10 ** logp * res['chit'] ** 2 / (10 ** res['logrho'] * 10 ** logt * res['chirho']) # erg g^-1 K^-1
+
+        gamma1 = chirho / (1. - chit * grada)
+        gamma3 = 1. + gamma1 * grada
+        cp = s * st
+        cv = cp * chirho / gamma1 # Unno 13.87
+        csound = np.sqrt(10 ** logp / rho * gamma1)
 
         res =  {
             'grada':grada,
             'logrho':logrho,
             'logs':np.log10(s),
-            'gamma1':gamma1,
             'chirho':chirho,
             'chit':chit,
             'gamma1':gamma1,
+            'gamma3':gamma3,
             'chiy':chiy,
             'rho_h':rho_h,
             'rho_he':rho_he,
             'rhop':rhop,
-            'rhot':rhot
+            'rhot':rhot,
+            'cp':cp,
+            'cv':cv,
+            'csound':csound
             }
         return res
 

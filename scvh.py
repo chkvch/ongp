@@ -562,22 +562,29 @@ class eos:
         res['grada'] = -1. * res['sp'] / res['st']
 
         logp, logt = pair
-        dpdt_const_rho = - 10 ** logp / 10 ** logt * res['rhot'] / res['rhop']
-        dudt_const_rho = s * (res['st'] - res['sp'] * res['rhot'] / res['rhop'])
-        dpdu_const_rho = dpdt_const_rho / 10 ** res['logrho'] / dudt_const_rho
-        gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
-        gamma1 = (gamma3 - 1.) / res['grada']
-        res['gamma3'] = gamma3
-        res['gamma1'] = gamma1
-        res['chirho'] = res['rhop'] ** -1 # rhop = dlogrho/dlogp|t
-        res['chit'] = dpdt_const_rho * 10 ** logt / 10 ** logp
+        # dpdt_const_rho = - 10 ** logp / 10 ** logt * res['rhot'] / res['rhop']
+        # dudt_const_rho = s * (res['st'] - res['sp'] * res['rhot'] / res['rhop'])
+        # dpdu_const_rho = dpdt_const_rho / dudt_const_rho # had a 1. / rho for some reason?
+        # gamma3 = 1. + dpdu_const_rho # cox and giuli 9.93a
+        # gamma1 = (gamma3 - 1.) / res['grada']
+        # res['gamma3'] = gamma3
+        # res['gamma1'] = gamma1
+        # res['chirho'] = res['rhop'] ** -1 # rhop = dlogrho/dlogp|t
+        # res['chit'] = dpdt_const_rho * 10 ** logt / 10 ** logp
         res['chiy'] = -1. * 10 ** res['logrho'] * y * (1. / 10 ** res_he['logrho'] - 1. / 10 ** res_h['logrho']) # dlnrho/dlnY|P,T
+        res['chirho'] = 1. / res['rhop']
+        res['chit'] = - res['rhot'] / res['rhop']
+        res['gamma1'] = res['chirho'] / (1. - res['chit'] * res['grada'])
+        res['gamma3'] = 1. + res['gamma1'] * res['grada']
+        res['csound'] = np.sqrt(10 ** logp / 10 ** res['logrho'] * res['gamma1'])
 
         # from mesa's scvh in mesa/eos/eosPT_builder/src/scvh_eval.f
         # 1005:      Cv = chiT * P / (rho * T * (gamma3 - 1)) ! C&G 9.93
         # 1006:      Cp = Cv + P * chiT**2 / (Rho * T * chiRho) ! C&G 9.86
-        res['cv'] = res['chit'] * 10 ** logp / (10 ** res['logrho'] * 10 ** logt * (gamma3 - 1.)) # erg g^-1 K^-1
-        res['cp'] = res['cv'] + 10 ** logp * res['chit'] ** 2 / (10 ** res['logrho'] * 10 ** logt * res['chirho']) # erg g^-1 K^-1
+        res['cv_alt'] = res['chit'] * 10 ** logp / (10 ** res['logrho'] * 10 ** logt * (res['gamma3'] - 1.)) # erg g^-1 K^-1
+        res['cp_alt'] = res['cv_alt'] + 10 ** logp * res['chit'] ** 2 / (10 ** res['logrho'] * 10 ** logt * res['chirho']) # erg g^-1 K^-1
+        res['cp'] = 10 ** res['logs'] * res['st']
+        res['cv'] = res['cp'] * res['chirho'] / res['gamma1'] # Unno 13.87
 
         return res
 
