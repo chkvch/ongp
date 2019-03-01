@@ -25,7 +25,7 @@ class hhe_phase_diagram:
 
     """
 
-    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False):
+    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False, t_shift_p1=False):
 
         if extrapolate_to_low_pressure:
             raise NotImplementedError('extrapolate_to_low_pressure not implemented in lorenzen')
@@ -35,6 +35,9 @@ class hhe_phase_diagram:
 
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         data = np.genfromtxt('{}/demixHHe_Lorenzen.dat'.format(path_to_data), names=self.columns)
+
+        if t_shift_p1:
+            data['t'][data['p'] == 1.] += t_shift_p1
 
         # for 1 Mbar curve, max T is reached for two consecutive points:
         # [ 0.24755  0.29851]
@@ -295,6 +298,54 @@ class hhe_phase_diagram:
 
         return xlo, xhi
 
+    def t_phase(self, p, x):
+        '''for a given pressure and helium-poor number fraction, return the phase boundary temperature.
+
+        args
+        p: pressure in Mbar = 1e12 dyne cm^-2
+        x: helium number fraction (dimensionless)
+        )
+        returns
+        t_phase: phase boundary temperature (kK)
+        '''
+        if p == 1.:
+            p += 1e-10
+
+        if p < min(self.pvals):
+            return 'failed'
+            raise ValueError('p value {} outside bounds for phase diagram'.format(p))
+        elif p > max(self.pvals):
+            return 'failed'
+            raise ValueError('p value {} outside bounds for phase diagram'.format(p))
+
+        plo = self.pvals[self.pvals < p][-1]
+        phi = self.pvals[self.pvals > p][0]
+        assert p > plo
+        assert p < phi
+
+        # check condition on x?
+
+        zmin_plo = zmin_phi = 0.001
+        try:
+            zlo_plo = brentq(lambda z: self.splinex(plo, z) - x, zmin_plo, self.zcrit[plo])
+            zlo_phi = brentq(lambda z: self.splinex(phi, z) - x, zmin_phi, self.zcrit[phi])
+        except ValueError as e:
+            raise
+            return 'failed'
+
+        tlo_plo = self.splinet(plo, zlo_plo)
+        tlo_phi = self.splinet(phi, zlo_phi)
+
+        # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
+        # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
+
+        # P interpolation is linear in logP
+        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+        # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+        t_phase = alpha * tlo_phi + (1. - alpha) * tlo_plo
+
+        return t_phase
+
     def get_tcrit(self, p):
         plo = self.pvals[self.pvals < p][-1]
         phi = self.pvals[self.pvals > p][0]
@@ -303,3 +354,32 @@ class hhe_phase_diagram:
 
         alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
         return alpha * self.tcrit[phi] + (1. - alpha) * self.tcrit[plo]
+
+    def show_splines(self, show_data=True, ax=None, label_curves=True, **kwargs):
+        import matplotlib.pyplot as plt
+        _ = np.linspace(0, 1, 100)
+        if not ax: ax = plt.gca()
+        for pval in self.pvals:
+            bsplinex = splev(_, self.tck_x[pval])
+            bsplinet = splev(_, self.tck_t[pval])
+
+            from startup import color_cycle
+            color = color_cycle[{1:1, 2:4, 4:5, 10:6, 24:7}[pval]]
+
+            c, = ax.plot(bsplinex, bsplinet, color=color, **kwargs)
+
+            if label_curves:
+                imax = np.where(bsplinet == max(bsplinet))[0][0]
+                x0, y0 = bsplinex[imax], bsplinet[imax] - 0.250
+                # if pval == 4:
+                #     x0 -= 0.1
+                # if pval == 24:
+                #     x0 += 0.1
+                label = '%.1f' % pval
+                if pval == 1:
+                    label += ' Mbar'
+                ax.text(x0, y0, label,
+                    ha='center', va='top', fontsize=16, color=c.get_color())
+
+        ax.set_xlabel(r'$x_{\rm He}$')
+        # ax.set_ylabel(r'$T\ (10^3\ {\rm K})$')

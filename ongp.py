@@ -63,12 +63,15 @@ class evol:
         if 'hhe_phase_diagram' in params.keys():
             if not 'extrapolate_phase_diagram_to_low_pressure' in params.keys():
                 params['extrapolate_phase_diagram_to_low_pressure'] = False
+            if not 't_shift_p1' in params.keys():
+                params['t_shift_p1'] = None
             if params['hhe_phase_diagram'] == 'lorenzen':
                 import lorenzen
                 reload(lorenzen)
                 self.phase = lorenzen.hhe_phase_diagram(
                                         params['path_to_data'],
-                                        extrapolate_to_low_pressure=params['extrapolate_phase_diagram_to_low_pressure']
+                                        extrapolate_to_low_pressure=params['extrapolate_phase_diagram_to_low_pressure'],
+                                        t_shift_p1=params['t_shift_p1']
                                         )
             elif params['hhe_phase_diagram'] == 'schoettler':
                 import schoettler
@@ -591,7 +594,7 @@ class evol:
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
 
-        if verbosity > 0: print('iters {}, iters rain {:2n}, rtot {:.5e}, y1 {:.4f} '.format(self.iters, self.iters_rain, self.r[-1], self.y[-1]), end='')
+        # if verbosity > 0: print('iters {}, iters rain {:2n}, rtot {:.5e}, y1 {:.4f} '.format(self.iters, self.iters_rain, self.r[-1], self.y[-1]), end='')
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
@@ -1080,6 +1083,8 @@ class evol:
         self.gamma3 = np.zeros_like(self.p)
         self.csound = np.zeros_like(self.p)
         self.gradt_direct = np.zeros_like(self.p)
+        self.cp = np.zeros_like(self.p)
+        self.cv = np.zeros_like(self.p)
 
         if self.kcore > 0 and self.evol_params['z_eos_option']: # compute gamma1 in core
             self.gamma1[:self.kcore] = self.z_eos.get_gamma1(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
@@ -1087,6 +1092,8 @@ class evol:
         self.gamma3[self.kcore:] = hhe_res_env['gamma3']
         self.csound = np.sqrt(self.p / self.rho * self.gamma1)
         self.lamb_s12 = 2. * self.csound ** 2 / self.r ** 2 # lamb freq. squared for l=1
+        self.cp[self.kcore:] = hhe_res_env['cp']
+        self.cv[self.kcore:] = hhe_res_env['cv']
 
         # ignoring the envelope z component here
         self.chirho[self.kcore:] = hhe_res_env['chirho']
@@ -1210,12 +1217,12 @@ class evol:
                                                                         np.log10(self.t[self.kcore:k_t_boundary+1])) \
                             + (1. - self.z[self.kcore:k_t_boundary+1]) / rho_hhe[self.kcore:k_t_boundary+1] \
                                 * hhe_res_env['rhot'][:k_t_boundary+1-self.kcore]) # this funny slice is because res[...] only runs kcore to surface
-                else: # pure H/He, just ask SCvH
-                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = res['rhot'][:k_t_boundary+1]
+                else: # pure H/He
+                    self.dlogrho_dlogt_const_p[self.kcore:k_t_boundary+1] = hhe_res_env['rhot'][:k_t_boundary+1-self.kcore]
             except:
                 print('failed in dlogrho_dlogt_const_p for hi-T part of envelope')
                 raise
-            try: # fix for z==0
+            try:
                 if self.z1 > 0.:
                     self.dlogrho_dlogt_const_p[k_t_boundary+1:] = self.rho[k_t_boundary+1:] \
                                                     * (self.z[k_t_boundary+1:] / rho_z[k_t_boundary+1:] \
@@ -1224,18 +1231,21 @@ class evol:
                                                     + (1. - self.z[k_t_boundary+1:]) / rho_hhe[k_t_boundary+1:] \
                                                         * hhe_res_env['rhot'][k_t_boundary+1-self.kcore:])
                 else:
-                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = res['rhot'][k_t_boundary+1-self.kcore:]
+                    self.dlogrho_dlogt_const_p[k_t_boundary+1:] = hhe_res_env['rhot'][k_t_boundary+1-self.kcore:]
             except:
                 print('failed in dlogrho_dlogt_const_p for lo-T part of envelope')
                 raise
 
         else: # no need to sweat low vs. high t (only an REOS-H2O limitation)
             if self.evol_params['z_eos_option']:
-                self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * \
-                    (self.z[self.kcore:] / rho_z[self.kcore:] \
-                    * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) \
-                    + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] \
-                    * res['rhot'])
+                if self.z1 == 0.:
+                    self.dlogrho_dlogt_const_p[self.kcore:] = hhe_res_env['rhot']
+                else:
+                    self.dlogrho_dlogt_const_p[self.kcore:] = self.rho[self.kcore:] * \
+                        (self.z[self.kcore:] / rho_z[self.kcore:] \
+                        * self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:])) \
+                        + (1. - self.z[self.kcore:]) / rho_hhe[self.kcore:] \
+                        * hhe_res_env['rhot'])
             else:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
@@ -1386,13 +1396,16 @@ class evol:
                     break
                 except AtmError as e:
                     if 'failed to bracket' in e.args[0]: # probably off tables
-                        # self.status = e
-                        # break # exit retry loop
-                        delta_t /= 3.
-                        msg = '{:>50}'.format('AtmError, try smaller timestep')
-                        limit = 'atm'
-                        retries += 1
-                        continue
+                        if False:
+                            delta_t /= 3.
+                            msg = '{:>50}'.format('AtmError, try smaller timestep')
+                            limit = 'atm'
+                            retries += 1
+                            continue
+                        else:
+                            raise
+                            # self.status = e
+                            # break # exit retry loop
                     else:
                         raise
                 except Exception as e:
@@ -1463,8 +1476,6 @@ class evol:
                     self.status = ConvergenceError('reached max number of retries for evolve step')
                     break # exit retry loop
 
-            if self.status != 'okay': limit = 'fail'
-
             if 'full_profiles' in list(params):
                 if params['full_profiles']:
                     if not hasattr(self, 'profiles'): self.profiles = {}
@@ -1475,6 +1486,7 @@ class evol:
             self.append_history()
 
             # realtime output
+            if self.status != 'okay': limit = 'fail'
             k_grady = self.k_gradient_top if self.k_gradient_top else -1
             k_shell = self.k_shell_top if self.k_shell_top else -1
             iters_rain = self.iters_rain if hasattr(self, 'iters_rain') else -1
@@ -1494,6 +1506,9 @@ class evol:
             if params[which_t] < end_t:
                 # took a good last step
                 done = True
+            # elif hasattr(self.status, 'args'):
+                # if 'failed to bracket' in self.status.args[0]:
+                    # done = True
             else:
                 # took a normal good step
                 previous_entropy = self.entropy
@@ -1603,6 +1618,8 @@ class evol:
         profile['chit'] = np.copy(self.chit)
         profile['gradt'] = np.copy(self.gradt)
         profile['grada'] = np.copy(self.grada)
+        profile['cp'] = np.copy(self.cp)
+        profile['cv'] = np.copy(self.cv)
         profile['rf'] = np.copy(self.rf)
         profile['mf'] = np.copy(self.mf)
         profile['grady'] = np.copy(self.grady)
