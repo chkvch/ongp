@@ -65,18 +65,24 @@ class evol:
                 params['extrapolate_phase_diagram_to_low_pressure'] = False
             if not 't_shift_p1' in params.keys():
                 params['t_shift_p1'] = None
+            if not 'x_transform' in params.keys():
+                params['x_transform'] = None
+            if not 'y_transform' in params.keys():
+                params['y_transform'] = None
             if params['hhe_phase_diagram'] == 'lorenzen':
                 import lorenzen
                 reload(lorenzen)
                 self.phase = lorenzen.hhe_phase_diagram(
                                         params['path_to_data'],
                                         extrapolate_to_low_pressure=params['extrapolate_phase_diagram_to_low_pressure'],
-                                        t_shift_p1=params['t_shift_p1']
+                                        t_shift_p1=params['t_shift_p1'],
+                                        x_transform=params['x_transform'],
+                                        y_transform=params['y_transform']
                                         )
             elif params['hhe_phase_diagram'] == 'schoettler':
                 import schoettler
                 reload(schoettler)
-                self.phase = schoettler.hhe_phase_diagram()
+                self.phase = schoettler.hhe_phase_diagram(x_transform=params['x_transform'],y_transform=params['y_transform'])
             else:
                 raise ValueError('hydrogen-helium phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
 

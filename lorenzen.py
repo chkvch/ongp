@@ -25,7 +25,7 @@ class hhe_phase_diagram:
 
     """
 
-    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False, t_shift_p1=False):
+    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False, t_shift_p1=False, x_transform=None, y_transform=None):
 
         if extrapolate_to_low_pressure:
             raise NotImplementedError('extrapolate_to_low_pressure not implemented in lorenzen')
@@ -36,8 +36,46 @@ class hhe_phase_diagram:
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         data = np.genfromtxt('{}/demixHHe_Lorenzen.dat'.format(path_to_data), names=self.columns)
 
+        x0 = get_xp(0, 0.27)
         if t_shift_p1:
+            assert not x_transform, 'got both t_shift_p1 and x_transform; probably only necessary to do one of these.'
             data['t'][data['p'] == 1.] += t_shift_p1
+        if x_transform:
+            assert not t_shift_p1, 'got both x_transform and t_shift_p1; probably only necessary to do one of these.'
+            assert not y_transform, 'got both x_transform and t_shift_p1; probably only necessary to do one of these.'
+            f = x_transform['f']
+            x1 = x_transform['x1']
+            assert abs(x_transform['f']) < 0.5, 'x transform |f|={}>0.5 implies an inverted transform'.format(f)
+            # x2 = x1 * 2
+            # uk = np.array([0, x1/2, x1, x2, 1])
+            # vk = np.array([0, x1/2 * (1. - f), x1, x2 + f * (1. - x2), 1])
+            # tck = splrep(uk, vk, k=3)
+            uk = np.array([0, x1/2, x1, x1*3/2, 1])
+            vk = np.array([0, x1 * (0.5 - f), x1, x1 * (1.5 + f), 1])
+            tck = splrep(uk, vk, k=1)
+            # test = splev(np.linspace(0, x1, 101), tck)
+            # if not np.all(np.diff(test[test<x1]) > 0.):
+                # raise ValueError('do not have monotone x on low-x remesh for f={}'.format(f))
+            # data['x'][data['x'] < x1] = splev(data['x'][data['x'] < x1], tck)
+            data['x'] = splev(data['x'], tck)
+        elif y_transform:
+            assert not t_shift_p1
+            assert not x_transform
+            f = y_transform['f']
+            y0 = y_transform['y0']
+            def transform(y):
+                a = np.pi * (2. * y - 1)
+                a0 = np.pi * (2. * y0 - 1)
+                y = np.tanh((a-a0)) * np.exp(-(a-a0)**2) * f + a
+                y -= min(y)
+                y /= max(y)
+                # if np.any(np.diff(y) <= 0):
+                #     raise ValueError('got inversion for y transform f={}, y0={}'.format(f, y0))
+                return y
+
+            data_y = get_y(0, data['x'])
+            new_y = transform(data_y)
+            data['x'][data['x'] < get_xp(0, y0)] = get_xp(0, new_y[data['x'] < get_xp(0, y0)])
 
         # for 1 Mbar curve, max T is reached for two consecutive points:
         # [ 0.24755  0.29851]
@@ -114,6 +152,8 @@ class hhe_phase_diagram:
                 # this should be trivial to get from spline coefficients analytically,
                 # but get it numerically for convenience
                 def one_div_t_this_spline(z):
+                    if z > 1: return np.inf
+                    if z < 0: return np.inf
                     return self.splinet(pval, z) * -1
                 sol = minimize(one_div_t_this_spline, 0.5, tol=1e-2)
                 assert sol['success']
@@ -127,10 +167,15 @@ class hhe_phase_diagram:
                 x_ = np.array([])
                 t_ = np.array([])
                 for iz, (xval, tval, zval) in enumerate(zip(x, t, z)):
+                    if zval < self.zcrit[pval]:
+                        if x[iz+1] < x[iz]:
+                            continue
                     if zval > self.zcrit[pval] and tval < 4:
-                        continue
+                        pass
+                        # continue
                     elif abs(iz - izcrit) > 2 and iz % izskip != 0:
-                        continue
+                        pass
+                        # continue
                     else:
                         x_ = np.append(x_, xval)
                         t_ = np.append(t_, tval)
@@ -141,19 +186,20 @@ class hhe_phase_diagram:
                 del(x, t, z)
                 x = x_
                 t = t_
-                # prune unnecessary parts that remain (identified by eye)
-                if pval == 1:
-                    x = x[2:]
-                    t = t[2:]
-                elif pval == 2:
-                    x = x[4:]
-                    t = t[4:]
-                elif pval == 10:
-                    x = x[:-4]
-                    t = t[:-4]
-                elif pval == 24:
-                    x = x[:-8]
-                    t = t[:-8]
+                if False:
+                    # prune unnecessary parts that remain (identified by eye)
+                    if pval == 1:
+                        x = x[2:]
+                        t = t[2:]
+                    elif pval == 2:
+                        x = x[4:]
+                        t = t[4:]
+                    elif pval == 10:
+                        x = x[:-4]
+                        t = t[:-4]
+                    elif pval == 24:
+                        x = x[:-8]
+                        t = t[:-8]
 
             if np.any(np.diff(t) == 0.):
                 # this is a problem for third option in miscibility_gap below, which interpolates
@@ -172,6 +218,7 @@ class hhe_phase_diagram:
             # this should be trivial to get from spline coefficients analytically,
             # but get it numerically for convenience. only needs to be done once.
             def one_div_t_this_spline(z):
+                if z > 1: return np.inf
                 return self.splinet(pval, z) * -1
             sol = minimize(one_div_t_this_spline, 0.5, tol=1e-5)
             assert sol['success']
@@ -325,11 +372,12 @@ class hhe_phase_diagram:
 
         # check condition on x?
 
-        zmin_plo = zmin_phi = 0.001
+        zmin_plo = zmin_phi = 0.
         try:
             zlo_plo = brentq(lambda z: self.splinex(plo, z) - x, zmin_plo, self.zcrit[plo])
             zlo_phi = brentq(lambda z: self.splinex(phi, z) - x, zmin_phi, self.zcrit[phi])
         except ValueError as e:
+            print('plo={}, phi={}, x={}'.format(plo, phi, x))
             raise
             return 'failed'
 
@@ -383,3 +431,8 @@ class hhe_phase_diagram:
 
         ax.set_xlabel(r'$x_{\rm He}$')
         # ax.set_ylabel(r'$T\ (10^3\ {\rm K})$')
+
+def get_xp(z, y):
+    return y / (4. * (1. - z) - 3. * y)
+def get_y(z, xp):
+    return 4. * xp * (1. - z) / (1. + 3 * xp)

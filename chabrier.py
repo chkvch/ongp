@@ -102,8 +102,14 @@ class eos:
 
         chirho = 1. / rhop # dlnP/dlnrho|T
         chit = -1. * rhot / rhop # dlnP/dlnT|rho
-        gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
+        # gamma1 = 1. / (sp ** 2 / st + rhop) # dlnP/dlnrho|s
         chiy = -1. * rho * y * (1. / rho_he - 1. / rho_h) # dlnrho/dlnY|P,T
+
+        gamma1 = chirho / (1. - chit * grada)
+        gamma3 = 1. + gamma1 * grada
+        cp = s * st
+        cv = cp * chirho / gamma1 # Unno 13.87
+        csound = np.sqrt(10 ** logp / rho * gamma1)
 
         res =  {
             'grada':grada,
@@ -113,11 +119,15 @@ class eos:
             'chirho':chirho,
             'chit':chit,
             'gamma1':gamma1,
+            'gamma3':gamma3,
             'chiy':chiy,
             'rho_h':rho_h,
             'rho_he':rho_he,
             'rhop':rhop,
-            'rhot':rhot
+            'rhot':rhot,
+            'cp':cv,
+            'cv':cv,
+            'csound':csound
             }
         return res
 
