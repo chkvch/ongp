@@ -383,9 +383,9 @@ class evol:
         # self.set_core_density()
         # self.set_envelope_density()
         #
-        # if 'debug_iterations' in params.keys():
-        #     if params['debug_iterations']:
-        #         t0 = time.time()
+        if 'debug_iterations' in params.keys():
+            if params['debug_iterations']:
+                t0 = time.time()
 
         # relax to hydrostatic
         last_three_radii = 0, 0, 0
