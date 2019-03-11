@@ -608,11 +608,9 @@ class evol:
         if False:
             gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
             if type(gap) is str:
-                if gap == 'stable':
-                    if verbosity > 0: print('unconditionally stable (k={:n} p={:.4f} t={:.4f} dt={:n})'.format(k1, p[k1], t[k1], phase_t_offset))
-                    return self.y
-                elif gap == 'failed':
-                    raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k1], t[k1], t[k1] - phase_t_offset*1e-3))
+                assert gap == 'stable'
+                if verbosity > 0: print('unconditionally stable (k={:n} p={:.4f} t={:.4f} dt={:n})'.format(k1, p[k1], t[k1], phase_t_offset))
+                return self.y
             elif type(gap) is tuple:
                 xplo, xphi = gap
                 ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
@@ -631,16 +629,14 @@ class evol:
         else:
             min_ymax_minus_y = 1
             for k in np.arange(self.nz-1, self.kcore, -1):
-                if p[k] < 0.5: continue
-                if k == self.kcore + 1:
-                    if verbosity > 0: print('all zones stable')
+                if p[k] < min(self.phase.pvals): continue
+                if k == self.kcore + 1 or p[k] > max(self.phase.pvals):
+                    if verbosity > 0: print('rain iter {}: all zones stable'.format(self.iters_rain))
                     return self.y
                 gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
                 if type(gap) is str:
-                    if gap == 'stable':
-                        continue
-                    elif gap == 'failed':
-                        raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k], t[k], t[k] - phase_t_offset*1e-3))
+                    assert gap == 'stable'
+                    continue
                 elif type(gap) is tuple:
                     xplo, xphi = gap
                     ymax = get_y(self.z[k], get_yp(xplo))
@@ -678,7 +674,6 @@ class evol:
 
         yout[k1+1:] = yenv
 
-        # if verbosity > 0: print('demix {:5n} {:.4f} {:.4f} {:.4f} {:5s} {:.5f} {:5s} {:>5f}'.format(k1, self.m[k1] / self.m[-1], p[k1], self.t[k1]*1e-3, 'env', self.y[k1], '-->', yout[k1]))
         if verbosity > 0: print('demix  (k={:n} p={:.4f} t={:.4f} y={:.4f} --> ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1+1], yout[k1+1]))
 
         t0 = time.time()
@@ -692,7 +687,7 @@ class evol:
             gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
             if type(gap) is str:
                 if gap == 'stable':
-                    if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k])
+                    if verbosity > 1: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f})'.format(k, p[k], t[k], yout[k]))
                     break
                 elif gap == 'failed':
                     raise ValueError('failed to get miscibility gap in initial loop over zones. p, t = %f Mbar, %f K' % (p[k], self.t[k]))
@@ -702,7 +697,7 @@ class evol:
                 if k == k1:
                     pass
                 elif yout[k] < ymax:
-                    if verbosity > 1: print('stable', k, self.m[k] / self.m[-1], p[k], self.t[k], yout[k], ' < ', ymax)
+                    if verbosity > 1: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k, p[k], t[k], yout[k], ymax))
                     break
             else:
                 raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
@@ -742,7 +737,8 @@ class evol:
                 break
             else:
                 # all good; uniformly distribute all helium that has rained out from above into deeper interior
-                if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
+                # if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
+                if verbosity > 2: print('demix  (k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(k, p[k], t[k], yout[k], y_interior))
                 yout[self.kcore:k] = y_interior
 
         # if verbosity > 0: print('rainout to core %s' % rainout_to_core)

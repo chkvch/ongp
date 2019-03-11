@@ -1,0 +1,5 @@
+the issue is that each static model starts with Y=0.27 even if last step had rainout.
+
+generally new profiles will always be close to old profiles, so rewrite ongp.static
+so that 'start from scratch' is really the special case, and under normal circumstances
+things like y, z are already known everywhere.
