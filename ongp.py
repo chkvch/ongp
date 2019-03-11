@@ -334,8 +334,8 @@ class evol:
         self.mcore = mcore
         self.dm = np.diff(self.m)
 
-        if not 'transition_pressure' in params.keys():
-            params['transition_pressure'] = 1.
+        # if not 'transition_pressure' in params.keys():
+        #     params['transition_pressure'] = 1.
 
         self.iters = 0
 
@@ -583,8 +583,8 @@ class evol:
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
-        k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
-        ptrans = self.static_params['transition_pressure']
+        # k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
+        # ptrans = self.static_params['transition_pressure']
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -596,6 +596,7 @@ class evol:
         # these combine to
         #   Y = (1 - Z) / (1 + (1 - Yp) / Yp).
 
+        # these can be replaced by somewhat simpler expressions in the handwritten notes
         get_xp = lambda yp: 1. / (1. + 4. * (1. - yp) / yp)
         get_yp = lambda xp: 1. / (1. + (1. - xp) / 4. / xp)
         get_y = lambda z, yp: (1. - z) / (1. + (1. - yp) / yp)
@@ -604,33 +605,58 @@ class evol:
 
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
-        gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
-        if type(gap) is str:
-            if gap == 'stable':
-                if verbosity > 0: print('unconditionally stable (k={:n} p={:.4f} t={:.4f} dt={:n})'.format(k1, p[k1], t[k1], phase_t_offset))
-                return self.y
-            elif gap == 'failed':
-                raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k1], t[k1], t[k1] - phase_t_offset*1e-3))
-        elif type(gap) is tuple:
-            xplo, xphi = gap
-            ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
-            self.ymax_trans = ymax1
-            if self.nz_gradient > 0:
-                if ymax1 >= 0.27:
-                    if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
+        if False:
+            gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+            if type(gap) is str:
+                if gap == 'stable':
+                    if verbosity > 0: print('unconditionally stable (k={:n} p={:.4f} t={:.4f} dt={:n})'.format(k1, p[k1], t[k1], phase_t_offset))
                     return self.y
-                else:
-                    # expect rainout; proceed with rainout calculation
-                    pass
-            elif self.y[k1] < ymax1:
-                if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
-                # track value (> initial Y) so that we can anticipate rain onset
-                return self.y
+                elif gap == 'failed':
+                    raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k1], t[k1], t[k1] - phase_t_offset*1e-3))
+            elif type(gap) is tuple:
+                xplo, xphi = gap
+                ymax1 = get_y(self.z[k1-1], get_yp(xplo)) # self.z[k1] is z1. self.z[k1-1] is z2.
+                self.ymax_trans = ymax1
+                if self.nz_gradient > 0:
+                    if ymax1 >= 0.27:
+                        if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
+                        return self.y
+                    else:
+                        # expect rainout; proceed with rainout calculation
+                        pass
+                elif self.y[k1] < ymax1:
+                    if verbosity > 0: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1], ymax1))
+                    # track value (> initial Y) so that we can anticipate rain onset
+                    return self.y
+        else:
+            min_ymax_minus_y = 1
+            for k in np.arange(self.nz-1, self.kcore, -1):
+                if p[k] < 0.5: continue
+                if k == self.kcore + 1:
+                    if verbosity > 0: print('all zones stable')
+                    return self.y
+                gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
+                if type(gap) is str:
+                    if gap == 'stable':
+                        continue
+                    elif gap == 'failed':
+                        raise ValueError('failed to get miscibility gap in initial loop over zones. off phase diagram? p=%.3f, t = %.3f, t-t_offset=%.3f' % (p[k], t[k], t[k] - phase_t_offset*1e-3))
+                elif type(gap) is tuple:
+                    xplo, xphi = gap
+                    ymax = get_y(self.z[k], get_yp(xplo))
+                    # keep track of the zone closest to rainout
+                    if ymax - self.y[k] < min_ymax_minus_y:
+                        min_ymax_minus_y = ymax - self.y[k]
+                        self.ymax_trans = ymax
+                    if self.y[k] > ymax:
+                        k1 = k
+                        break
 
-        self.ystart = np.copy(self.y)
+        self.ystart = np.copy(self.y) # only gets set if this routine did something.
         yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
 
         if 'interpolate_for_envelope_y' in list(self.static_params):
+            raise ValueError('interpolate_for_envelope_y is not meaningful if there is no hard phase boundary at ptrans.')
             if self.static_params['interpolate_for_envelope_y']:
                 # instead of molecular envelope at the same abundance as first zone with p > ptrans,
                 # set it by querying the phase diagram at *exactly* p=ptrans, t(p=ptrans), with t
@@ -930,6 +956,9 @@ class evol:
             this could be the H molecular-metallic transition for mtot comparable to a Saturn mass.
             this could be the gaseous-icy transition for ice giant masses.
         '''
+        if not 'transition_pressure' in list(self.static_params):
+            self.ktrans = -1
+            return
         try:
             # add + 1 such that self.z[self.ktrans:] = self.z1, consistent with self.set_yz below
             self.ktrans = np.where(self.p >= self.static_params['transition_pressure'] * 1e12)[0][-1] + 1
@@ -1257,6 +1286,7 @@ class evol:
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
         if self.z2: # two-layer envelope in terms of Z
+            assert self.ktrans > 0, 'self.z2 is set but self.ktrans is <= 0. if not setting transition_pressure, then leave z2 unset.'
             self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
             self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
             self.mz_env = self.mz_env_outer + self.mz_env_inner
