@@ -5,6 +5,7 @@ import sys
 import const
 import pickle
 import time
+import os
 try:
     from importlib import reload
 except:
@@ -23,7 +24,9 @@ class evol:
     def __init__(self, params, mesh_params={}):
 
         if not 'path_to_data' in params.keys():
-            raise ValueError('must specify path_to_data indicating path to eos/atm data')
+            params['path_to_data'] = os.environ['ongp_data_path']
+            if not os.path.exists(params['path_to_data']):
+                raise ValueError('must specify path_to_data indicating path to eos/atm data')
 
         if not 'hhe_eos_option' in params.keys():
             params['hhe_eos_option'] = 'scvh'
@@ -254,21 +257,19 @@ class evol:
         else:
             raise ValueError('must specify one and only one of t1 or t10.')
 
-        # model atmospheres
-        atm_type, atm_planet = self.evol_params['atm_option'].split() # e.g., 'f11_tables u'
+        # initialize model atmospheres
         if 'teq' in params.keys():
             self.teq = params['teq']
-
-        if atm_type == 'f11_tables':
+        if self.evol_params['atm_option'] == 'f11_tables':
             import f11_atm; reload(f11_atm)
             if 'atm_jupiter_modified_teq' in list(self.evol_params):
-                self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet,
+                self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'],
                     jupiter_modified_teq=self.evol_params['atm_jupiter_modified_teq'])
             else:
-                self.atm = f11_atm.atm(self.evol_params['path_to_data'], atm_planet)
-        elif atm_type == 'f11_fit':
+                self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'])
+        elif self.evol_params['atm_option'] == 'f11_fit':
             import f11_atm_fit
-            self.atm = f11_atm_fit.atm(atm_planet)
+            self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
         else:
             raise ValueError('atm_type %s not recognized.' % atm_type)
 
