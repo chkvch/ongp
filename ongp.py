@@ -94,7 +94,7 @@ class evol:
             'nz':1024,
             'radius_rtol':1e-4,
             'y1_rtol':1e-4,
-            'max_iters_static':100,
+            'max_iters_static':20,
             'min_iters_static':3,
             'max_iters_static_before_rain':3
         }
@@ -236,64 +236,6 @@ class evol:
         hydro iterations.
         '''
 
-        if type(params['mtot']) is str:
-            if params['mtot'][0] == 'j':
-                params['mtot'] = const.mjup
-            elif params['mtot'][0] == 's':
-                params['mtot'] = const.msat
-            elif params['mtot'][0] == 'u':
-                params['mtot'] = const.mura
-            elif params['mtot'][0] == 'n':
-                params['mtot'] = const.mnep
-            else:
-                raise ValueError("if type(params['mtot']) is str, first element must be j, s, u, n")
-        self.mtot = params['mtot']
-        if ('t1' in params.keys()) and not ('t10' in params.keys()):
-            self.atm_which_t = 't1'
-            self.t1 = params['t1']
-        elif ('t10' in params.keys()) and not ('t1' in params.keys()):
-            self.atm_which_t = 't10'
-            self.t10 = params['t10']
-        else:
-            raise ValueError('must specify one and only one of t1 or t10.')
-
-        # initialize model atmospheres
-        if 'teq' in params.keys():
-            self.teq = params['teq']
-        if self.evol_params['atm_option'] == 'f11_tables':
-            import f11_atm; reload(f11_atm)
-            if 'atm_jupiter_modified_teq' in list(self.evol_params):
-                self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'],
-                    jupiter_modified_teq=self.evol_params['atm_jupiter_modified_teq'])
-            else:
-                self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'])
-        elif self.evol_params['atm_option'] == 'f11_fit':
-            import f11_atm_fit
-            self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
-        else:
-            raise ValueError('atm_type %s not recognized.' % atm_type)
-
-        if 'yenv' in list(params):
-            params['y1'] = params.pop('yenv')
-        if 'zenv' in list(params):
-            params['z1'] = params.pop('zenv')
-
-        self.z1 = params['z1']
-        if 'z2' in params.keys():
-            self.z2 = params['z2']
-        else:
-            self.z2 = None
-
-        self.y1 = params['y1']
-        if 'y2' in params.keys():
-            self.y2 = params['y2']
-        else:
-            self.y2 = None
-
-        self.mz_env = None
-        self.mz = None
-        self.bulk_z = None
-
         if not 'phase_t_offset' in params.keys():
             params['phase_t_offset'] = 0.
         if not 'minimum_y_is_envelope_y' in params.keys():
@@ -312,78 +254,152 @@ class evol:
         # save params passed to static
         self.static_params = params
 
-        # initialize lagrangian mesh.
-        if not 'mcore' in params.keys(): params['mcore'] = 0.
-        mcore = params['mcore']
-        assert mcore * const.mearth < self.mtot, 'core mass must be less than total mass.'
-        if mcore > 0.:
-            t = np.linspace(0, 1, self.nz - 1)
-            if self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
-                self.m = self.mtot * self.mesh_func(t, mcore=mcore) # passes mcore so that core-boundary-mesh-boost coincides with core boundary.
-            else:
-                self.m = self.mtot * self.mesh_func(t)
-            self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
-            self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
-            self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
-        elif mcore == 0.: # no need for extra precautions
-            t = np.linspace(0, 1, self.nz)
-            self.m = self.mtot * self.mesh_func(t) # grams
-            self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
-            self.kcore = 0
+        if ('t1' in params.keys()) and not ('t10' in params.keys()):
+            self.atm_which_t = 't1'
+            self.t1 = params['t1']
+        elif ('t10' in params.keys()) and not ('t1' in params.keys()):
+            self.atm_which_t = 't10'
+            self.t10 = params['t10']
         else:
-            raise UnphysicalParameterError('bad core mass %g' % mcore)
-        self.mcore = mcore
-        self.dm = np.diff(self.m)
-
-        # if not 'transition_pressure' in params.keys():
-        #     params['transition_pressure'] = 1.
+            raise ValueError('must specify one and only one of t1 or t10.')
 
         self.iters = 0
 
-        # set initial composition information. for now, envelope is homogeneous
-        self.y[:] = 0.
-        self.y[self.kcore:] = self.y1
+        if not hasattr(self, 'mtot'):
+            '''initialize model: mesh, atm, etc'''
+            assert not hasattr(self, 'atm')
+            assert not hasattr(self, 'y1')
+            assert not hasattr(self, 'y2')
+            assert not hasattr(self, 'z1')
+            assert not hasattr(self, 'z2')
+            assert not hasattr(self, 'mcore')
+            assert not hasattr(self, 'kcore')
 
-        self.z[:self.kcore] = 1.
-        assert self.z1 >= 0., 'got negative z1 %g' % self.z1
-        self.z[self.kcore:] = self.z1
+            if type(params['mtot']) is str:
+                if params['mtot'][0] == 'j':
+                    params['mtot'] = const.mjup
+                elif params['mtot'][0] == 's':
+                    params['mtot'] = const.msat
+                elif params['mtot'][0] == 'u':
+                    params['mtot'] = const.mura
+                elif params['mtot'][0] == 'n':
+                    params['mtot'] = const.mnep
+                else:
+                    raise ValueError("if type(params['mtot']) is str, first element must be j, s, u, n")
+            self.mtot = params['mtot']
 
+            # initialize model atmospheres
+            if 'teq' in params.keys():
+                self.teq = params['teq']
+            if self.evol_params['atm_option'] == 'f11_tables':
+                import f11_atm; reload(f11_atm)
+                if 'atm_jupiter_modified_teq' in list(self.evol_params):
+                    self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'],
+                        jupiter_modified_teq=self.evol_params['atm_jupiter_modified_teq'])
+                else:
+                    self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'])
+            elif self.evol_params['atm_option'] == 'f11_fit':
+                import f11_atm_fit
+                self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
+            else:
+                raise ValueError('atm_type %s not recognized.' % atm_type)
 
-        # these used to be defined after iterations were completed, but they are needed for calculation
-        # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
-        self.gradt = np.zeros_like(self.p)
-        self.brunt_b = np.zeros_like(self.p)
-        self.chirho = np.zeros_like(self.p)
-        self.chit = np.zeros_like(self.p)
-        self.chiy = np.zeros_like(self.p)
-        self.grady = np.zeros_like(self.p)
+            if 'yenv' in list(params):
+                params['y1'] = params.pop('yenv')
+            if 'zenv' in list(params):
+                params['z1'] = params.pop('zenv')
 
-        # helium rain bookkeeping
-        self.mhe = np.dot(self.y[:-1], self.dm) # initial total he mass
-        self.k_shell_top = None # until a shell is found by equilibrium_y_profile
+            self.z1 = params['z1']
+            if 'z2' in params.keys():
+                self.z2 = params['z2']
+            else:
+                self.z2 = None
 
-        self.grada = np.zeros_like(self.m)
-        # first guess, values chosen just so that densities will be calculable
-        self.p[:] = 1e12
-        self.t[:] = 1e4
+            self.y1 = params['y1']
+            if 'y2' in params.keys():
+                self.y2 = params['y2']
+            else:
+                self.y2 = None
 
-        # get density everywhere based on primitive guesses
-        self.set_core_density()
-        self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
+            self.mz_env = None
+            self.mz = None
+            self.bulk_z = None
 
-        self.integrate_continuity() # rho, dm -> r
-        # self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
-        # self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
-        #
-        # # now that we have pressure, try and locate transition pressure
-        # self.locate_transition_pressure()
-        # # set y2 and z2 if applicable
-        # self.set_yz()
-        #
-        # # recalculate densities based on possibly three-layer y, z
-        # self.set_core_density()
-        # self.set_envelope_density()
-        #
+            # initialize lagrangian mesh.
+            if not 'mcore' in params.keys(): params['mcore'] = 0.
+            mcore = params['mcore']
+            assert mcore * const.mearth < self.mtot, 'core mass must be less than total mass.'
+            if mcore > 0.:
+                t = np.linspace(0, 1, self.nz - 1)
+                if self.mesh_params['mesh_func_type'] == 'flat_with_surface_exponential_core_gaussian':
+                    self.m = self.mtot * self.mesh_func(t, mcore=mcore) # passes mcore so that core-boundary-mesh-boost coincides with core boundary.
+                else:
+                    self.m = self.mtot * self.mesh_func(t)
+                self.kcore = kcore = np.where(self.m >= mcore * const.mearth)[0][0] # kcore - 1 is last zone with m < mcore
+                self.m = np.insert(self.m, self.kcore, mcore * const.mearth) # kcore is the zone where m == mcore. this zone should have z=1.
+                self.kcore += 1 # so say self.rho[:kcore] wil encompass all the zones with z==1.
+            elif mcore == 0.: # no need for extra precautions
+                t = np.linspace(0, 1, self.nz)
+                self.m = self.mtot * self.mesh_func(t) # grams
+                self.m *= self.mtot / self.m[-1] # guarantee surface zone has mtot enclosed
+                self.kcore = 0
+            else:
+                raise UnphysicalParameterError('bad core mass %g' % mcore)
+            self.mcore = mcore
+            self.dm = np.diff(self.m)
+
+            # if not 'transition_pressure' in params.keys():
+            #     params['transition_pressure'] = 1.
+
+            # set initial composition information. for now, envelope is homogeneous
+            self.y[:] = 0.
+            self.y[self.kcore:] = self.y1
+
+            self.z[:self.kcore] = 1.
+            assert self.z1 >= 0., 'got negative z1 %g' % self.z1
+            self.z[self.kcore:] = self.z1
+
+            # these used to be defined after iterations were completed, but they are needed for calculation
+            # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
+            self.gradt = np.zeros_like(self.p)
+            self.brunt_b = np.zeros_like(self.p)
+            self.chirho = np.zeros_like(self.p)
+            self.chit = np.zeros_like(self.p)
+            self.chiy = np.zeros_like(self.p)
+            self.grady = np.zeros_like(self.p)
+
+            # helium rain bookkeeping
+            self.mhe = np.dot(self.y[:-1], self.dm) # initial total he mass
+            self.k_shell_top = None # until a shell is found by equilibrium_y_profile
+
+            self.grada = np.zeros_like(self.m)
+            # first guess, values chosen just so that densities will be calculable
+            self.p[:] = 1e12
+            self.t[:] = 1e4
+
+            # get density everywhere based on primitive guesses
+            self.set_core_density()
+            self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
+
+            self.integrate_continuity() # rho, dm -> r
+            # self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
+            # self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
+            #
+            # # now that we have pressure, try and locate transition pressure
+            # self.locate_transition_pressure()
+            # # set y2 and z2 if applicable
+            # self.set_yz()
+            #
+            # # recalculate densities based on possibly three-layer y, z
+            # self.set_core_density()
+            # self.set_envelope_density()
+            #
+        else:
+            # self.y[:] = 0.
+            # self.y[self.kcore:] = self.y1
+            # self.y[self.kcore:] = 0.7 * self.y1 * np.ones_like(self.y[self.kcore:]) + 0.3 * self.y[self.kcore:]
+            pass
+
         if 'debug_iterations' in params.keys():
             if params['debug_iterations']:
                 t0 = time.time()
@@ -434,6 +450,9 @@ class evol:
         if params['verbose']: print('converged homogeneous model after %i iterations.' % self.iters)
         if not hasattr(self, 'k_gradient_bottom'):
             self.k_gradient_bot = -1
+
+        self.t_before_he = np.copy(self.t)
+        self.y_before_he = np.copy(self.y)
 
         last_three_y1 = 0, 0, 0
         # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
@@ -511,11 +530,6 @@ class evol:
 
                     self.integrate_temperature(adiabatic=False)
 
-                # one more time
-                # self.y = self.equilibrium_y_profile(params['phase_t_offset'],
-                #             verbosity=params['rainout_verbosity'],
-                #             minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
-                #
                 self.set_core_density() # z eos call, fast (not many zones)
                 self.set_envelope_density() # full-on eos call; could try skipping and using rho from last eos call (integrate_temperature)
                 self.integrate_continuity() # just an integral, super fast
@@ -523,7 +537,17 @@ class evol:
                 if 'debug_iterations' in params.keys():
                     if params['debug_iterations']:
                         et = time.time() - t0
-                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.4f}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1], self.ktrans, et*1e3))
+                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.5f}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1], self.ktrans, et*1e3))
+                        if 'debug_iterations' in list(params):
+                            if type(params['debug_iterations']) is str:
+                                step = int(params['debug_iterations'].split()[1])
+                                if self.step == step:
+                                    self.rtot = self.r[-1]
+                                    self.set_derivatives_etc()
+                                    with open('{:3n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
+                                        pickle.dump(self, fw)
+                # print('dr={}, rtol={}'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol']))
+                # print('dy1={}, rtol={}'.format(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     # print('rain iter {}: radius ok'.format(self.iters_rain))
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
@@ -584,8 +608,7 @@ class evol:
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
-        # k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
-        # ptrans = self.static_params['transition_pressure']
+        self.ymax = np.zeros_like(self.p)
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -607,6 +630,8 @@ class evol:
         # if t_offset is positive, immiscibility sets in sooner.
         # i.e., query phase diagram with a lower T than true planet T.
         if False:
+            k1 = self.ktrans - 1 # outermost zone with P > ptrans. at self.ktrans, P < ptrans.
+            ptrans = self.static_params['transition_pressure']
             gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
             if type(gap) is str:
                 assert gap == 'stable'
@@ -636,18 +661,37 @@ class evol:
                     return self.y
                 gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
                 if type(gap) is str:
+                    if verbosity > 2:
+                        if p[k] < 6:
+                            print('query  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={})'.format(self.iters, self.iters_rain, k, p[k], t[k], self.y[k], gap))
                     assert gap == 'stable'
                     continue
                 elif type(gap) is tuple:
                     xplo, xphi = gap
                     ymax = get_y(self.z[k], get_yp(xplo))
+                    self.ymax[k] = ymax
+                    if verbosity > 2:
+                        if p[k] < 6:
+                            excess = self.y[k] - ymax
+                            if self.y[k] > ymax:
+                                s = ' >?'
+                            elif self.y[k] < ymax:
+                                s = ' <?'
+                            else:
+                                s = ' =?'
+                            print('query  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} {:3s} ymax={:.4f} excess={:.4e})'.format(self.iters, self.iters_rain, k, p[k], t[k], self.y[k], s, ymax, excess))
                     # keep track of the zone closest to rainout
                     if ymax - self.y[k] < min_ymax_minus_y:
                         min_ymax_minus_y = ymax - self.y[k]
-                        self.ymax_trans = ymax
+                        self.ymax_trans = min(self.y[-1], ymax)
                     if self.y[k] > ymax:
-                        k1 = k
-                        break
+                        if self.y[k] - ymax > 1e-20: # was trying nonzero tolerances like 1e-6, 1e-4 previously
+                            k1 = k
+                            ymax_k1 = ymax
+                            if verbosity > 2: print('found k1={}; ystart={}'.format(k, self.y[k]))
+                            break
+                        else:
+                            pass
 
         self.ystart = np.copy(self.y) # only gets set if this routine did something.
         yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
@@ -671,11 +715,18 @@ class evol:
                 yenv = get_y(self.z[k1], get_yp(xplo))
         else:
             # homogeneous molecular envelope at this abundance
+            # no! don't do this if any zones outside already have a lower abundance. this routinely
+            # happens if previous rain iters have already taken place so that there's a gradient
+            # from say p=1.01 to 1.06 Mbar, and then 1.07 Mbar is the first zone *on this iteration*
+            # to show a bit of excess helium. if that's the case, do start next iterations at p=1.07,
+            # but don't reset envelope abundance.
             yenv = get_y(self.z[k1], get_yp(xplo))
 
-        yout[k1+1:] = yenv
-
-        if verbosity > 0: print('demix  (k={:n} p={:.4f} t={:.4f} y={:.4f} --> ymax={:.4f})'.format(k1, p[k1], t[k1], self.y[k1+1], yout[k1+1]))
+        if np.all(yout[k1+1:] > yenv):
+            yout[k1+1:] = yenv
+            if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} --> ymax={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yout[k1+1]))
+        else:
+            if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} === ymax={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yout[k1+1]))
 
         t0 = time.time()
         rainout_to_core = False
@@ -688,7 +739,7 @@ class evol:
             gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
             if type(gap) is str:
                 if gap == 'stable':
-                    if verbosity > 1: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f})'.format(k, p[k], t[k], yout[k]))
+                    if verbosity > 1: print('stable (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k]))
                     break
                 elif gap == 'failed':
                     raise ValueError('failed to get miscibility gap in initial loop over zones. p, t = %f Mbar, %f K' % (p[k], self.t[k]))
@@ -698,7 +749,7 @@ class evol:
                 if k == k1:
                     pass
                 elif yout[k] < ymax:
-                    if verbosity > 1: print('stable (k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(k, p[k], t[k], yout[k], ymax))
+                    if verbosity > 1: print('stable (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], ymax))
                     break
             else:
                 raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
@@ -739,7 +790,7 @@ class evol:
             else:
                 # all good; uniformly distribute all helium that has rained out from above into deeper interior
                 # if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
-                if verbosity > 2: print('demix  (k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(k, p[k], t[k], yout[k], y_interior))
+                if verbosity > 2: print('demix  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], y_interior))
                 yout[self.kcore:k] = y_interior
 
         # if verbosity > 0: print('rainout to core %s' % rainout_to_core)
@@ -1485,6 +1536,9 @@ class evol:
                         kshell = self.k_shell_top
                         msg = '{:>50}'.format('dy1 {:.2e} > limit {:.2e}'.format(prev_y1-self.y[-1], params['max_dy1']))
                         limit = 'dy1'
+                        # force static to start from fresh y profile.
+                        # otherwise will start from current (depleted) profile, and may find exactly same dy1 even for warmer t1.
+                        self.y[self.kcore:] = self.y1
                         retries += 1
                 else: # retry with smaller step
                     if retries < 2:
@@ -1493,6 +1547,9 @@ class evol:
                         delta_t *= 0.5
                     msg = '{:>50}'.format('timestep {:.2e} > limit {:.2e}'.format(self.dt_yr, params['max_timestep']))
                     limit = 'dt'
+                    # force static to start from fresh y profile.
+                    # otherwise will start from current (depleted) profile, and may find exactly same dy1 even for warmer t1.
+                    self.y[self.kcore:] = self.y1
                     retries += 1
 
                 if abs(delta_t) > params['max_abs_delta_t']:
@@ -1658,6 +1715,7 @@ class evol:
         profile['grady'] = np.copy(self.grady)
         profile['brunt_b'] = np.copy(self.brunt_b)
         # profile['pressure_scale_height'] = self.pressure_scale_height
+        profile['ymax'] = np.copy(self.ymax)
         try:
             profile['dy'] = np.copy(self.y - self.ystart)
         except AttributeError: # no phase separation for this step
@@ -1667,7 +1725,6 @@ class evol:
             profile['eps_grav'] = np.copy(self.eps_grav)
             profile['tds'] = np.copy(self.tds)
             profile['luminosity'] = np.copy(self.luminosity)
-
         return profile
 
     def dump_history(self, prefix):

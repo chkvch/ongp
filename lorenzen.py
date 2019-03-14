@@ -27,9 +27,7 @@ class hhe_phase_diagram:
 
     def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False, t_shift_p1=False, x_transform=None, y_transform=None):
 
-        if extrapolate_to_low_pressure:
-            raise NotImplementedError('extrapolate_to_low_pressure not implemented in lorenzen')
-
+        self.extrapolate_to_low_pressure = extrapolate_to_low_pressure
         if not path_to_data:
             path_to_data = '/Users/chris/ongp/data'
 
@@ -125,6 +123,9 @@ class hhe_phase_diagram:
 
         self.tck_xlo = {}
         self.tck_xhi = {}
+        self.i = {} # stores index of critical point, to separate low-x from high-x
+        self.tck_xlo_inv = {}
+        self.tck_xhi_inv = {}
 
         for pval in self.pvals:
 
@@ -186,20 +187,6 @@ class hhe_phase_diagram:
                 del(x, t, z)
                 x = x_
                 t = t_
-                if False:
-                    # prune unnecessary parts that remain (identified by eye)
-                    if pval == 1:
-                        x = x[2:]
-                        t = t[2:]
-                    elif pval == 2:
-                        x = x[4:]
-                        t = t[4:]
-                    elif pval == 10:
-                        x = x[:-4]
-                        t = t[:-4]
-                    elif pval == 24:
-                        x = x[:-8]
-                        t = t[:-8]
 
             if np.any(np.diff(t) == 0.):
                 # this is a problem for third option in miscibility_gap below, which interpolates
@@ -232,7 +219,12 @@ class hhe_phase_diagram:
 
             # provide min and max values of z for sake of root find bounds in miscibility_gap
             self.minmax_z[pval] = z[0], z[-1]
-            # # provide scrubbed versions for diagnostic purposes
+            self.i[pval] = i
+            # delete 'hooks' back to lower x on hi-x side for 1 and 2 Mbar
+            while np.any(np.diff(x[i:]) < 0):
+                x = np.delete(x, -1)
+                t = np.delete(t, -1)
+            # provide scrubbed versions for diagnostic purposes
             self.x_clean[pval] = x
             self.t_clean[pval] = t
 
@@ -240,9 +232,43 @@ class hhe_phase_diagram:
             if t[i-1] != t[i]:
                 self.tck_xlo[pval] = splrep(t[:i], x[:i], k=k)
                 self.tck_xhi[pval] = splrep(t[i:][::-1], x[i:][::-1], k=k)
+                self.tck_xlo_inv[pval] = splrep(x[:i], t[:i], k=k)
+                self.tck_xhi_inv[pval] = splrep(x[i:], t[i:], k=k)
             else:
                 self.tck_xlo[pval] = splrep(t[:i], x[:i], k=k)
                 self.tck_xhi[pval] = splrep(t[i-1:][::-1], x[i-1:][::-1], k=k)
+                self.tck_xlo_inv[pval] = splrep(x[:i], t[:i], k=k)
+                self.tck_xhi_inv[pval] = splrep(x[i-1:], t[i-1:], k=k)
+
+        if self.extrapolate_to_low_pressure:
+            # delete 1Mbar data and extrapolate it down from p=2, 4
+            x2 = self.x_clean[2]
+            t2 = self.t_clean[2]
+            x4 = self.x_clean[4]
+            t4 = self.t_clean[4]
+            t4_on_x2 = splev(x2, splrep(x4, t4))
+
+            x = x2
+            alpha = (1. - 4.) / (2. - 4)
+            alpha = (np.log10(1) - np.log10(4)) / (np.log10(2) - np.log10(4))
+            t = alpha * t2 + (1. - alpha) * t4_on_x2
+
+            i = np.where(t == max(t))[0][0]
+            self.i[1] = i
+            self.tcrit[1] = max(t)
+            if t[i-1] != t[i]:
+                self.tck_xlo[1] = splrep(t[:i], x[:i], k=k)
+                self.tck_xhi[1] = splrep(t[i:][::-1], x[i:][::-1], k=k)
+                self.tck_xlo_inv[1] = splrep(x[:i], t[:i], k=k)
+                self.tck_xhi_inv[1] = splrep(x[i:], t[i:], k=k)
+            else:
+                self.tck_xlo[1] = splrep(t[:i], x[:i], k=k)
+                self.tck_xhi[1] = splrep(t[i-1:][::-1], x[i-1:][::-1], k=k)
+                self.tck_xlo_inv[1] = splrep(x[:i], t[:i], k=k)
+                self.tck_xhi_inv[1] = splrep(x[i-1:], t[i-1:], k=k)
+            self.x_clean[1] = x
+            self.t_clean[1] = t
+
 
     def miscibility_gap(self, p, t):
         '''for a given pressure and temperature, return the helium number fraction of the
@@ -266,6 +292,7 @@ class hhe_phase_diagram:
         assert p < phi
 
         if t > self.tcrit[plo] or t > self.tcrit[phi]:
+            # print ('t={}, tcrit_plo={}, tcrit_phi={}, plo={}, phi={}'.format(t, self.tcrit[plo], self.tcrit[phi], plo, phi))
             return 'stable'
 
         if False: # old way: root find for x(T=Tphase) on bsplines
@@ -368,29 +395,47 @@ class hhe_phase_diagram:
         assert p > plo
         assert p < phi
 
-        # check condition on x?
+        # for reference: this is how miscibility_gap gets xlo, xhi
+                # xlo_plo = splev(t, self.tck_xlo[plo])
+                # xhi_plo = splev(t, self.tck_xhi[plo])
+                # xlo_phi = splev(t, self.tck_xlo[phi])
+                # xhi_phi = splev(t, self.tck_xhi[phi])
+        # then interpolates (linear in log10p) between plo results and phi results
+        if False:
+            zmin_plo = zmin_phi = 0.
+            from scipy.optimize import brentq
+            try:
+                zlo_plo = brentq(lambda z: self.splinex(plo, z) - x, zmin_plo, self.zcrit[plo])
+                zlo_phi = brentq(lambda z: self.splinex(phi, z) - x, zmin_phi, self.zcrit[phi])
+            except ValueError as e:
+                print('plo={}, phi={}, x={}'.format(plo, phi, x))
+                raise
+                return 'failed'
 
-        zmin_plo = zmin_phi = 0.
-        try:
-            zlo_plo = brentq(lambda z: self.splinex(plo, z) - x, zmin_plo, self.zcrit[plo])
-            zlo_phi = brentq(lambda z: self.splinex(phi, z) - x, zmin_phi, self.zcrit[phi])
-        except ValueError as e:
-            print('plo={}, phi={}, x={}'.format(plo, phi, x))
-            raise
-            return 'failed'
+            tlo_plo = self.splinet(plo, zlo_plo)
+            tlo_phi = self.splinet(phi, zlo_phi)
+            # print(tlo_plo, tlo_phi)
 
-        tlo_plo = self.splinet(plo, zlo_plo)
-        tlo_phi = self.splinet(phi, zlo_phi)
+            # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
+            # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
 
-        # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
-        # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
+            # P interpolation is linear in logP
+            alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+            # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+            t_phase = alpha * tlo_phi + (1. - alpha) * tlo_plo
 
-        # P interpolation is linear in logP
-        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
-        # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
-        t_phase = alpha * tlo_phi + (1. - alpha) * tlo_plo
+            return t_phase
+        else:
+            t_plo = splev(x, self.tck_xlo_inv[plo])
+            t_phi = splev(x, self.tck_xlo_inv[phi])
+            alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+            minimize_me = lambda t: (alpha * splev(t, self.tck_xlo[phi]) + (1. - alpha) * splev(t, self.tck_xlo[plo]) - x) ** 2
+            from scipy.optimize import minimize
+            sol = minimize(minimize_me, 6)
+            assert sol.success
+            t_phase = sol.x[0]
+            return t_phase
 
-        return t_phase
 
     def get_tcrit(self, p):
         plo = self.pvals[self.pvals < p][-1]
