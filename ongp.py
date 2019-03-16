@@ -66,12 +66,15 @@ class evol:
         if 'hhe_phase_diagram' in params.keys():
             if not 'extrapolate_phase_diagram_to_low_pressure' in params.keys():
                 params['extrapolate_phase_diagram_to_low_pressure'] = False
+            if not 'phase_p_interpolation' in params.keys():
+                params['phase_p_interpolation'] = 'log'
             if not 't_shift_p1' in params.keys():
                 params['t_shift_p1'] = None
             if not 'x_transform' in params.keys():
                 params['x_transform'] = None
             if not 'y_transform' in params.keys():
                 params['y_transform'] = None
+
             if params['hhe_phase_diagram'] == 'lorenzen':
                 import lorenzen
                 reload(lorenzen)
@@ -79,13 +82,18 @@ class evol:
                                         params['path_to_data'],
                                         extrapolate_to_low_pressure=params['extrapolate_phase_diagram_to_low_pressure'],
                                         t_shift_p1=params['t_shift_p1'],
-                                        x_transform=params['x_transform'],
-                                        y_transform=params['y_transform']
+                                        p_interpolation=params['phase_p_interpolation']
                                         )
             elif params['hhe_phase_diagram'] == 'schoettler':
                 import schoettler
                 reload(schoettler)
-                self.phase = schoettler.hhe_phase_diagram(x_transform=params['x_transform'],y_transform=params['y_transform'])
+                if 'extrapolate_to_low_pressure' in list(params):
+                    raise NotImplementedError('extrapolate_to_low_pressure not implemented for schoettler phase diagram')
+                if 't_shift_p1' in list(params):
+                    raise NotImplementedError('t_shift_p1 not implemented for schoettler phase diagram')
+                if 'phase_p_interpolation' in list(params):
+                    raise NotImplementedError('phase_p_interpolation not implemented for schoettler phase diagram')
+                self.phase = schoettler.hhe_phase_diagram()
             else:
                 raise ValueError('hydrogen-helium phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
 
@@ -464,7 +472,7 @@ class evol:
             #     del(self.prev_y)
             #     self.set_envelope_density()
             #     self.integrate_continuity()
-
+            self.k1 = 0
             for iteration in range(self.evol_params['max_iters_static']):
                 self.iters_rain = iteration + 1
 
@@ -683,12 +691,24 @@ class evol:
                     # keep track of the zone closest to rainout
                     if ymax - self.y[k] < min_ymax_minus_y:
                         min_ymax_minus_y = ymax - self.y[k]
-                        self.ymax_trans = min(self.y[-1], ymax)
+                        # self.ymax_trans = min(self.y[-1], ymax)
+                        self.ymax_trans = ymax
                     if self.y[k] > ymax:
                         if self.y[k] - ymax > 1e-20: # was trying nonzero tolerances like 1e-6, 1e-4 previously
                             k1 = k
                             ymax_k1 = ymax
-                            if verbosity > 2: print('found k1={}; ystart={}'.format(k, self.y[k]))
+                            if not minimum_y_is_envelope_y and self.k1 > k:
+                                # top of gradient was farther out on a previous iteration; keep the gradient top there.
+                                if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
+                                while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
+                                    self.k1 -= 1
+                                k1 = self.k1
+
+                                gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+                                xplo, xphi = gap
+                                ymax_k1 = get_y(self.z[k1], get_yp(xplo))
+
+                            if verbosity > 1: print('found k1={}; ystart={}'.format(k1, self.y[k1]))
                             break
                         else:
                             pass
@@ -697,6 +717,7 @@ class evol:
         yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
 
         if 'interpolate_for_envelope_y' in list(self.static_params):
+            # took this out for branch no_hard_ptrans
             raise ValueError('interpolate_for_envelope_y is not meaningful if there is no hard phase boundary at ptrans.')
             if self.static_params['interpolate_for_envelope_y']:
                 # instead of molecular envelope at the same abundance as first zone with p > ptrans,
@@ -711,7 +732,7 @@ class evol:
                 xplo, xphi = gap
                 yenv = get_y(self.z[k1], get_yp(xplo))
             else:
-                # homogeneous molecular envelope at this abundance
+                # homogeneous molecular envelope at the abundance of zone k1 (gradient top)
                 yenv = get_y(self.z[k1], get_yp(xplo))
         else:
             # homogeneous molecular envelope at this abundance
@@ -722,11 +743,17 @@ class evol:
             # but don't reset envelope abundance.
             yenv = get_y(self.z[k1], get_yp(xplo))
 
-        if np.all(yout[k1+1:] > yenv):
+        if False and np.all(yout[k1+1:] > yenv):
             yout[k1+1:] = yenv
             if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} --> ymax={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yout[k1+1]))
+        if minimum_y_is_envelope_y:
+            if np.all(yout[k1+1:] > yenv):
+                if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
+                yout[k1+1:] = yenv
         else:
-            if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} === ymax={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yout[k1+1]))
+            # yout[k1+1:] = yenv
+            if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
+            yout[k1+1:] = yenv
 
         t0 = time.time()
         rainout_to_core = False
@@ -759,7 +786,10 @@ class evol:
             yout[k] = ymax
 
             if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
-                yout[k:] = yout[k]
+                assert yout[k] > 0
+                if verbosity > 1:
+                    print('inv    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  yk+1={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], yout[k+1]))
+                yout[k+1:] = yout[k]
 
             # difference between initial he mass and current proposed he mass above and including this zone
             # must be deposited into the deeper interior.
@@ -787,11 +817,17 @@ class evol:
                 assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe
                 kbot = k
                 break
+            elif y_interior < 0:
+                print('NOPE   (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], y_interior))
+                raise ValueError('got negative interior y')
             else:
                 # all good; uniformly distribute all helium that has rained out from above into deeper interior
                 # if verbosity > 2: print('{:>5n} {:>8.4f} {:>10.6f} {:>10.6f}'.format(k, p[k], yout[k], y_interior))
                 if verbosity > 2: print('demix  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], y_interior))
                 yout[self.kcore:k] = y_interior
+
+        # done with gradient zone; store k1 for next time around so that we can judge extent of homogeneous envelope
+        self.k1 = k1
 
         # if verbosity > 0: print('rainout to core %s' % rainout_to_core)
         if show_timing: print('t0 + %f seconds' % (time.time() - t0))
@@ -799,7 +835,7 @@ class evol:
         if rainout_to_core:
             # gradient extends down to kbot, below which the rest of the envelope is already set Y=0.95.
             # since proposed envelope mhe < initial mhe, must grow the He-rich shell to conserve total mass.
-            if verbosity > 1: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
+            if verbosity > 2: print('%5s %5s %10s %10s %10s' % ('k', 'kcore', 'dm_k', 'mhe_tent', 'mhe'))
             for k in np.arange(self.kcore, self.nz):
             # for k in np.arange(kbot, self.nz):
                 # yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
@@ -816,7 +852,7 @@ class evol:
 
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                 # tentative_total_he_mass = np.dot(yout[self.kcore+1:], self.dm[self.kcore:])
-                if verbosity > 1: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
+                if verbosity > 2: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
                 if tentative_total_he_mass >= self.mhe:
                     if verbosity > 1: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
 
@@ -1497,36 +1533,40 @@ class evol:
                     self.status = e
                     break # exit retry loop
 
+                # check the timestep that this static model would imply
+                assert 'target_dy1' not in list(params), 'target_dy1 not implemented in evolve.'
                 if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
                     self.status = RuntimeError('negative timestep')
                     break
-
-                    # try larger step.
-                    if retries == 0:
-                        delta_t = 1.
-                    elif retries == 1:
-                        delta_t = 2.
-                    else:
-                        delta_t *= np.sqrt(5.)
-                    msg = '{:>50}'.format('got dt<0; retry')
-                    limit = 'dt<0'
-                    retries += 1
+                    # # try larger step.
+                    # if retries == 0:
+                    #     delta_t = 1.
+                    # elif retries == 1:
+                    #     delta_t = 2.
+                    # else:
+                    #     delta_t *= np.sqrt(5.)
+                    # msg = '{:>50}'.format('got dt<0; retry')
+                    # limit = 'dt<0'
+                    # retries += 1
                 elif self.dt_yr < params['max_timestep']: # okay on timestep
                     if prev_y1 > 0. and prev_y1 - self.y[-1] < 0: # went up in y1, try a larger timestep
-                        msg = '{:>50}'.format('y1 increased')
-                        limit = 'dy1<0'
-                        delta_t *= 1.5
-                        retries += 1
+                        self.status = RuntimeError('y1 increased.') # usually this is caught as negative timestep above
+                        break
+                        # msg = '{:>50}'.format('y1 increased')
+                        # limit = 'dy1<0'
+                        # delta_t *= 1.5
+                        # retries += 1
                     elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
                         f = (params['target_timestep'] / self.dt_yr) ** 0.5
-                        if f > params['max_delta_t_div_t'] and self.nz_gradient <= 0:
+                        if False and f > params['max_delta_t_div_t'] and self.nz_gradient <= 0:
                             # only worry about this for homogeneous phase
                             f = params['max_delta_t_div_t']
                             msg = '{:>50}'.format('max increase')
                             limit = 'maxinc'
                         else:
                             msg = '{:>50}'.format('ok')
-                        delta_t *= f
+                        # delta_t *= f
+                        delta_t *= 0.5 * (1. + f)
                         accept_step = True
                     else: # dy1 too large
                         if retries < 2:
@@ -1556,6 +1596,10 @@ class evol:
                     limit = 'maxdt1'
                     msg = '{:>50}'.format('delta_t {:.2f} > limit {:.2f}'.format(delta_t, params['max_abs_delta_t']))
                     delta_t = params['max_abs_delta_t']
+                elif delta_t / old_delta_t > params['max_ratio_delta_t']:
+                    limit = 'Dt1'
+                    msg = '{:>50}'.format('new_delta_t/old_delta_t {:.2f} > limit {:.2f}'.format(delta_t / old_delta_t, params['max_ratio_delta_t']))
+                    delta_t = old_delta_t * params['max_ratio_delta_t']
 
                 if self.step > 0 and 'debug_retries' in list(params):
                     if params['debug_retries']:
@@ -1620,25 +1664,19 @@ class evol:
                 # self.luminosity = luminosity
                 prev_y1 = np.copy(self.y[-1])
 
-                if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0:
+                if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0 and self.y[-1] > 0.0:
                     # judge whether approaching rainout onset
                     ymax = self.history['ymax_trans'][self.history['ymax_trans'] != None]
                     t1 = self.history['t1'][self.history['ymax_trans'] != None]
-                    if len(ymax) > 2:
-                        target_y1 = self.y[-1] - params['max_dy1']
-
-                        # tck = splrep(ymax[::-1], dt1[::-1], k=1)
-                        #
+                    if len(ymax) > 5:
                         isort = np.argsort(t1)
                         tck_ = splrep(t1[isort], ymax[isort], k=1)
                         projected_ymax = np.float64(splev(self.t1 - delta_t, tck_))
-
-                        # print('{} ymax={}, projected_ymax={}'.format(self.step, self.ymax_trans, projected_ymax))
-
+                        print('step={} delta_t={} ymax={} projected_ymax={}'.format(self.step, delta_t, self.ymax_trans, projected_ymax))
                         if projected_ymax < 0.28:
-                            # delta_t /= 3.
-                            # delta_t *= 1e6 / self.dt_yr
                             delta_t = 0.3
+                    else:
+                        pass
 
         if 'output_prefix' in list(params):
             self.save_history(params['output_prefix'])

@@ -25,11 +25,17 @@ class hhe_phase_diagram:
 
     """
 
-    def __init__(self, path_to_data=None, order=3, extrapolate_to_low_pressure=False, t_shift_p1=False, x_transform=None, y_transform=None):
+    def __init__(self, path_to_data='/Users/chris/ongp/data',
+                    order=3,
+                    extrapolate_to_low_pressure=False,
+                    t_shift_p1=False,
+                    x_transform=None,
+                    y_transform=None,
+                    p_interpolation='log'
+                    ):
 
+        self.p_interpolation = p_interpolation
         self.extrapolate_to_low_pressure = extrapolate_to_low_pressure
-        if not path_to_data:
-            path_to_data = '/Users/chris/ongp/data'
 
         self.columns = 'x', 'p', 't' # x refers to the helium number fraction
         data = np.genfromtxt('{}/demixHHe_Lorenzen.dat'.format(path_to_data), names=self.columns)
@@ -249,8 +255,10 @@ class hhe_phase_diagram:
             t4_on_x2 = splev(x2, splrep(x4, t4))
 
             x = x2
-            alpha = (1. - 4.) / (2. - 4)
-            alpha = (np.log10(1) - np.log10(4)) / (np.log10(2) - np.log10(4))
+            if self.p_interpolation == 'linear':
+                alpha = (1. - 4.) / (2. - 4)
+            elif self.p_interpolation == 'log':
+                alpha = (np.log10(1) - np.log10(4)) / (np.log10(2) - np.log10(4))
             t = alpha * t2 + (1. - alpha) * t4_on_x2
 
             i = np.where(t == max(t))[0][0]
@@ -363,8 +371,10 @@ class hhe_phase_diagram:
                 return 'failed'
 
         # P interpolation is linear in logP
-        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
-        # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+        if self.p_interpolation == 'linear':
+            alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+        elif self.p_interpolation == 'log':
+            alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
         xlo = alpha * xlo_phi + (1. - alpha) * xlo_plo
         xhi = alpha * xhi_phi + (1. - alpha) * xhi_plo
 
@@ -419,9 +429,10 @@ class hhe_phase_diagram:
             # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
             # 'plo = {} got z = {} and t_plo = {}'.format(plo, zlo_plo, tlo_plo)
 
-            # P interpolation is linear in logP
-            alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
-            # alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+            if self.p_interpolation == 'linear':
+                alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+            elif self.p_interpolation == 'log':
+                alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
             t_phase = alpha * tlo_phi + (1. - alpha) * tlo_plo
 
             return t_phase
@@ -443,7 +454,10 @@ class hhe_phase_diagram:
         assert p > plo
         assert p < phi
 
-        alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
+        if self.p_interpolation == 'linear':
+            alpha = (p - plo) / (phi - plo) # linear in P doesn't work as well
+        elif self.p_interpolation == 'log':
+            alpha = (np.log10(p) - np.log10(plo)) / (np.log10(phi) - np.log10(plo))
         return alpha * self.tcrit[phi] + (1. - alpha) * self.tcrit[plo]
 
     def show_splines(self, show_data=True, ax=None, label_curves=True, **kwargs):
