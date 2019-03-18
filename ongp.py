@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator, interp1d, splrep, splev
 from scipy.integrate import trapz, cumtrapz
-import sys
 import const
 import pickle
 import time
@@ -10,14 +9,6 @@ try:
     from importlib import reload
 except:
     pass
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
-
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
 
 class evol:
 
@@ -26,7 +17,7 @@ class evol:
         if not 'path_to_data' in params.keys():
             params['path_to_data'] = os.environ['ongp_data_path']
             if not os.path.exists(params['path_to_data']):
-                raise ValueError('must specify path_to_data indicating path to eos/atm data')
+                raise ValueError('must specify path_to_data indicating path to eos/atm data. best way is to set environment variable ongp_data_path.')
 
         if not 'hhe_eos_option' in params.keys():
             params['hhe_eos_option'] = 'scvh'
@@ -1497,8 +1488,6 @@ class evol:
                 other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
                 params.pop(other_t, None) # so that static doesn't get passed both t1 and t10
 
-                # print('trying t=', params[which_t])
-
                 try:
                     self.static(params) # pass the full evolve params; many won't be used
                     self.delta_s = self.entropy - previous_entropy
@@ -1516,16 +1505,8 @@ class evol:
                     break
                 except AtmError as e:
                     if 'failed to bracket' in e.args[0]: # probably off tables
-                        if False:
-                            delta_t /= 3.
-                            msg = '{:>50}'.format('AtmError, try smaller timestep')
-                            limit = 'atm'
-                            retries += 1
-                            continue
-                        else:
-                            raise
-                            # self.status = e
-                            # break # exit retry loop
+                        self.status = e
+                        break # exit retry loop
                     else:
                         raise
                 except Exception as e:
@@ -1538,36 +1519,41 @@ class evol:
                 if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
                     self.status = RuntimeError('negative timestep')
                     break
-                    # # try larger step.
-                    # if retries == 0:
-                    #     delta_t = 1.
-                    # elif retries == 1:
-                    #     delta_t = 2.
-                    # else:
-                    #     delta_t *= np.sqrt(5.)
-                    # msg = '{:>50}'.format('got dt<0; retry')
-                    # limit = 'dt<0'
-                    # retries += 1
+                    # formerly, we would retry with a smaller timestep
                 elif self.dt_yr < params['max_timestep']: # okay on timestep
                     if prev_y1 > 0. and prev_y1 - self.y[-1] < 0: # went up in y1, try a larger timestep
                         self.status = RuntimeError('y1 increased.') # usually this is caught as negative timestep above
                         break
-                        # msg = '{:>50}'.format('y1 increased')
-                        # limit = 'dy1<0'
-                        # delta_t *= 1.5
-                        # retries += 1
+                        # formerly, we would retry with a larger timestep
                     elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
-                        f = (params['target_timestep'] / self.dt_yr) ** 0.5
-                        if False and f > params['max_delta_t_div_t'] and self.nz_gradient <= 0:
-                            # only worry about this for homogeneous phase
-                            f = params['max_delta_t_div_t']
-                            msg = '{:>50}'.format('max increase')
-                            limit = 'maxinc'
+                        # f = (params['target_timestep'] / self.dt_yr) ** 0.5
+
+                        if hasattr(self, 'phase') and self.nz_gradient <= 0:
+                            from lorenzen import get_xp
+                            # are we anywhere *close* to rainout for initial y1?
+                            min_abs_t_minus_tphase = 100.
+                            for pval in (1, 2, 4):
+                                kp = np.where(self.p*1e-12 < pval)[0][0] - 1
+                                tphase = self.phase.t_phase(pval, get_xp(self.z1, self.y1))
+                                t_minus_tphase = tphase + params['phase_t_offset']*1e-3 - self.t[kp]*1e-3 # effective tphase minus true t in kK
+                                min_abs_t_minus_tphase = min(min_abs_t_minus_tphase, abs(t_minus_tphase))
+                                # print('kp={} p={} t={} tphase={} offset={} delta_t={}'.format(kp, self.p[kp]*1e-12, self.t[kp]*1e-3, tphase, params['phase_t_offset']*1e-3, t_minus_tphase))
+                            if min_abs_t_minus_tphase < 0.2:
+                                delta_t = 0.3
+                                msg = '{:>50}'.format('approach rainout')
+                                limit = 'approach'
+                                accept_step = True
+                            else:
+                                f = params['target_timestep'] / self.dt_yr
+                                msg = '{:>50}'.format('ok')
+                                delta_t *= 0.5 * (1. + f)
+                                accept_step = True
                         else:
+                            # normal situation for homogeneous phase
+                            f = (params['target_timestep'] / self.dt_yr) ** 0.5
                             msg = '{:>50}'.format('ok')
-                        # delta_t *= f
-                        delta_t *= 0.5 * (1. + f)
-                        accept_step = True
+                            delta_t *= 0.5 * (1. + f)
+                            accept_step = True
                     else: # dy1 too large
                         if retries < 2:
                             delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
@@ -1640,9 +1626,6 @@ class evol:
             if params[which_t] < end_t:
                 # took a good last step
                 done = True
-            # elif hasattr(self.status, 'args'):
-                # if 'failed to bracket' in self.status.args[0]:
-                    # done = True
             else:
                 # took a normal good step
                 previous_entropy = self.entropy
@@ -1664,19 +1647,22 @@ class evol:
                 # self.luminosity = luminosity
                 prev_y1 = np.copy(self.y[-1])
 
-                if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0 and self.y[-1] > 0.0:
-                    # judge whether approaching rainout onset
-                    ymax = self.history['ymax_trans'][self.history['ymax_trans'] != None]
-                    t1 = self.history['t1'][self.history['ymax_trans'] != None]
-                    if len(ymax) > 5:
-                        isort = np.argsort(t1)
-                        tck_ = splrep(t1[isort], ymax[isort], k=1)
-                        projected_ymax = np.float64(splev(self.t1 - delta_t, tck_))
-                        print('step={} delta_t={} ymax={} projected_ymax={}'.format(self.step, delta_t, self.ymax_trans, projected_ymax))
-                        if projected_ymax < 0.28:
-                            delta_t = 0.3
-                    else:
-                        pass
+                # this is not a great method, because ymax may only be calculable
+                # once quite close to rainout. instead compare t to tphase(protosolar)
+                # at a few representative pressures as above.
+                # if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0 and self.y[-1] > 0.0:
+                #     # judge whether approaching rainout onset
+                #     ymax = self.history['ymax_trans'][self.history['ymax_trans'] != None]
+                #     t1 = self.history['t1'][self.history['ymax_trans'] != None]
+                #     if len(ymax) > 5:
+                #         isort = np.argsort(t1)
+                #         tck_ = splrep(t1[isort], ymax[isort], k=1)
+                #         projected_ymax = np.float64(splev(self.t1 - delta_t, tck_))
+                #         print('step={} delta_t={} ymax={} projected_ymax={}'.format(self.step, delta_t, self.ymax_trans, projected_ymax))
+                #         if projected_ymax < 0.28:
+                #             delta_t = 0.3
+                #     else:
+                #         pass
 
         if 'output_prefix' in list(params):
             self.save_history(params['output_prefix'])

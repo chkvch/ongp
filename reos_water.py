@@ -1,14 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
-
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
 
 class eos:
 
@@ -18,7 +10,6 @@ class eos:
 
         # Nadine 22 Sep 2015: Fifth column is entropy in kJ/g/K+offset
 
-        log.debug('message')
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
         self.data = np.genfromtxt(path, names=self.names)
 

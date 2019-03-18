@@ -1,10 +1,7 @@
-from scipy import interpolate
 from scipy.optimize import brentq, minimize
-from scipy.interpolate import splrep, splev
-# from scipy.interpolate import BSpline
+from scipy.interpolate import splrep, splev # Bspline
 import numpy as np
 import time
-import sys
 
 class hhe_phase_diagram:
     """interpolates in the Lorenzen et al. 2011 phase diagram to return maximum soluble helium fraction,
@@ -25,7 +22,7 @@ class hhe_phase_diagram:
 
     """
 
-    def __init__(self, path_to_data='/Users/chris/ongp/data',
+    def __init__(self, path_to_data=None,
                     order=3,
                     extrapolate_to_low_pressure=False,
                     t_shift_p1=False,
@@ -34,6 +31,9 @@ class hhe_phase_diagram:
                     p_interpolation='log'
                     ):
 
+        if not path_to_data:
+            import os
+            path_to_data = os.environ['ongp_data_path']
         self.p_interpolation = p_interpolation
         self.extrapolate_to_low_pressure = extrapolate_to_low_pressure
 
