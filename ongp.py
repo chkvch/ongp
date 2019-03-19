@@ -82,9 +82,9 @@ class evol:
                     raise NotImplementedError('extrapolate_to_low_pressure not implemented for schoettler phase diagram')
                 if params['t_shift_p1'] is not None:
                     raise NotImplementedError('t_shift_p1 not implemented for schoettler phase diagram')
-                if params['phase_p_interpolation'] is not 'log':
-                    raise NotImplementedError('phase_p_interpolation != log not implemented for schoettler phase diagram')
-                self.phase = schoettler.hhe_phase_diagram()
+                self.phase = schoettler.hhe_phase_diagram(params['path_to_data'],
+                                            p_interpolation=params['phase_p_interpolation']
+                                            )
             else:
                 raise ValueError('hydrogen-helium phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
 
@@ -379,24 +379,10 @@ class evol:
             # get density everywhere based on primitive guesses
             self.set_core_density()
             self.set_envelope_density(ignore_z=True) # ignore Z for first pass at densities
-
             self.integrate_continuity() # rho, dm -> r
-            # self.integrate_hydrostatic() # m, r -> p # p[-1] hardcoded to 1 bar
-            # self.integrate_temperature(brute_force_loop=True) # p, t, y -> grada -> t
-            #
-            # # now that we have pressure, try and locate transition pressure
-            # self.locate_transition_pressure()
-            # # set y2 and z2 if applicable
-            # self.set_yz()
-            #
-            # # recalculate densities based on possibly three-layer y, z
-            # self.set_core_density()
-            # self.set_envelope_density()
-            #
         else:
             # self.y[:] = 0.
             # self.y[self.kcore:] = self.y1
-            # self.y[self.kcore:] = 0.7 * self.y1 * np.ones_like(self.y[self.kcore:]) + 0.3 * self.y[self.kcore:]
             pass
 
         if 'debug_iterations' in params.keys():
@@ -412,11 +398,7 @@ class evol:
             # set y and z profile assuming three-layer homogeneous. if doing helium rain (self.phase is set),
             # Y profile wile be set appropriately later in equilibrium_Y iterations.
             self.set_yz()
-            # if self.iters < 10 or self.iters % 2 == 0.:
-                # self.integrate_temperature(brute_force_loop=True) # integrate gradt (usually grada) for envelope temp; core isothermal
-            # else:
-                # self.integrate_temperature(brute_force_loop=False)
-            self.integrate_temperature(brute_force_loop=True) # brute force seems necessary for reliable precision
+            self.integrate_temperature()
             self.set_core_density()
             self.set_envelope_density()
             self.integrate_continuity() # get zone radii from their densities via continuity equation
@@ -490,7 +472,7 @@ class evol:
                     # will cost some time because of the additional eos calls.
 
                     # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
-                    # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1
+                    # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1.
 
                     # new: moved these to self.integrate_temperature, since an eos call happens there anyway
                     # res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
@@ -1521,13 +1503,11 @@ class evol:
                     break
                     # formerly, we would retry with a smaller timestep
                 elif self.dt_yr < params['max_timestep']: # okay on timestep
-                    if prev_y1 > 0. and prev_y1 - self.y[-1] < 0: # went up in y1, try a larger timestep
+                    if prev_y1 > 0. and prev_y1 - self.y[-1] < 0:
                         self.status = RuntimeError('y1 increased.') # usually this is caught as negative timestep above
                         break
                         # formerly, we would retry with a larger timestep
                     elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
-                        # f = (params['target_timestep'] / self.dt_yr) ** 0.5
-
                         if hasattr(self, 'phase') and self.nz_gradient <= 0:
                             from lorenzen import get_xp
                             # are we anywhere *close* to rainout for initial y1?
@@ -1554,13 +1534,18 @@ class evol:
                                 limit = 'near'
                                 accept_step = True
                             else:
+                                # no rainout yet and not especially close;
+                                # somewhat aggressively go toward target timestep
                                 f = params['target_timestep'] / self.dt_yr
                                 # f = (params['target_timestep'] / self.dt_yr) ** 0.5
                                 msg = '{:>50}'.format('ok')
-                                delta_t *= 0.5 * (1. + f)
+                                # delta_t *= 0.5 * (1. + f)
+                                delta_t *= f
                                 accept_step = True
                                 last_normal_delta_t = delta_t
                         else:
+                            # have rainout and nothing else limiting timestep;
+                            # gently go toward target timestep
                             f = (params['target_timestep'] / self.dt_yr) ** 0.5
                             delta_t *= 0.5 * (1. + f)
                             # delta_t = 0.5

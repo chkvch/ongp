@@ -88,9 +88,6 @@ class hhe_phase_diagram:
         # insert a tiny made-up bump so that critical temperature can be solved for.
         k1, k2 = np.where(data['t'] == 7141.)[0]
         self.data = {}
-        # self.data['p'] = np.insert(data['p'], k2, 1.)
-        # self.data['x'] = np.insert(data['x'], k2, 0.5 * (0.29851 + 0.24755))
-        # self.data['t'] = np.insert(data['t'], k2, 8141.)
         self.data['p'] = np.delete(data['p'], k2)
         self.data['x'] = np.delete(data['x'], k2)
         self.data['t'] = np.delete(data['t'], k2)
@@ -125,7 +122,6 @@ class hhe_phase_diagram:
 
         self.x_clean = {}
         self.t_clean = {}
-        self.minmax_z = {}
 
         self.tck_xlo = {}
         self.tck_xhi = {}
@@ -223,8 +219,6 @@ class hhe_phase_diagram:
             # t = np.insert(t, i, tcrit)
             # x = np.insert(x, i, self.splinex(pval, zcrit))
 
-            # provide min and max values of z for sake of root find bounds in miscibility_gap
-            self.minmax_z[pval] = z[0], z[-1]
             self.i[pval] = i
             # delete 'hooks' back to lower x on hi-x side for 1 and 2 Mbar
             while np.any(np.diff(x[i:]) < 0):
