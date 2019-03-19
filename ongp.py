@@ -80,10 +80,10 @@ class evol:
                 reload(schoettler)
                 if 'extrapolate_to_low_pressure' in list(params):
                     raise NotImplementedError('extrapolate_to_low_pressure not implemented for schoettler phase diagram')
-                if 't_shift_p1' in list(params):
+                if params['t_shift_p1'] is not None:
                     raise NotImplementedError('t_shift_p1 not implemented for schoettler phase diagram')
-                if 'phase_p_interpolation' in list(params):
-                    raise NotImplementedError('phase_p_interpolation not implemented for schoettler phase diagram')
+                if params['phase_p_interpolation'] is not 'log':
+                    raise NotImplementedError('phase_p_interpolation != log not implemented for schoettler phase diagram')
                 self.phase = schoettler.hhe_phase_diagram()
             else:
                 raise ValueError('hydrogen-helium phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
@@ -1538,21 +1538,33 @@ class evol:
                                 t_minus_tphase = tphase + params['phase_t_offset']*1e-3 - self.t[kp]*1e-3 # effective tphase minus true t in kK
                                 min_abs_t_minus_tphase = min(min_abs_t_minus_tphase, abs(t_minus_tphase))
                                 # print('kp={} p={} t={} tphase={} offset={} delta_t={}'.format(kp, self.p[kp]*1e-12, self.t[kp]*1e-3, tphase, params['phase_t_offset']*1e-3, t_minus_tphase))
-                            if min_abs_t_minus_tphase < 0.2:
-                                delta_t = 0.3
-                                msg = '{:>50}'.format('approach rainout')
-                                limit = 'approach'
+                            cut1 = 0.8
+                            cut2 = 0.1
+                            small_delta_t = 0.3
+                            if min_abs_t_minus_tphase < 0.1:
+                                delta_t = small_delta_t
+                                msg = '{:>50}'.format('approach rainout delta={:.2f}'.format(min_abs_t_minus_tphase))
+                                limit = 'vnear'
+                                accept_step = True
+                            elif min_abs_t_minus_tphase < cut1:
+                                # linear decrease
+                                alpha = (min_abs_t_minus_tphase - cut1) / (cut2 - cut1)
+                                delta_t = alpha * small_delta_t + (1. - alpha) * last_normal_delta_t
+                                msg = '{:>50}'.format('approach rainout delta={:.2f}'.format(min_abs_t_minus_tphase))
+                                limit = 'near'
                                 accept_step = True
                             else:
                                 f = params['target_timestep'] / self.dt_yr
+                                # f = (params['target_timestep'] / self.dt_yr) ** 0.5
                                 msg = '{:>50}'.format('ok')
                                 delta_t *= 0.5 * (1. + f)
                                 accept_step = True
+                                last_normal_delta_t = delta_t
                         else:
-                            # normal situation for homogeneous phase
                             f = (params['target_timestep'] / self.dt_yr) ** 0.5
-                            msg = '{:>50}'.format('ok')
                             delta_t *= 0.5 * (1. + f)
+                            # delta_t = 0.5
+                            msg = '{:>50}'.format('ok')
                             accept_step = True
                     else: # dy1 too large
                         if retries < 2:
@@ -1739,11 +1751,10 @@ class evol:
         profile['grady'] = np.copy(self.grady)
         profile['brunt_b'] = np.copy(self.brunt_b)
         # profile['pressure_scale_height'] = self.pressure_scale_height
-        profile['ymax'] = np.copy(self.ymax)
-        try:
+        if hasattr(self, 'ymax'):
+            profile['ymax'] = np.copy(self.ymax)
+        if hasattr(self, 'ystart'):
             profile['dy'] = np.copy(self.y - self.ystart)
-        except AttributeError: # no phase separation for this step
-            pass
         if self.step > 0:
             profile['delta_s'] = np.copy(self.delta_s)
             profile['eps_grav'] = np.copy(self.eps_grav)
