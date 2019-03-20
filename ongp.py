@@ -1448,13 +1448,14 @@ class evol:
 
                 # check the timestep that this static model would imply
                 assert 'target_dy1' not in list(params), 'target_dy1 not implemented in evolve.'
-                if self.dt_yr < 0: # bad; this tends to happen if he shell top has not moved.
-                    self.status = RuntimeError('negative timestep')
+                if self.dt_yr < 0: # bad
+                    raise ValueError('negative timestep')
+                    self.status = ValueError('negative timestep')
                     break
                     # formerly, we would retry with a smaller timestep
                 elif self.dt_yr < params['max_timestep']: # okay on timestep
                     if prev_y1 > 0. and prev_y1 - self.y[-1] < 0:
-                        self.status = RuntimeError('y1 increased.') # usually this is caught as negative timestep above
+                        self.status = ValueError('y1 increased.') # usually this is caught as negative timestep above
                         break
                         # formerly, we would retry with a larger timestep
                     elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1

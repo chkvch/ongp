@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, splrep, splev
 from scipy.optimize import brentq
 # import gp_configs.app_config as app_cfg
 # import logging
@@ -18,8 +18,11 @@ class atm:
     doi:10.1088/0004-637X/729/1/32
     '''
 
-    def __init__(self, path_to_data, planet='jup', print_table=False, flux_level=None, jupiter_modified_teq=None):
+    def __init__(self, path_to_data=None, planet='jup', print_table=False, flux_level=None, jupiter_modified_teq=None):
 
+        if not path_to_data:
+            import os
+            path_to_data = os.environ['ongp_data_path']
         self.planet = planet
         # log.debug('planet is %s', self.planet)
 
@@ -209,4 +212,9 @@ class atm:
 
         tint = brentq(zero_me, min_tint, max_tint)
         teff = float(self.get['teff']((g, tint)))
+        if np.isnan(teff):
+            _ = np.linspace(min_tint, max_tint)
+            while np.isnan(teff):
+                _ = np.delete(_, -1)
+                teff = splev(tint, splrep(_, self.get['teff']((g, _))))
         return tint, teff
