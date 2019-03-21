@@ -9,21 +9,14 @@ try:
     from importlib import reload
 except:
     pass
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
-
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
 
 class evol:
 
     def __init__(self, params, mesh_params={}):
 
         if not 'path_to_data' in params.keys():
-            raise ValueError('must specify path_to_data indicating path to eos/atm data')
+            import os
+            params['path_to_data'] = os.environ['ongp_data_path']
 
         if not 'hhe_eos_option' in params.keys():
             params['hhe_eos_option'] = 'scvh'
