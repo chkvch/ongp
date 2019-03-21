@@ -1449,13 +1449,14 @@ class evol:
                 # check the timestep that this static model would imply
                 assert 'target_dy1' not in list(params), 'target_dy1 not implemented in evolve.'
                 if self.dt_yr < 0: # bad
-                    raise ValueError('negative timestep')
                     self.status = ValueError('negative timestep')
+                    raise self.status
                     break
                     # formerly, we would retry with a smaller timestep
                 elif self.dt_yr < params['max_timestep']: # okay on timestep
                     if prev_y1 > 0. and prev_y1 - self.y[-1] < 0:
-                        self.status = ValueError('y1 increased.') # usually this is caught as negative timestep above
+                        self.status = ValueError('y1 increased') # usually this is caught as negative timestep above
+                        raise self.status
                         break
                         # formerly, we would retry with a larger timestep
                     elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
@@ -1542,6 +1543,7 @@ class evol:
 
                 if retries == 10:
                     self.status = ConvergenceError('reached max number of retries for evolve step')
+                    raise self.status
                     break # exit retry loop
 
             if 'full_profiles' in list(params):
