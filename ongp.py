@@ -292,9 +292,9 @@ class evol:
                 self.teq = params['teq']
             if self.evol_params['atm_option'] == 'f11_tables':
                 import f11_atm; reload(f11_atm)
-                if 'atm_jupiter_modified_teq' in list(self.evol_params):
+                if 'force_teq' in list(self.evol_params):
                     self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'],
-                        jupiter_modified_teq=self.evol_params['atm_jupiter_modified_teq'])
+                        force_teq=self.evol_params['force_teq'])
                 else:
                     self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'])
             elif self.evol_params['atm_option'] == 'f11_fit':
