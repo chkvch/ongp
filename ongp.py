@@ -82,9 +82,15 @@ class evol:
                     raise NotImplementedError('extrapolate_to_low_pressure not implemented for schoettler phase diagram')
                 if params['t_shift_p1'] is not None:
                     raise NotImplementedError('t_shift_p1 not implemented for schoettler phase diagram')
-                self.phase = schoettler.hhe_phase_diagram(params['path_to_data'],
-                                            p_interpolation=params['phase_p_interpolation']
-                                            )
+                if 'schoettler_add_knots' in list(params):
+                    self.phase = schoettler.hhe_phase_diagram(params['path_to_data'],
+                                                p_interpolation=params['phase_p_interpolation'],
+                                                add_knots=params['schoettler_add_knots']
+                                                )
+                else:
+                    self.phase = schoettler.hhe_phase_diagram(params['path_to_data'],
+                                                p_interpolation=params['phase_p_interpolation']
+                                                )
             else:
                 raise ValueError('hydrogen-helium phase diagram option {} is not recognized.'.format(params['hhe_phase_diagram']))
 
@@ -416,6 +422,7 @@ class evol:
 
             # hydrostatic model is judged to be converged when the radius has changed by a relative amount less than
             # radius_rtol over both of the last two iterations.
+            # if np.all(np.abs((last_three_radii / self.r[-1] - 1.)) < self.evol_params['radius_rtol']):
             if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                 if iteration >= self.evol_params['min_iters_static']:
                     last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
@@ -521,14 +528,15 @@ class evol:
                 if 'debug_iterations' in params.keys():
                     if params['debug_iterations']:
                         et = time.time() - t0
-                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.5f}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.iters_rain, self.r[-1], self.y[-1], self.ktrans, et*1e3))
+                        qtys = self.iters, self.iters_rain, self.r[-1], self.y[-1], self.k1, self.p[self.k1]*1e-12, et*1e3
+                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.5f}, k1 {}, p[k1] {:.5f}, et_ms {:5.2f}'.format(*qtys))
                         if 'debug_iterations' in list(params):
                             if type(params['debug_iterations']) is str:
                                 step = int(params['debug_iterations'].split()[1])
                                 if self.step == step:
                                     self.rtot = self.r[-1]
                                     self.set_derivatives_etc()
-                                    with open('{:3n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
+                                    with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
                                         pickle.dump(self, fw)
                 # print('dr={}, rtol={}'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol']))
                 # print('dy1={}, rtol={}'.format(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
@@ -659,6 +667,15 @@ class evol:
                             gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
                             xplo, xphi = gap
                             ymax_k1 = get_y(self.z[k1], get_yp(xplo))
+                        elif p[k] > p[self.k1]: # top of gradient was farther out out a previous iteration
+                            if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
+                            while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
+                                self.k1 -= 1
+                            k1 = self.k1
+
+                            gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+                            xplo, xphi = gap
+                            ymax_k1 = get_y(self.z[k1], get_yp(xplo))
 
                         if verbosity > 1: print('found k1={}; ystart={}'.format(k1, self.y[k1]))
                         break
@@ -781,10 +798,9 @@ class evol:
                     yout[k] = get_y(self.z[k], get_yp(xphi))
 
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
-                # tentative_total_he_mass = np.dot(yout[self.kcore+1:], self.dm[self.kcore:])
                 if verbosity > 2: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
                 if tentative_total_he_mass >= self.mhe:
-                    if verbosity > 1: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
+                    # if verbosity > 1: print('tentative he mass, initial total he mass', tentative_total_he_mass, self.mhe)
 
                     if 'adjust_shell_top_mass' in list(self.static_params):
                         if self.static_params['adjust_shell_top_mass']:
@@ -840,7 +856,7 @@ class evol:
 
                     tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                     self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
-                    if verbosity > 1: print('satisfied he mass conservation to a relative precision of %f' % self.rel_mhe_error)
+                    # if verbosity > 1: print('satisfied he mass conservation to a relative precision of %f' % self.rel_mhe_error)
 
                     self.k_shell_top = k
                     break
