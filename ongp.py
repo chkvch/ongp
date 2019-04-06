@@ -243,8 +243,8 @@ class evol:
 
         if not 'phase_t_offset' in params.keys():
             params['phase_t_offset'] = 0.
-        if not 'minimum_y_is_envelope_y' in params.keys():
-            minimum_y_is_envelope_y = params['minimum_y_is_envelope_y'] = False
+        if not 'allow_y_inversions' in params.keys():
+            allow_y_inversions = params['allow_y_inversions'] = False
         if not 'erase_z_discontinuity_from_brunt' in params.keys():
             erase_z_discontinuity_from_brunt = params['erase_z_discontinuity_from_brunt'] = False
         if not 'include_core_entropy' in params.keys():
@@ -389,6 +389,9 @@ class evol:
         else:
             # self.y[:] = 0.
             # self.y[self.kcore:] = self.y1
+            self.p_start = np.copy(self.p)
+            self.t_start = np.copy(self.t)
+            self.y_start = np.copy(self.y)
             pass
 
         if 'debug_iterations' in params.keys():
@@ -427,6 +430,8 @@ class evol:
                 if iteration >= self.evol_params['min_iters_static']:
                     last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
                     break
+            # else:
+                # print('radius change exceeds tolerance; continue')
             if not np.isfinite(self.r[-1]):
                 raise HydroError('found infinite total radius.')
 
@@ -439,6 +444,7 @@ class evol:
 
         self.t_before_he = np.copy(self.t)
         self.y_before_he = np.copy(self.y)
+        self.p_before_he = np.copy(self.p)
 
         last_three_y1 = 0, 0, 0
         # repeat hydro iterations, now including the phase diagram calculation (if helium rain)
@@ -509,7 +515,7 @@ class evol:
 
                 self.y = self.equilibrium_y_profile(params['phase_t_offset'],
                             verbosity=params['rainout_verbosity'],
-                            minimum_y_is_envelope_y=params['minimum_y_is_envelope_y'])
+                            allow_y_inversions=params['allow_y_inversions'])
                 # these bookkeeping numbers are not accurate if y inversions allowed;
                 # not a big deal but do fix later
                 if np.any(np.diff(self.y) < 0):
@@ -533,6 +539,7 @@ class evol:
                         if 'debug_iterations' in list(params):
                             if type(params['debug_iterations']) is str:
                                 step = int(params['debug_iterations'].split()[1])
+                                self.step = -1 # banana
                                 if self.step == step:
                                     self.rtot = self.r[-1]
                                     self.set_derivatives_etc()
@@ -545,6 +552,10 @@ class evol:
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
                         # print('rain iter {}: y1 okay'.format(self.iters_rain))
                         break
+                    # else:
+                        # print('y1 change exceeds tolerance; keep going')
+                # else:
+                    # print('radius change exceeds tolerance; keep going')
 
                 if not np.isfinite(self.r[-1]):
                     with open('output/found_infinite_radius.dat', 'w') as f:
@@ -595,12 +606,12 @@ class evol:
         assert res['success'], 'failed root find in get_rhoz_hm89_ice'
         return res.x
 
-    def equilibrium_y_profile(self, phase_t_offset, verbosity=0, show_timing=False, minimum_y_is_envelope_y=False):
+    def equilibrium_y_profile(self, phase_t_offset, verbosity=0, show_timing=False, allow_y_inversions=False):
         '''uses the existing p-t profile to find the thermodynamic equilibrium y profile, which
         may require a helium-rich layer atop the core.'''
         p = self.p * 1e-12 # Mbar
         t = self.t * 1e-3 # kK
-        self.ymax = np.zeros_like(self.p)
+        self.ymax = np.ones_like(self.p)
 
         # the phase diagram came from a model for a system of just H and He.
         # if xp and Yp represent the helium number fraction and mass fraction from the phase diagram,
@@ -623,91 +634,134 @@ class evol:
         # i.e., query phase diagram with a lower T than true planet T.
         min_ymax_minus_y = 1
         for k in np.arange(self.nz-1, self.kcore, -1):
-            if p[k] < min(self.phase.pvals): continue
-            if k == self.kcore + 1 or p[k] > max(self.phase.pvals):
-                if verbosity > 0: print('rain iter {}: all zones stable'.format(self.iters_rain))
-                return self.y
+            if p[k] < min(self.phase.pvals):
+                # y_max not evaluable because no data from phase diagram; assume stable
+                continue
+            elif p[k] > max(self.phase.pvals):
+                # same on other end
+                break
+            if p[k] > 4 and p[k+1] > 4:
+                # that's far enough to know about envelope abundance and inversions; try and save time
+                break
+
+            # if k == self.kcore + 1 or p[k] > max(self.phase.pvals):
+            #     if verbosity > 0: print('rain iter {}: all zones stable'.format(self.iters_rain))
+            #     return self.y
             gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
             if type(gap) is str:
-                if verbosity > 2:
-                    if p[k] < 6:
-                        print('query  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={})'.format(self.iters, self.iters_rain, k, p[k], t[k], self.y[k], gap))
                 assert gap == 'stable'
                 continue
             elif type(gap) is tuple:
                 xplo, xphi = gap
                 ymax = get_y(self.z[k], get_yp(xplo))
                 self.ymax[k] = ymax
-                if verbosity > 2:
-                    if p[k] < 6:
-                        excess = self.y[k] - ymax
-                        if self.y[k] > ymax:
-                            s = ' >?'
-                        elif self.y[k] < ymax:
-                            s = ' <?'
-                        else:
-                            s = ' =?'
-                        print('query  (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} {:3s} ymax={:.4f} excess={:.4e})'.format(self.iters, self.iters_rain, k, p[k], t[k], self.y[k], s, ymax, excess))
                 # keep track of the zone closest to rainout
-                if ymax - self.y[k] < min_ymax_minus_y:
-                    min_ymax_minus_y = ymax - self.y[k]
-                    # self.ymax_trans = min(self.y[-1], ymax)
-                    self.ymax_trans = ymax
-                if self.y[k] > ymax:
-                    if self.y[k] - ymax > 1e-20: # was trying nonzero tolerances like 1e-6, 1e-4 previously
-                        k1 = k
-                        ymax_k1 = ymax
-                        if not minimum_y_is_envelope_y and self.k1 > k:
-                            # top of gradient was farther out on a previous iteration; keep the gradient top there.
-                            if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
-                            while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
-                                self.k1 -= 1
-                            k1 = self.k1
+                # if ymax - self.y[k] < min_ymax_minus_y:
+                    # min_ymax_minus_y = ymax - self.y[k]
+                    # self.ymax_closest = ymax
+                # if self.y[k] > ymax:
+                #     if self.y[k] - ymax < 1e-20: raise ValueError
+                #     self.k1 = k1 = k # this may be the first rainout zone
+                #     ymax_k1 = ymax
+                    # if not allow_y_inversions and self.k1 > k:
+                    #     # top of gradient was farther out on a previous iteration; keep the gradient top there.
+                    #     if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
+                    #     while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
+                    #         self.k1 -= 1
+                    #     k1 = self.k1
+                    #
+                    #     gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+                    #     xplo, xphi = gap
+                    #     ymax_k1 = get_y(self.z[k1], get_yp(xplo))
+                    # elif p[k] > p[self.k1]: # top of gradient was farther out out a previous iteration
+                    #     if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
+                    #     while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
+                    #         self.k1 -= 1
+                    #     k1 = self.k1
+                    #
+                    #     gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
+                    #     xplo, xphi = gap
+                    #     ymax_k1 = get_y(self.z[k1], get_yp(xplo))
 
-                            gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
-                            xplo, xphi = gap
-                            ymax_k1 = get_y(self.z[k1], get_yp(xplo))
-                        elif p[k] > p[self.k1]: # top of gradient was farther out out a previous iteration
-                            if verbosity > 2: print('found k1={} within old k1={}; keep old k1={}'.format(k1, self.k1, self.k1))
-                            while p[self.k1] < min(self.phase.pvals): # this zone may drift below minimum phase diagram p
-                                self.k1 -= 1
-                            k1 = self.k1
+                    # if verbosity > 1: print('found k1={}; ystart={} ymax={}'.format(k1, self.y[k1], self.ymax[k1]))
+                    # break
 
-                            gap = self.phase.miscibility_gap(p[k1], t[k1] - phase_t_offset * 1e-3)
-                            xplo, xphi = gap
-                            ymax_k1 = get_y(self.z[k1], get_yp(xplo))
+        # with open('y.pkl', 'wb') as f:
+        #     pickle.dump({'ymax':self.ymax,'y':self.y}, f)
+        # print('wrote y.pkl')
+        # assert False
 
-                        if verbosity > 1: print('found k1={}; ystart={}'.format(k1, self.y[k1]))
-                        break
-                    else:
-                        pass
+        if not np.any(self.y > self.ymax):
+            # print('{}: found no rainout'.format(self.iters_rain))
+            return self.y
 
-        self.ystart = np.copy(self.y) # only gets set if this routine did something.
-        yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
-
-        # homogeneous molecular envelope at this abundance
-        # note: don't do this if any zones outside already have a lower abundance. this routinely
-        # happens if previous rain iters have already taken place so that there's a gradient
-        # from say p=1.01 to 1.06 Mbar, and then 1.07 Mbar is the first zone *on this iteration*
-        # to show a bit of excess helium. if that's the case, do start next iterations at p=1.07,
-        # but don't reset envelope abundance.
-        yenv = get_y(self.z[k1], get_yp(xplo))
-
-        if minimum_y_is_envelope_y:
-            if np.all(yout[k1+1:] > yenv):
-                if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
-                yout[k1+1:] = yenv
+        if hasattr(self, 'p_start'):
+            # get this static model's starting y vector, interpolated onto current pressures
+            ystart = splev(self.p, splrep(self.p_start[::-1], self.y_start[::-1], k=1))
         else:
-            # yout[k1+1:] = yenv
-            if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
-            yout[k1+1:] = yenv
+            ystart = self.y
+
+        # k1 = np.where(self.y > self.ymax)[0][-1]
+        k1 = np.where(ystart > self.ymax)[0][-1]
+        k_miny = np.where(self.ymax == min(self.ymax))[0][0]
+        # print('k1={:n} p1={:.4f} t1={:.1f} ymax1={:.3f}; kmin={:n} pmin={:.4f} tmin={:.1f} ymaxmin={:.4f}'.format(k1, p[k1], t[k1], self.ymax[k1], k_miny, p[k_miny], t[k_miny], self.ymax[k_miny]))
+
+        # self.ystart = np.copy(self.y) # only gets set if this routine did something.
+        yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
+        self.k1 = k1
+        self.k_miny = k_miny
+
+        if allow_y_inversions:
+            if np.all(yout[k1+1:] > self.ymax[k1]):
+                yout[k1+1:] = self.ymax[k1]
+                # print(self.ymax[k1])
+            else:
+                # print('{}: ymax[k1]={} exceeds yout[k1+1:]; leave envelope alone'.format(self.iters_rain, self.ymax[k1]))
+                pass
+        else:
+            if np.all(yout[k_miny+1:] > self.ymax[k_miny]):
+                yout[k_miny+1:] = self.ymax[k_miny]
+            elif yout[k_miny+1] > self.ymax[k_miny]:
+                # print('{}: yout[k_miny+1] exceeds max but not all zones outside do. what to do?'.format(self.iters_rain, self.ymax[k_miny]))
+                # multiple local minima in y!
+                raise ValueError('more than one local minimum in ymax; this case not implemented yet.')
+            else:
+                j = np.where(self.p_before_he*1e-12 < p[k_miny])[0][0]
+                y_before_he_here = splev(p[k_miny], splrep(self.p_before_he[j-1:j+1][::-1]*1e-12, self.y_before_he[j-1:j+1][::-1], k=1))
+                if self.ymax[k_miny] < y_before_he_here:
+                    yout[k_miny+1:] = self.ymax[k_miny]
+                else:
+                    print('{}: ymax[k_miny]={} exceeds y_before_he[k_miny]={}; leave envelope alone'.format(self.iters_rain, self.ymax[k_miny], self.y_before_he[k_miny]))
+                    pass
+        #
+        # # homogeneous molecular envelope at this abundance
+        # # note: don't do this if any zones outside already have a lower abundance. this routinely
+        # # happens if previous rain iters have already taken place so that there's a gradient
+        # # from say p=1.01 to 1.06 Mbar, and then 1.07 Mbar is the first zone *on this iteration*
+        # # to show a bit of excess helium. if that's the case, do start next iterations at p=1.07,
+        # # but don't reset envelope abundance.
+        # yenv = get_y(self.z[k1], get_yp(xplo))
+        #
+        # if allow_y_inversions:
+        #     if np.all(yout[k1+1:] > yenv):
+        #         if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
+        #         yout[k1+1:] = yenv
+        # else:
+        #     # yout[k1+1:] = yenv
+        #     if verbosity > 0: print('env    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f} -->  yk1={:.4f})'.format(self.iters, self.iters_rain, k1, p[k1+1], t[k1+1], self.y[k1+1], yenv))
+        #     yout[k1+1:] = yenv
+
+
+
+
+
 
         t0 = time.time()
         rainout_to_core = False
 
-        self.k_shell_top = None
+        # self.k_shell_top = None # leave alone; may exist already even if the current iteration doesn't enter shell loop
 
-        for k in np.arange(k1, self.kcore, -1): # inward from first point below phase curve
+        for k in np.arange({True:k1, False:k_miny}[allow_y_inversions], self.kcore, -1): # inward from first point below phase curve
             t1 = time.time()
             # note that phase_t_offset is applied here; phase diagram simply sees different temperature
             gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
@@ -732,11 +786,11 @@ class evol:
             ystart = yout[k]
             yout[k] = ymax
 
-            if minimum_y_is_envelope_y and yout[k] < yout[k+1]:
-                assert yout[k] > 0
-                if verbosity > 1:
-                    print('inv    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  yk+1={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], yout[k+1]))
-                yout[k+1:] = yout[k]
+            # if allow_y_inversions and yout[k] < yout[k+1]: # this catches local minima, not global minima
+            #     assert yout[k] > 0
+            #     if verbosity > 1:
+            #         print('inv    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  yk+1={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], yout[k+1]))
+            #     yout[k+1:] = yout[k]
 
             # difference between initial he mass and current proposed he mass above and including this zone
             # must be deposited into the deeper interior.
@@ -862,7 +916,6 @@ class evol:
                     break
 
         if rainout_to_core: assert self.k_shell_top
-
         # self.nz_gradient = len(np.where(np.diff(yout) < 0)[0])
 
         if np.any(yout > 1.):
@@ -1405,7 +1458,7 @@ class evol:
         prev_y1 = -1
         done = False
         limit = ''
-        self.ymax_trans = None
+        self.ymax_closest = None
 
         params[which_t] = start_t
         other_t = {'t1':'t10', 't10':'t1'}[params['which_t']]
@@ -1577,7 +1630,7 @@ class evol:
             k_shell = self.k_shell_top if self.k_shell_top else -1
             iters_rain = self.iters_rain if hasattr(self, 'iters_rain') else -1
             mhe_rerr = self.rel_mhe_error if hasattr(self, 'rel_mhe_error') else 0
-            if self.step % stdout_interval == 0: # or self.step == nsteps - 1:
+            if self.step % stdout_interval == 0:
                 stdout_data = self.step, self.iters, iters_rain, retries, limit, \
                     params[which_t], self.teff, self.rtot, delta_t, self.dt_yr, self.age_gyr, \
                     self.nz_gradient, self.nz_shell, k_grady, k_shell, \
@@ -1591,6 +1644,8 @@ class evol:
             # catch stopping condition
             if params[which_t] < end_t:
                 # took a good last step
+                done = True
+            elif self.teff < params['min_teff']:
                 done = True
             else:
                 # took a normal good step
@@ -1612,23 +1667,6 @@ class evol:
                 # self.eps_grav = eps_grav
                 # self.luminosity = luminosity
                 prev_y1 = np.copy(self.y[-1])
-
-                # this is not a great method, because ymax may only be calculable
-                # once quite close to rainout. instead compare t to tphase(protosolar)
-                # at a few representative pressures as above.
-                # if hasattr(self, 'phase') and self.ymax_trans and k_shell < 0 and self.y[-1] > 0.0:
-                #     # judge whether approaching rainout onset
-                #     ymax = self.history['ymax_trans'][self.history['ymax_trans'] != None]
-                #     t1 = self.history['t1'][self.history['ymax_trans'] != None]
-                #     if len(ymax) > 5:
-                #         isort = np.argsort(t1)
-                #         tck_ = splrep(t1[isort], ymax[isort], k=1)
-                #         projected_ymax = np.float64(splev(self.t1 - delta_t, tck_))
-                #         print('step={} delta_t={} ymax={} projected_ymax={}'.format(self.step, delta_t, self.ymax_trans, projected_ymax))
-                #         if projected_ymax < 0.28:
-                #             delta_t = 0.3
-                #     else:
-                #         pass
 
         if 'output_prefix' in list(params):
             self.save_history(params['output_prefix'])
@@ -1661,7 +1699,7 @@ class evol:
                 'walltime':self.walltime,
                 'delta_t':self.delta_t,
                 'delta_y1':self.delta_y1,
-                'ymax_trans':self.ymax_trans
+                'ymax_trans':self.ymax_closest
                 }
 
             if not hasattr(self, 'history'):
