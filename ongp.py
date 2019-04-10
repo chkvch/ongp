@@ -99,7 +99,7 @@ class evol:
             'nz':1024,
             'radius_rtol':1e-4,
             'y1_rtol':1e-4,
-            'max_iters_static':20,
+            'max_iters_static':30,
             'min_iters_static':3,
             'max_iters_static_before_rain':3
         }
@@ -545,8 +545,7 @@ class evol:
                                     self.set_derivatives_etc()
                                     with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
                                         pickle.dump(self, fw)
-                # print('dr={}, rtol={}'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol']))
-                # print('dy1={}, rtol={}'.format(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
+                # print('dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     # print('rain iter {}: radius ok'.format(self.iters_rain))
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
@@ -626,132 +625,150 @@ class evol:
         from schoettler import get_xp, get_y # get_xp(z, y); get_y(z, xp)
 
         if verbosity > 0: print('iters {}, iters rain {:2n}, rtot {:.5e}, y1 {:.4f} '.format(self.iters, self.iters_rain, self.r[-1], self.y[-1]))
-        # if t_offset is positive, immiscibility sets in sooner.
-        # i.e., query phase diagram with a lower T than true planet T.
-        if allow_y_inversions:
-            for k in np.arange(self.nz-1, self.kcore, -1):
-                if p[k] < min(self.phase.pvals):
-                    # y_max not evaluable because no data from phase diagram; assume stable
-                    continue
-                elif p[k] > max(self.phase.pvals):
-                    # same on other end
-                    break
-                if p[k] > 4 and p[k-1] > 4:
-                    # that's far enough to know about envelope abundance and inversions; try and save time
-                    break
 
-                gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-                if type(gap) is str:
-                    assert gap == 'stable'
-                    continue
-                elif type(gap) is tuple:
-                    xplo, xphi = gap
-                    ymax = get_y(self.z[k], xplo)
-                    self.ymax[k] = ymax
+        ymax = {}
+        for pval in self.phase.pvals:
+            # start by checking just nodes (p==0.5, 1, 1.5, 2, 4, 10...).
+            # if not allow_y_inversions, then the minimum ymax reached by the planet P-T profile
+            # on any of the known phase curves will establish the envelope abundance.
+            # that will probably be 2 Mbar, or 4 Mbar if model goes to low y1 (high phase_t_offset).
 
-            if not np.any(self.y > self.ymax):
-                # print('{}: found no rainout'.format(self.iters_rain))
-                return self.y
+            k = np.where(p < pval)[0][0]-1 # e.g., 2.001 Mbar
+            if k < self.kcore: continue
+            try:
+                # interpolate to get t value corresponding to pval, e.g., 2.0000 Mbar
+                ti = splev(pval, splrep(p[k+3:k-3:-1], t[k+3:k-3:-1], k=3))
+            except:
+                print('failed to get model {} Mbar temperature'.format(pval))
+                print(k, self.kcore)
+                print(p[k+3:k-3:-1])
+                print(t[k+3:k-3:-1])
+                raise
+                continue
 
-            if hasattr(self, 'p_start'):
-                # get this static model's starting y vector, interpolated onto current pressures
-                ystart = splev(self.p, splrep(self.p_start[::-1], self.y_start[::-1], k=1))
+            xlo = splev(ti - phase_t_offset*1e-3, self.phase.tck_xlo[pval])
+            ylo = get_y(self.z[k], xlo)
+            if ylo < 0 or ylo > 1:
+                # print('got bad ymax {} for {} Mbar'.format(ylo, pval))
+                continue
+            ymax[pval] = {'k':k, 'y':ylo}
+
+        if 10 not in list(ymax):
+            t10M = splev(10, splrep(p[self.kcore:][::-1], t[self.kcore:][::-1], k=1))
+            xlo = splev(t10M - phase_t_offset*1e-3, self.phase.tck_xlo[10])
+            ylo = get_y(self.z[-1], xlo)
+            if ylo < 0 or ylo > 1:
+                pass
             else:
-                ystart = self.y
+                ymax[10.] = {'k':0, 'y':ylo}
 
-            k1 = np.where(ystart > self.ymax)[0][-1]
-            k_miny = np.where(self.ymax == min(self.ymax))[0][0]
+        ps = list(ymax)
+        ys = [ymax[pval]['y'] for pval in ps]
+        ks = [ymax[pval]['k'] for pval in ps]
 
-            yout = np.copy(self.y) # this routine will fill out yout, the equilibrium y vector
-            self.k1 = k1
-            self.k_miny = k_miny
+        if hasattr(self, 'p_start'):
+            # get this static model's starting y vector, interpolated onto current pressures
+            ystart = splev(self.p, splrep(self.p_start[::-1], self.y_start[::-1], k=1))
+        else:
+            ystart = self.y
 
-            if allow_y_inversions:
-                if np.all(yout[k1+1:] > self.ymax[k1]):
-                    yout[k1+1:] = self.ymax[k1]
-                    # print(self.ymax[k1])
-                else:
-                    # print('{}: ymax[k1]={} exceeds yout[k1+1:]; leave envelope alone'.format(self.iters_rain, self.ymax[k1]))
-                    pass
-        else: # guarantee monotone y
-            min_ymax_minus_y = 1
-            ymax = 1
-            k_ymax = -1
-            for pval in self.phase.pvals:
-                # check just nodes.
-                # if not allow_y_inversions, then the minimum ymax reached by the planet P-T profile
-                # on any of the known phase curves will establish the envelope abundance.
-                # that will probably be 2 Mbar, or 4 Mbar if model goes to low y1 (high phase_t_offset).
+        if not np.any(ys):
+            # print('no rainout')
+            return self.y
+        if not np.any(ystart > min(ys)):
+            # print('no rainout')
+            return self.y
 
-                k = np.where(p < pval)[0][0]
-                if k < self.kcore: continue
-                try:
-                    ti = splev(pval, splrep(p[k+4:k-4:-1], t[k+4:k-4:-1], k=3))
-                except:
-                    print(k, self.kcore)
-                    print(p[k+4:k-4:-1])
-                    print(t[k+4:k-4:-1])
-                    raise
-                    continue
+        if verbosity > 1:
+            print(ps, ys)
+        fymax = lambda p: splev(p, splrep(ps, ys, k=1))
+        self.tck_ymax = splrep(ps, ys, k=1)
 
-                xlo = splev(ti, self.phase.tck_xlo[pval])
-                xhi = splev(ti, self.phase.tck_xhi[pval])
+        if allow_y_inversions:
+            # gradient loop starts at first zone with y > ymax as given by fymax (linear p-y).
+            try:
+                k1 = np.where(ystart - fymax(p) > 0)[0][-1]
+            except IndexError:
+                return self.y
+            # k1 = np.where(self.y - fymax(p) > 0)[0][-1]
+            # if k1 outside lowest pval in list(ymax), then abundance would be set by
+            # extrapolating from above.
+            # instead, k1 will be at the lowest pressure for which ymax was calculable.
+            if k1 > max(ks):
+                # print ('k1={}>max(ks)={}; p[k1]={}'.format(k1, max(ks), p[k1]))
+                k1 = max(ks)
+            elif k1 == max(ks)-1:
+                # print ('k1={}<max(ks)={}; p[k1]={}'.format(k1, max(ks), p[k1]))
+                pass
+            if self.iters_rain > 1:
+                if k1 > self.k1: # self.k1 is k1 from previous iteration
+                    # make sure boundary doesn't drift outwards; tends to cause one-zone oscillations
+                    # that prevent the static model from converging
+                    k1 = self.k1
+            # for pval in list(ymax):
+                # print(pval, ymax[pval], p[ymax[pval]['k']])
+            if verbosity > 1:
+                print('inversion k1={:5n} p={:8.4f} ystart={:8.4f} {:4s} fymax={:8.4f}'.format(k1, p[k1], ystart[k1], '->', fymax(p[k1])))
+        else:
+            # gradient loop starts at pressure with minimum maxy in order to guarantee monotone y.
+            # this is always a node (e.g., p=2, p=4) by construction of fymax (linear p-y).
+            ys = np.array([ymax[pval]['y'] for pval in list(ymax)])
+            ks = np.array([ymax[pval]['k'] for pval in list(ymax)])
+            k1 = ks[ys==min(ys)][0]
+            # even if fictitious (interpolated) 2-Mbar temperature does dip below tphase for 0.27,
+            # the first zone with P > 2 Mbar might still find ymax of, e.g., 0.2705. in that case
+            # we've obviously found no rainout.
+            # gradient loop below assumes that k1 will set envelope abundance for sure.
+            # so handle this case by breaking here.
+            if ystart[k1] < fymax(p[k1]):
+                return self.y
+            if verbosity > 1:
+                print('noinv k1', k1, p[k1], ystart[k1], fymax(p[k1]))
 
-                ylo, yhi = get_y(self.z[k], xlo), get_y(self.z[k], xhi)
-                if ylo < 0 or ylo > 1:
-                    continue
-                if ylo < ymax:
-                    ymax = ylo
-                    k_ymax = k
-                    p_ymax = p[k]
-                print(pval, ti, ylo, yhi)
-
-            print(k_ymax, ymax, p_ymax)
-            assert False
-
+        self.k1 = k1
 
         t0 = time.time()
         rainout_to_core = False
 
         # self.k_shell_top = None # leave alone; may exist already even if the current iteration doesn't enter shell loop
-
-        for k in np.arange({True:k1, False:k_miny}[allow_y_inversions], self.kcore, -1): # inward from first point below phase curve
+        yout = np.zeros_like(self.y)
+        for k in np.arange(k1, self.kcore, -1): # inward from first point below phase curve
             t1 = time.time()
-            # note that phase_t_offset is applied here; phase diagram simply sees different temperature
-            gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-            if type(gap) is str:
-                if gap == 'stable':
-                    if verbosity > 1: print('stable (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k]))
-                    break
-                elif gap == 'failed':
-                    raise ValueError('failed to get miscibility gap in initial loop over zones. p, t = %f Mbar, %f K' % (p[k], self.t[k]))
-            elif type(gap) is tuple:
-                xplo, xphi = gap
-                ymax = get_y(self.z[k], xplo)
-                if k == k1:
-                    pass
-                elif yout[k] < ymax:
-                    if verbosity > 1: print('stable (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  ymax={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], ymax))
-                    break
+            if k == k1:
+                yout[k] = fymax(p[k])
+                if allow_y_inversions: # not necessarily hugging one of the phase curves; set simply
+                    yout[k:] = yout[k]
+                else:
+                    # abundance should be hugging phase curve (usually 2 Mbar). since p[k] possibly
+                    # much larger than pval of relevant phase curve, yout[k] may change discontinuously
+                    # in a way that the whole envelope shouldn't.
+                    # thus, set envelope abundance by evaluating ymax for p==pval exactly.
+                    pval = -1
+                    for pval in sorted(list(ymax))[::-1]: # high to low
+                        if p[k] > pval:
+                            break
+                    assert pval > 0
+                    assert p[k] > pval
+                    assert p[k+1] < pval
+                    yout[k+1:] = fymax(pval)
+
+                    # print('noinv: fymax(pval)={}, fymax(p[k+1])={}, fymax(p[k])={}'.format(fymax(pval), fymax(p[k+1]), fymax(p[k])))
+                    # print('noinv: p[k+1]={} < pval={} < p[k]={}'.format(p[k+1], pval, p[k]))
+                    # assert False
             else:
-                raise TypeError('got unexpected type for xplo from phase diagram', type(xplo))
-            if show_timing: print('zone %i: dt %f ms, t0 + %f seconds' % (k, 1e3 * (time.time() - t1), time.time() - t0))
-
-            # ystart = yout[k]
-            yout[k] = ymax
-
-            # if allow_y_inversions and yout[k] < yout[k+1]: # this catches local minima, not global minima
-            #     assert yout[k] > 0
-            #     if verbosity > 1:
-            #         print('inv    (i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} y={:.4f}  <  yk+1={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], yout[k+1]))
-            #     yout[k+1:] = yout[k]
+                if fymax(p[k]) < yout[k]:
+                    yout[k] = fymax(p[k])
+                else:
+                    break
 
             # difference between initial he mass and current proposed he mass above and including this zone
             # must be deposited into the deeper interior.
             he_mass_missing_above = self.mhe - np.dot(yout[k:], self.dm[k-1:])
             enclosed_envelope_mass = np.sum(self.dm[self.kcore:k-1]) # was previously :k
             if not enclosed_envelope_mass > 0: # at core boundary
-                if verbosity > 1: print('rainout to core because gradient reaches core')
+                if verbosity > 1:
+                    print('i={:n} ir={:n} rainout to core because gradient reaches core.'.format(self.iters, self.iters_rain))
+                    # print(yout)
                 rainout_to_core = True
                 yout[self.kcore:k] = 0.
                 # double-check that we have overall "missing" helium, to be made up for in
@@ -760,6 +777,7 @@ class evol:
                 kbot = k
                 break
             y_interior = he_mass_missing_above / enclosed_envelope_mass
+            # if verbosity > 1: print('grdient(i={:n} ir={:n} k={:n} p={:.4f} t={:.4f} yout={:.4f}  yint={:.4f})'.format(self.iters, self.iters_rain, k, p[k], t[k], yout[k], y_interior))
             if y_interior > 1:
                 # inner homogeneneous region of envelope would need Y > 1 to conserve global helium mass. thus undissolved droplets on core.
                 # set the rest of the envelope to Y = 0.95, then do outward iterations to find how large of a shell is needed to conserve
@@ -795,15 +813,17 @@ class evol:
             # for k in np.arange(kbot, self.nz):
                 # yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
 
-                # gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-                gap = self.phase.miscibility_gap(p[k], 8.)
-                if type(gap) is str:
-                    assert gap == 'stable'
-                    if verbosity > 1: print('warmer than critical temperature at k={} p={:.4f} t-dt={:.1f}'.format(k, p[k], t[k] - phase_t_offset*1e-3))
-                    yout[k] = -1
-                elif type(gap) is tuple:
-                    xplo, xphi = gap
-                    yout[k] = get_y(self.z[k], xphi)
+                # gap = self.phase.miscibility_gap(p[k], 8.)
+                # since ymax is nearly independent of temperature there anyway, let's use a simple
+                # function for ymax(p).
+                yout[k] = get_y(self.z[k], self.phase.simple_xhi(p[k]))
+                # if type(gap) is str:
+                #     assert gap == 'stable'
+                #     if verbosity > 1: print('warmer than critical temperature at k={} p={:.4f} t-dt={:.1f}'.format(k, p[k], t[k] - phase_t_offset*1e-3))
+                #     yout[k] = -1
+                # elif type(gap) is tuple:
+                #     xplo, xphi = gap
+                #     yout[k] = get_y(self.z[k], xphi)
 
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                 if verbosity > 2: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
@@ -874,6 +894,11 @@ class evol:
 
         if np.any(yout > 1.):
             raise UnphysicalParameterError('one or more bad y in equilibrium_y_profile')
+
+        if verbosity > 1:
+            import pickle
+            with open('he{:04n}.pkl'.format(self.iters_rain), 'wb') as f:
+                pickle.dump({'p':p, 't':t, 'y':self.y, 'yout':yout, 'tck_ymax':self.tck_ymax, 'k1':k1}, f)
 
         return yout
 
