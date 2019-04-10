@@ -639,11 +639,11 @@ class evol:
                 # interpolate to get t value corresponding to pval, e.g., 2.0000 Mbar
                 ti = splev(pval, splrep(p[k+3:k-3:-1], t[k+3:k-3:-1], k=3))
             except:
-                print('failed to get model {} Mbar temperature'.format(pval))
-                print(k, self.kcore)
-                print(p[k+3:k-3:-1])
-                print(t[k+3:k-3:-1])
-                raise
+                # print('failed to get model {} Mbar temperature'.format(pval))
+                # print(k, self.kcore)
+                # print(p[k+3:k-3:-1])
+                # print(t[k+3:k-3:-1])
+                # raise
                 continue
 
             xlo = splev(ti - phase_t_offset*1e-3, self.phase.tck_xlo[pval])
