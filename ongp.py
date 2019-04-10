@@ -1511,9 +1511,9 @@ class evol:
                                 min_abs_t_minus_tphase = min(min_abs_t_minus_tphase, abs(t_minus_tphase))
                                 # print('kp={} p={} t={} tphase={} offset={} delta_t={}'.format(kp, self.p[kp]*1e-12, self.t[kp]*1e-3, tphase, params['phase_t_offset']*1e-3, t_minus_tphase))
                             cut1 = 0.8
-                            cut2 = 0.1
+                            cut2 = 0.2
                             small_delta_t = 0.3
-                            if min_abs_t_minus_tphase < 0.1:
+                            if min_abs_t_minus_tphase < 0.2:
                                 delta_t = small_delta_t
                                 msg = '{:>50}'.format('approach rainout delta={:.2f}'.format(min_abs_t_minus_tphase))
                                 limit = 'vnear'
@@ -1521,6 +1521,7 @@ class evol:
                             elif min_abs_t_minus_tphase < cut1:
                                 # linear decrease
                                 alpha = (min_abs_t_minus_tphase - cut1) / (cut2 - cut1)
+                                # print('min_abs_t_minus_tphase={}, alpha={}'.format(min_abs_t_minus_tphase,alpha))
                                 delta_t = alpha * small_delta_t + (1. - alpha) * last_normal_delta_t
                                 msg = '{:>50}'.format('approach rainout delta={:.2f}'.format(min_abs_t_minus_tphase))
                                 limit = 'near'
@@ -1586,10 +1587,42 @@ class evol:
                     raise self.status
                     break # exit retry loop
 
+            if self.status != 'okay': # stop gracefully and print reason
+                print('stopping:', self.status, 'y1={}'.format(self.y[-1]))
+                break # from top-level evolve loop
+
+            # catch stopping condition
+            if params[which_t] < end_t:
+                # took a good last step
+                done = True
+            elif self.teff < params['min_teff']:
+                done = True
+
+            # took a good step
+            previous_entropy = self.entropy
+            previous_t = params[which_t]
+            self.step += 1
+
+            # these are normally set in static, but recalculate here in case
+            # self.y has changed since that routine was called. this can happen if a candidate
+            # static model saw rainout, but then evolve did a retry and subsequently found none.
+            self.nz_gradient = len(np.where(np.diff(self.y) < 0)[0])
+            k_shell = self.k_shell_top if self.k_shell_top else -1
+            self.nz_shell = max(0, k_shell - self.kcore)
+
+            # self.prev_y = np.copy(self.y)
+
+            self.age_gyr += self.dt_yr * 1e-9
+            # self.delta_s = delta_s # erg K^-1 g^-1
+            # self.eps_grav = eps_grav
+            # self.luminosity = luminosity
+            prev_y1 = np.copy(self.y[-1])
+
             if 'full_profiles' in list(params):
                 if params['full_profiles']:
                     if not hasattr(self, 'profiles'): self.profiles = {}
-                    assert self.step not in list(self.profiles), 'profiles dict already has entry for step {}'.format(self.step)
+                    if self.step in list(self.profiles):
+                        assert done, 'step {} already in self.profiles; not expected'.format(self.step)
                     self.profiles[self.step] = self.get_profile()
             self.walltime = time.time() - start_time
             self.delta_y1 = prev_y1 - self.y[-1] if prev_y1 > 0 else 0
@@ -1607,40 +1640,6 @@ class evol:
                     self.nz_gradient, self.nz_shell, k_grady, k_shell, \
                     self.y[-1], mhe_rerr, self.walltime
                 print(stdout_format.format(*stdout_data))
-
-            if self.status != 'okay': # stop gracefully and print reason
-                print('stopping:', self.status, 'y1={}'.format(self.y[-1]))
-                break # from top-level evolve loop
-
-            # catch stopping condition
-            if params[which_t] < end_t:
-                # took a good last step
-                done = True
-            elif self.teff < params['min_teff']:
-                done = True
-            else:
-                # took a normal good step
-                previous_entropy = self.entropy
-                previous_t = params[which_t]
-                self.step += 1
-
-                # these are normally set in static, but recalculate here in case
-                # self.y has changed since that routine was called. this can happen if a candidate
-                # static model saw rainout, but then evolve did a retry and subsequently found none.
-                self.nz_gradient = len(np.where(np.diff(self.y) < 0)[0])
-                k_shell = self.k_shell_top if self.k_shell_top else -1
-                self.nz_shell = max(0, k_shell - self.kcore)
-
-                # self.prev_y = np.copy(self.y)
-
-                self.age_gyr += self.dt_yr * 1e-9
-                # self.delta_s = delta_s # erg K^-1 g^-1
-                # self.eps_grav = eps_grav
-                # self.luminosity = luminosity
-                prev_y1 = np.copy(self.y[-1])
-
-        if 'output_prefix' in list(params):
-            self.save_history(params['output_prefix'])
 
     def append_history(self):
             history_qtys = {
