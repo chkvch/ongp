@@ -530,31 +530,22 @@ class evol:
                 self.set_core_density() # z eos call, fast (not many zones)
                 self.set_envelope_density() # full-on eos call; could try skipping and using rho from last eos call (integrate_temperature)
                 self.integrate_continuity() # just an integral, super fast
-
+                self.set_derivatives_etc()
                 if 'debug_iterations' in params.keys():
                     if params['debug_iterations']:
                         et = time.time() - t0
-                        qtys = self.iters, self.iters_rain, self.r[-1], self.y[-1], self.k1, self.p[self.k1]*1e-12, et*1e3
-                        print('iter {:>2n}, he_iter {:>2n}, rtot {:.5e}, y1 {:>.5f}, k1 {}, p[k1] {:.5f}, et_ms {:5.2f}'.format(*qtys))
-                        if 'debug_iterations' in list(params):
-                            if type(params['debug_iterations']) is str:
-                                step = int(params['debug_iterations'].split()[1])
-                                self.step = -1 # banana
-                                if self.step == step:
-                                    self.rtot = self.r[-1]
-                                    self.set_derivatives_etc()
-                                    with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
-                                        pickle.dump(self, fw)
-                # print('dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
+                        qtys = self.iters, self.iters_rain, self.r[-1], self.y[-1], self.k1, self.p[self.k1]*1e-12, et*1e3, \
+                            np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']
+                        print('iter={:>2n} he_iter={:>2n} rtot={:.5e} y1={:>.5f} k1={} p[k1]={:.5f}, et={:5.2f} dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(*qtys))
+                        if type(params['debug_iterations']) is str:
+                            step = int(params['debug_iterations'].split()[1])
+                            # self.step = -1 # banana
+                            if self.step == step:
+                                with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
+                                    pickle.dump(self, fw)
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
-                    # print('rain iter {}: radius ok'.format(self.iters_rain))
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
-                        # print('rain iter {}: y1 okay'.format(self.iters_rain))
                         break
-                    # else:
-                        # print('y1 change exceeds tolerance; keep going')
-                # else:
-                    # print('radius change exceeds tolerance; keep going')
 
                 if not np.isfinite(self.r[-1]):
                     with open('output/found_infinite_radius.dat', 'w') as f:
@@ -1167,6 +1158,7 @@ class evol:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
 
     def set_derivatives_etc(self):
+        self.rtot = self.r[-1]
         self.r[0] = 1. # 1 cm central radius to keep these things at least calculable at center zone
         self.g = const.cgrav * self.m / self.r ** 2
         self.g[0] = self.g[1] # hack so that we don't get infs in, e.g., pressure scale height. won't effect anything
