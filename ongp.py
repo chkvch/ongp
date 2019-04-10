@@ -99,7 +99,7 @@ class evol:
             'nz':1024,
             'radius_rtol':1e-4,
             'y1_rtol':1e-4,
-            'max_iters_static':20,
+            'max_iters_static':30,
             'min_iters_static':3,
             'max_iters_static_before_rain':3
         }
@@ -545,8 +545,7 @@ class evol:
                                     self.set_derivatives_etc()
                                     with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
                                         pickle.dump(self, fw)
-                # print('dr={}, rtol={}'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol']))
-                # print('dy1={}, rtol={}'.format(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
+                # print('dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     # print('rain iter {}: radius ok'.format(self.iters_rain))
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
@@ -676,19 +675,21 @@ class evol:
         if not np.any(ys):
             # print('no rainout')
             return self.y
-
-        # print(ps, ys)
-        fymax = lambda p: splev(p, splrep(ps, ys, k=1))
-        self.tck_ymax = splrep(ps, ys, k=1)
-
         if not np.any(ystart > min(ys)):
             # print('no rainout')
             return self.y
 
+        if verbosity > 1:
+            print(ps, ys)
+        fymax = lambda p: splev(p, splrep(ps, ys, k=1))
+        self.tck_ymax = splrep(ps, ys, k=1)
 
         if allow_y_inversions:
             # gradient loop starts at first zone with y > ymax as given by fymax (linear p-y).
-            k1 = np.where(ystart - fymax(p) > 0)[0][-1]
+            try:
+                k1 = np.where(ystart - fymax(p) > 0)[0][-1]
+            except IndexError:
+                return self.y
             # k1 = np.where(self.y - fymax(p) > 0)[0][-1]
             # if k1 outside lowest pval in list(ymax), then abundance would be set by
             # extrapolating from above.
@@ -706,13 +707,14 @@ class evol:
                     k1 = self.k1
             # for pval in list(ymax):
                 # print(pval, ymax[pval], p[ymax[pval]['k']])
-            print('inversion k1={:5n} p={:8.4f} ystart={:8.4f} {:4s} fymax={:8.4f}'.format(k1, p[k1], ystart[k1], '->', fymax(p[k1])))
+            if verbosity > 1:
+                print('inversion k1={:5n} p={:8.4f} ystart={:8.4f} {:4s} fymax={:8.4f}'.format(k1, p[k1], ystart[k1], '->', fymax(p[k1])))
         else:
             # gradient loop starts at pressure with minimum maxy in order to guarantee monotone y.
             # this is always a node (e.g., p=2, p=4) by construction of fymax (linear p-y).
             ys = np.array([ymax[pval]['y'] for pval in list(ymax)])
             ks = np.array([ymax[pval]['k'] for pval in list(ymax)])
-            k1 = ks[ys==min(ys)][0] - 1
+            k1 = ks[ys==min(ys)][0]
             # even if fictitious (interpolated) 2-Mbar temperature does dip below tphase for 0.27,
             # the first zone with P > 2 Mbar might still find ymax of, e.g., 0.2705. in that case
             # we've obviously found no rainout.
@@ -720,7 +722,8 @@ class evol:
             # so handle this case by breaking here.
             if ystart[k1] < fymax(p[k1]):
                 return self.y
-            print('noinv k1', k1, p[k1], ystart[k1], fymax(p[k1]))
+            if verbosity > 1:
+                print('noinv k1', k1, p[k1], ystart[k1], fymax(p[k1]))
 
         self.k1 = k1
 
@@ -733,7 +736,25 @@ class evol:
             t1 = time.time()
             if k == k1:
                 yout[k] = fymax(p[k])
-                yout[k:] = yout[k]
+                if allow_y_inversions: # not necessarily hugging one of the phase curves; set simply
+                    yout[k:] = yout[k]
+                else:
+                    # abundance should be hugging phase curve (usually 2 Mbar). since p[k] possibly
+                    # much larger than pval of relevant phase curve, yout[k] may change discontinuously
+                    # in a way that the whole envelope shouldn't.
+                    # thus, set envelope abundance by evaluating ymax for p==pval exactly.
+                    pval = -1
+                    for pval in sorted(list(ymax))[::-1]: # high to low
+                        if p[k] > pval:
+                            break
+                    assert pval > 0
+                    assert p[k] > pval
+                    assert p[k+1] < pval
+                    yout[k+1:] = fymax(pval)
+
+                    # print('noinv: fymax(pval)={}, fymax(p[k+1])={}, fymax(p[k])={}'.format(fymax(pval), fymax(p[k+1]), fymax(p[k])))
+                    # print('noinv: p[k+1]={} < pval={} < p[k]={}'.format(p[k+1], pval, p[k]))
+                    # assert False
             else:
                 if fymax(p[k]) < yout[k]:
                     yout[k] = fymax(p[k])
@@ -792,15 +813,17 @@ class evol:
             # for k in np.arange(kbot, self.nz):
                 # yout[k] = 0.95 # in the future, obtain value from ymax_rhs(p, t)
 
-                # gap = self.phase.miscibility_gap(p[k], t[k] - phase_t_offset * 1e-3)
-                gap = self.phase.miscibility_gap(p[k], 8.)
-                if type(gap) is str:
-                    assert gap == 'stable'
-                    if verbosity > 1: print('warmer than critical temperature at k={} p={:.4f} t-dt={:.1f}'.format(k, p[k], t[k] - phase_t_offset*1e-3))
-                    yout[k] = -1
-                elif type(gap) is tuple:
-                    xplo, xphi = gap
-                    yout[k] = get_y(self.z[k], xphi)
+                # gap = self.phase.miscibility_gap(p[k], 8.)
+                # since ymax is nearly independent of temperature there anyway, let's use a simple
+                # function for ymax(p).
+                yout[k] = get_y(self.z[k], self.phase.simple_xhi(p[k]))
+                # if type(gap) is str:
+                #     assert gap == 'stable'
+                #     if verbosity > 1: print('warmer than critical temperature at k={} p={:.4f} t-dt={:.1f}'.format(k, p[k], t[k] - phase_t_offset*1e-3))
+                #     yout[k] = -1
+                # elif type(gap) is tuple:
+                #     xplo, xphi = gap
+                #     yout[k] = get_y(self.z[k], xphi)
 
                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                 if verbosity > 2: print('%5i %5i %10.4e %10.4e %10.4e' % (k, self.kcore, self.dm[k-1], tentative_total_he_mass, self.mhe))
@@ -872,9 +895,10 @@ class evol:
         if np.any(yout > 1.):
             raise UnphysicalParameterError('one or more bad y in equilibrium_y_profile')
 
-        import pickle
-        with open('he{:04n}.pkl'.format(self.iters_rain), 'wb') as f:
-            pickle.dump({'p':p, 't':t, 'y':self.y, 'yout':yout, 'tck_ymax':self.tck_ymax, 'k1':k1}, f)
+        if verbosity > 1:
+            import pickle
+            with open('he{:04n}.pkl'.format(self.iters_rain), 'wb') as f:
+                pickle.dump({'p':p, 't':t, 'y':self.y, 'yout':yout, 'tck_ymax':self.tck_ymax, 'k1':k1}, f)
 
         return yout
 
