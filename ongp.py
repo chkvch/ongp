@@ -742,6 +742,8 @@ class evol:
                     assert p[k] > pval
                     assert p[k+1] < pval
                     yout[k+1:] = fymax(pval)
+                    # yout[k+1:] = yout[k]
+                    # print('p[k]={}, fymax(p[k])={}, fymax({:n})={}'.format(p[k], fymax(p[k]), pval, fymax(pval)))
 
                     # print('noinv: fymax(pval)={}, fymax(p[k+1])={}, fymax(p[k])={}'.format(fymax(pval), fymax(p[k+1]), fymax(p[k])))
                     # print('noinv: p[k+1]={} < pval={} < p[k]={}'.format(p[k+1], pval, p[k]))
@@ -1418,7 +1420,8 @@ class evol:
         stdout_format = '{:>6n} {:>6n} {:>8n} {:>6n} {:>6s} '
         stdout_format += '{:>5.1f} {:>5.1f} {:>8.1e} {:>5.1f} {:>8.1e} {:>8.4f} '
         stdout_format += '{:>10n} {:>10n} {:>10n} {:>10n} {:>6.3f} {:>8.1e} {:>8.1f}'
-        print(header_format.format(*stdout_columns))
+        if stdout_interval > 0:
+            print(header_format.format(*stdout_columns))
 
         # the evolve loop
         self.step = 0
@@ -1634,7 +1637,7 @@ class evol:
             k_shell = self.k_shell_top if self.k_shell_top else -1
             iters_rain = self.iters_rain if hasattr(self, 'iters_rain') else -1
             mhe_rerr = self.rel_mhe_error if hasattr(self, 'rel_mhe_error') else 0
-            if self.step % stdout_interval == 0:
+            if self.step % stdout_interval == 0 and stdout_interval > 0:
                 stdout_data = self.step, self.iters, iters_rain, retries, limit, \
                     params[which_t], self.teff, self.rtot, delta_t, self.dt_yr, self.age_gyr, \
                     self.nz_gradient, self.nz_shell, k_grady, k_shell, \
