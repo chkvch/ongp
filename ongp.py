@@ -412,8 +412,10 @@ class evol:
             self.set_envelope_density()
             self.integrate_continuity() # get zone radii from their densities via continuity equation
 
-            if 'debug_iterations' in params.keys():
-                if params['debug_iterations']:
+            if 'debug_iterations' in params.keys() and params['debug_iterations']:
+                if type(params['debug_iterations']) is str:
+                    pass
+                else:
                     et = time.time() - t0
                     print('iter {:>2n}, rtot {:.5e}, ktrans {}, et_ms {:5.2f}'.format(self.iters, self.r[-1], self.ktrans, et*1e3))
 
@@ -464,58 +466,27 @@ class evol:
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
                 # self.integrate_temperature()
                 self.k_gradient_bot = None
-                if 'rrho_where_have_helium_gradient' in params.keys() and self.nz_gradient > 0:
-                    # allow helium gradient regions to have superadiabatic temperature stratification.
-                    # this is new here -- copied from below where we'd ordinarily only compute this
-                    # after we have a converged model.
-                    # will cost some time because of the additional eos calls.
-
-                    # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
-                    # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1.
-
-                    # new: moved these to self.integrate_temperature, since an eos call happens there anyway
-                    # res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-                    # self.chit[self.kcore:] = res['chit']
-                    # self.chirho[self.kcore:] = res['chirho']
-                    # self.chiy[self.kcore:] = res['chiy']
-
-                    self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
-                    if self.k_shell_top:
-                        self.grady[self.k_shell_top+1] = 0. # ignore discontinuous step up to Y=0.95
-                        if 'adjust_shell_top_abundance' in list(self.static_params):
-                            if self.static_params['adjust_shell_top_abundance']:
-                                # also zero large grady resulting from intermediate abundance step
-                                self.grady[self.k_shell_top] = 0.
-
-                    # more general way of doing it treats the similar discontinuity that may exist
-                    # even before there is a a Y=0.95 shell.
-                    k_gradient_bottom = np.where(np.diff(np.diff(self.y[self.kcore:])) < -0.1)[0]
-                    if np.any(k_gradient_bottom):
-                        self.k_gradient_bot = k_gradient_bottom[0] + 1 + self.kcore
-                        if self.static_params['adjust_shell_top_abundance']:
-                            self.k_gradient_bot += 1 # shift to intermediate-abundance zone
-                    # k_gradient_bottom = np.where(np.diff(self.y[self.kcore:]) / self.y[self.kcore:-1] < -0.1)[0]
-                    # if np.any(k_gradient_bottom):
-                    #     if len(k_gradient_bottom) > 2:
-                    #         raise ValueError('more than two zones with dlny < -0.1')
-                    #     elif len(k_gradient_bottom) == 2:
-                    #         assert self.static_params['adjust_shell_top_abundance'] # only reason why this should happen
-                    #         self.k_gradient_bot = k_gradient_bottom[-1] + self.kcore
-                    #     else: # normal situation
-                    #         self.k_gradient_bot = k_gradient_bottom[0] + self.kcore
-
-                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
-
-                    # self.gradt += params['rrho_where_have_helium_gradient'] * self.brunt_b
-                    self.gradt = self.grada + params['rrho_where_have_helium_gradient'] * self.brunt_b
-
-                    self.integrate_temperature(adiabatic=False)
-                else:
-                    self.integrate_temperature()
 
                 self.y = self.equilibrium_y_profile(params['phase_t_offset'],
                             verbosity=params['rainout_verbosity'],
                             allow_y_inversions=params['allow_y_inversions'])
+
+                self.grady[self.kcore+1:] = np.diff(np.log(self.y[self.kcore:])) / np.diff(np.log(self.p[self.kcore:]))
+                if self.k_shell_top:
+                    self.grady[self.k_shell_top+1] = 0. # ignore discontinuous step up to Y=0.95
+                    if 'adjust_shell_top_abundance' in list(self.static_params):
+                        if self.static_params['adjust_shell_top_abundance']:
+                            # also zero large grady resulting from intermediate abundance step
+                            self.grady[self.k_shell_top] = 0.
+
+                # more general way of doing it treats the similar discontinuity that may exist
+                # even before there is a shell.
+                k_gradient_bottom = np.where(np.diff(np.diff(self.y[self.kcore:])) < -0.1)[0]
+                if np.any(k_gradient_bottom):
+                    self.k_gradient_bot = k_gradient_bottom[0] + 1 + self.kcore
+                    if self.static_params['adjust_shell_top_abundance']:
+                        self.k_gradient_bot += 1 # shift to intermediate-abundance zone
+
                 # these bookkeeping numbers are not accurate if y inversions allowed;
                 # not a big deal but do fix later
                 if np.any(np.diff(self.y) < 0):
@@ -527,22 +498,36 @@ class evol:
                     self.k_gradient_top = None
                     self.k_gradient_bot = None
 
+                if 'rrho_where_have_helium_gradient' in params.keys() and self.nz_gradient > 0:
+                    # allow helium gradient regions to have superadiabatic temperature stratification.
+                    # as is, brunt_b only accounts for hydrogen/helium gradients. extending to include more
+                    # species is straightforward: chiy*grady becomes sum_i^{N-1}(chi_i * grad X_i) where sum_i^N(X_i)=1.
+                    self.brunt_b[self.kcore+1:] = self.chirho[self.kcore+1:] / self.chit[self.kcore+1:] * self.chiy[self.kcore+1:] * self.grady[self.kcore+1:]
+                    self.gradt = self.grada + params['rrho_where_have_helium_gradient'] * self.brunt_b
+                    self.integrate_temperature(adiabatic=False)
+                else:
+                    self.integrate_temperature()
+
                 self.set_core_density() # z eos call, fast (not many zones)
                 self.set_envelope_density() # full-on eos call; could try skipping and using rho from last eos call (integrate_temperature)
                 self.integrate_continuity() # just an integral, super fast
                 self.set_derivatives_etc()
-                if 'debug_iterations' in params.keys():
-                    if params['debug_iterations']:
+                if 'debug_iterations' in params.keys() and params['debug_iterations']:
+                    if type(params['debug_iterations']) is str: # focus one step
+                        step = int(params['debug_iterations'].split()[1])
+                        # self.step = -1 # banana
+                        if self.step == step:
+                            with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
+                                pickle.dump(self, fw)
+                            et = time.time() - t0
+                            qtys = self.iters, self.iters_rain, self.r[-1], self.y[-1], self.k1, self.p[self.k1]*1e-12, et*1e3, \
+                                np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']
+                            print('iter={:>2n} he_iter={:>2n} rtot={:.5e} y1={:>.5f} k1={} p[k1]={:.5f}, et={:5.2f} dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(*qtys))
+                    else: # print convergence info for all steps
                         et = time.time() - t0
                         qtys = self.iters, self.iters_rain, self.r[-1], self.y[-1], self.k1, self.p[self.k1]*1e-12, et*1e3, \
                             np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']
                         print('iter={:>2n} he_iter={:>2n} rtot={:.5e} y1={:>.5f} k1={} p[k1]={:.5f}, et={:5.2f} dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(*qtys))
-                        if type(params['debug_iterations']) is str:
-                            step = int(params['debug_iterations'].split()[1])
-                            # self.step = -1 # banana
-                            if self.step == step:
-                                with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
-                                    pickle.dump(self, fw)
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
                     if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
                         break
@@ -572,6 +557,8 @@ class evol:
         self.set_atm() # make sure t10 is set; use (t10, g) to get (tint, teff) from model atmosphere
         self.set_entropy() # set entropy profile (necessary for an evolutionary calculation)
         self.set_derivatives_etc() # calculate thermo derivatives, seismology quantities, g, etc.
+        if hasattr(self, 't10M'):
+            del(self.t10M)
 
         return
 
@@ -627,7 +614,7 @@ class evol:
             k = np.where(p < pval)[0][0]-1 # e.g., 2.001 Mbar
             if k < self.kcore: continue
             try:
-                # interpolate to get t value corresponding to pval, e.g., 2.0000 Mbar
+                # interpolate to get t value corresponding to pval, e.g., 2.0000000000 Mbar
                 ti = splev(pval, splrep(p[k+3:k-3:-1], t[k+3:k-3:-1], k=3))
             except:
                 # print('failed to get model {} Mbar temperature'.format(pval))
@@ -639,14 +626,17 @@ class evol:
 
             xlo = splev(ti - phase_t_offset*1e-3, self.phase.tck_xlo[pval])
             ylo = get_y(self.z[k], xlo)
-            if ylo < 0 or ylo > 1:
+            if ylo < 0:
+                ylo = 1e-6
+            elif ylo > 1:
                 # print('got bad ymax {} for {} Mbar'.format(ylo, pval))
                 continue
             ymax[pval] = {'k':k, 'y':ylo}
 
         if 10 not in list(ymax):
-            t10M = splev(10, splrep(p[self.kcore:][::-1], t[self.kcore:][::-1], k=1))
-            xlo = splev(t10M - phase_t_offset*1e-3, self.phase.tck_xlo[10])
+            if not hasattr(self, 't10M'):
+                self.t10M = splev(10, splrep(p[self.kcore:][::-1], t[self.kcore:][::-1], k=1))
+            xlo = splev(self.t10M - phase_t_offset*1e-3, self.phase.tck_xlo[10])
             ylo = get_y(self.z[-1], xlo)
             if ylo < 0 or ylo > 1:
                 pass
@@ -1540,13 +1530,19 @@ class evol:
                                 accept_step = True
                                 last_normal_delta_t = delta_t
                         else:
-                            # have rainout and nothing else limiting timestep;
-                            # gently go toward target timestep
-                            f = (params['target_timestep'] / self.dt_yr) ** 0.5
-                            delta_t *= 0.5 * (1. + f)
-                            # delta_t = 0.5
-                            msg = '{:>50}'.format('ok')
-                            accept_step = True
+                            if 'slow_until_shell' in list(params) and params['slow_until_shell'] and self.nz_gradient > 0 and not self.k_shell_top:
+                                delta_t = small_delta_t * 2
+                                msg = '{:>50}'.format('approach shell with caution')
+                                limit = 'presh'
+                                accept_step = True
+                            else:
+                                # have rainout and nothing else limiting timestep;
+                                # gently go toward target timestep
+                                f = (params['target_timestep'] / self.dt_yr) ** 0.5
+                                delta_t *= 0.5 * (1. + f)
+                                # delta_t = 0.5
+                                msg = '{:>50}'.format('ok')
+                                accept_step = True
                     else: # dy1 too large
                         if retries < 2:
                             delta_t *= (params['max_dy1'] / (prev_y1 - self.y[-1])) ** 2.
@@ -1688,6 +1684,7 @@ class evol:
                 self.history[key] = np.append(self.history[key], qty)
 
     def get_profile(self):
+        import copy
         profile = {}
         profile['k'] = np.arange(self.nz)
         profile['p'] = np.copy(self.p)
@@ -1720,6 +1717,8 @@ class evol:
             profile['ymax'] = np.copy(self.ymax)
         if hasattr(self, 'ystart'):
             profile['dy'] = np.copy(self.y - self.ystart)
+        if hasattr(self, 'tck_ymax'):
+            profile['tck_ymax'] = copy.copy(self.tck_ymax)
         if self.step > 0:
             profile['delta_s'] = np.copy(self.delta_s)
             profile['eps_grav'] = np.copy(self.eps_grav)
