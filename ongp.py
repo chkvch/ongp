@@ -529,7 +529,9 @@ class evol:
                             np.abs(np.mean((last_three_radii / self.r[-1] - 1.))), self.evol_params['radius_rtol'], np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))), self.evol_params['y1_rtol']
                         print('iter={:>2n} he_iter={:>2n} rtot={:.5e} y1={:>.5f} k1={} p[k1]={:.5f}, et={:5.2f} dr={:10.5e} (rtol={:10.5e}) dy1={:10.5e} (rtol={:10.5e})'.format(*qtys))
                 if np.all(np.abs(np.mean((last_three_radii / self.r[-1] - 1.))) < self.evol_params['radius_rtol']):
-                    if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']):
+                    if np.all(np.abs(np.mean((last_three_y1 / self.y[-1] - 1.))) < self.evol_params['y1_rtol']) or self.y[-1] < 1e-3:
+                        # y[-1] < 1e-3 is to allow y1 very close to zero to go ahead. even if fractional change is large, absolute
+                        # values are so small that we don't care for this model.
                         break
 
                 if not np.isfinite(self.r[-1]):
@@ -1530,10 +1532,10 @@ class evol:
                                 accept_step = True
                                 last_normal_delta_t = delta_t
                         else:
-                            if 'slow_until_shell' in list(params) and params['slow_until_shell'] and self.nz_gradient > 0 and not self.k_shell_top:
+                            if 'const_dt_rainout' in list(params) and params['const_dt_rainout'] and self.nz_gradient > 0 and self.y[-1] > 1e-6:
                                 delta_t = small_delta_t * 2
-                                msg = '{:>50}'.format('approach shell with caution')
-                                limit = 'presh'
+                                msg = '{:>50}'.format('force constant delta_t')
+                                limit = 'const'
                                 accept_step = True
                             else:
                                 # have rainout and nothing else limiting timestep;
