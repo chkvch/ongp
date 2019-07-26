@@ -307,7 +307,7 @@ class evol:
                 import f11_atm_fit
                 self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
             else:
-                raise ValueError('atm_type %s not recognized.' % atm_type)
+                raise ValueError('atm option {} not recognized.'.format(self.evol_params['atm_option']))
 
             if 'yenv' in list(params):
                 params['y1'] = params.pop('yenv')
@@ -464,6 +464,7 @@ class evol:
 
                 self.integrate_hydrostatic()
                 self.locate_transition_pressure() # find point that should be discontinuous in y and z, if any
+                self.set_yz() # test 07222019
                 # self.integrate_temperature()
                 self.k_gradient_bot = None
 
@@ -733,7 +734,12 @@ class evol:
                     assert pval > 0
                     assert p[k] > pval
                     assert p[k+1] < pval
-                    yout[k+1:] = fymax(pval)
+                    # envelope will have identical y_xy to zone k=k1, which means it generally has
+                    # a different y value because z may be discontinuous at k=k1.
+                    # y / yp = 1 - z
+                    yp = yout[k] / (1. - self.z[k]) # and yout[k] = fymax(p[k]) as above
+                    yenv = yp * (1. - self.z[k+1]) # assuming all zones outside have z=self.z1=self.z[k+1]
+                    yout[k+1:] = yenv
                     # yout[k+1:] = yout[k]
                     # print('p[k]={}, fymax(p[k])={}, fymax({:n})={}'.format(p[k], fymax(p[k]), pval, fymax(pval)))
 
@@ -834,7 +840,7 @@ class evol:
 
                     if 'adjust_shell_top_abundance' in list(self.static_params):
                         if self.static_params['adjust_shell_top_abundance']:
-                            # experimental: conserve He exactly by setting an intermediate abundance at shell top zone
+                            # conserve He exactly by setting an intermediate abundance at shell top zone
                             if 'adjust_shell_top_mass' in list(self.static_params):
                                 assert not self.static_params['adjust_shell_top_mass'] # user must choose one or the other
 
@@ -842,24 +848,29 @@ class evol:
                             mhe_missing = self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                             yout[k] += mhe_missing / self.dm[k]
                             if yout[k] > yout[k-1] and k > self.kcore:
-                                print('surprise in adjust shell top abundance')
-                                print('k', k, 'kcore', self.kcore)
+                                # recently, this happens because shell top coincides with z1-z2 transition.
+                                if k == self.ktrans:
+                                    raise UnphysicalParameterError('z jump coincides with shell top')
+                                else:
+                                    pass # print diagnostics and let it truly crash
+                                print('surprise in adjust shell top abundance. k={} kcore={} ktrans={}'.format(k, self.kcore, self.ktrans))
                                 self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
-                                print(yout[k-2:k+3], self.rel_mhe_error)
+                                print('z', self.z[k-2:k+3])
+                                print('yout', yout[k-2:k+3], self.rel_mhe_error)
                                 # "intermediate" zone came out with Y > Y of shell-top zone.
                                 # current zone is thus the new shell top; next zone out gets intermediate abundance.
                                 gap = self.phase.miscibility_gap(p[k], 8.)
                                 assert type(gap) is tuple
                                 xplo, xphi = gap
-                                mhe_k_1 = yout[k] * self.dm[k-1]
+                                mhe_k_1 = yout[k] * self.dm[k-1] # tentative helium mass in this zone
                                 yout[k] = get_y(self.z[k], xphi)
-                                mhe_k_2 = yout[k] * self.dm[k-1]
-                                mhe_kp1 = yout[k+1] * self.dm[k]
+                                mhe_k_2 = yout[k] * self.dm[k-1] # proposed helium mass in this zone at "shell" abundance (rhs phase)
+                                mhe_kp1 = yout[k+1] * self.dm[k] # helium mass in next zone out
                                 self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
-                                print(yout[k-2:k+3], self.rel_mhe_error)
+                                print('yout', yout[k-2:k+3], self.rel_mhe_error)
                                 yout[k+1] = (mhe_kp1 + mhe_k_1 - mhe_k_2) / self.dm[k]
                                 self.rel_mhe_error = abs(self.mhe - np.dot(yout[self.kcore:-1], self.dm[self.kcore:])) / self.mhe
-                                print(yout[k-2:k+3], self.rel_mhe_error)
+                                print('yout', yout[k-2:k+3], self.rel_mhe_error)
 
                                 tentative_total_he_mass = np.dot(yout[self.kcore:-1], self.dm[self.kcore:])
                                 self.rel_mhe_error = abs(self.mhe - tentative_total_he_mass) / self.mhe
@@ -1031,6 +1042,7 @@ class evol:
             return
         elif self.ktrans == -1: # no transition found (yet)
             return
+        self.z[:self.kcore] = 1.
         if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
             try:
                 assert self.z2 > 0, 'if you want a z-free envelope, no need to specify z2.'
@@ -1040,6 +1052,8 @@ class evol:
                 raise UnphysicalParameterError(e.args[0])
             self.z[self.kcore:self.ktrans] = self.z2
             self.z[self.ktrans:] = self.z1
+        else:
+            self.z[self.kcore:] = self.z1
         if self.y2:
             try:
                 assert self.y2 > 0, 'if you want a Y-free envelope, no need to specify y2.'
