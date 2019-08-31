@@ -16,3 +16,7 @@ gp_configs
 grada_nans.dat
 obsolete
 core_erosion
+final_structure*
+atm_fail.dat
+out.txt
+
