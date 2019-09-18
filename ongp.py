@@ -360,9 +360,24 @@ class evol:
             self.y[:] = 0.
             self.y[self.kcore:] = self.y1
 
-            self.z[:self.kcore] = 1.
-            assert self.z1 >= 0., 'got negative z1 %g' % self.z1
-            self.z[self.kcore:] = self.z1
+            if params['z_profile_type'] == 'sigmoid':
+                assert self.kcore == 0, 'z_profile_type sigmoid requires that no discrete core be specified.'
+                assert self.z2, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
+                assert 'sigmoid_center' in list(params), 'z_profile_type sigmoid requires that sigmoid_center be set.'
+                assert 'sigmoid_width' in list(params), 'z_profile_type sigmoid requires that sigmoid_width be set.'
+                # for this z_profile_type, z will be given as a sigmoid function in radius.
+                # since on the first iteration radius is not yet known, just pass fractional mass
+                # to get in the right ballpark.
+                c = params['sigmoid_center']
+                w = params['sigmoid_width']
+                self.zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
+                self.z = self.zfunc(self.m / self.mtot)
+            elif params['z_profile_type'] == 'three_layer':
+                self.z[:self.kcore] = 1.
+                assert self.z1 >= 0., 'got negative z1 %g' % self.z1
+                self.z[self.kcore:] = self.z1
+            else:
+                raise ValueError('z_profile_type {} is not understood.'.format(params['z_profile_type']))
 
             # these used to be defined after iterations were completed, but they are needed for calculation
             # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
@@ -1042,18 +1057,21 @@ class evol:
             return
         elif self.ktrans == -1: # no transition found (yet)
             return
-        self.z[:self.kcore] = 1.
-        if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
-            try:
-                assert self.z2 > 0, 'if you want a z-free envelope, no need to specify z2.'
-                assert self.z2 < 1., 'set_yz got bad z %f' % self.z2
-                assert self.z2 >= self.z1, 'no z inversion allowed.'
-            except AssertionError as e:
-                raise UnphysicalParameterError(e.args[0])
-            self.z[self.kcore:self.ktrans] = self.z2
-            self.z[self.ktrans:] = self.z1
+        if hasattr(self, 'zfunc'):
+            self.z = self.zfunc(self.r / self.r[-1])
         else:
-            self.z[self.kcore:] = self.z1
+            self.z[:self.kcore] = 1.
+            if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
+                try:
+                    assert self.z2 > 0, 'if you want a z-free envelope, no need to specify z2.'
+                    assert self.z2 < 1., 'set_yz got bad z %f' % self.z2
+                    assert self.z2 >= self.z1, 'no z inversion allowed.'
+                except AssertionError as e:
+                    raise UnphysicalParameterError(e.args[0])
+                self.z[self.kcore:self.ktrans] = self.z2
+                self.z[self.ktrans:] = self.z1
+            else:
+                self.z[self.kcore:] = self.z1
         if self.y2:
             try:
                 assert self.y2 > 0, 'if you want a Y-free envelope, no need to specify y2.'
@@ -1141,7 +1159,9 @@ class evol:
         self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
         if self.evol_params['atm_option'].split()[0] == 'f11_tables':
             if self.surface_g * 1e-2 > max(self.atm.g_grid):
-                raise AtmError('surface gravity too high for atm tables. value = %g, maximum = %g' % (self.surface_g*1e-2, max(self.atm.g_grid)))
+                print('warning: extrapolating atm data to high surface g') # often only on initial iteration anyway
+                self.surface_g = max(self.atm.g_grid) * 1e2 * 0.99
+                # raise AtmError('surface gravity too high for atm tables. value = %g, maximum = %g' % (self.surface_g*1e-2, max(self.atm.g_grid)))
             elif self.surface_g * 1e-2 < min(self.atm.g_grid):
                 raise AtmError('surface gravity too low for atm tables. value = %g, minimum = %g' % (self.surface_g*1e-2, min(self.atm.g_grid)))
         try:
