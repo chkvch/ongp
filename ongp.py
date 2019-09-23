@@ -793,7 +793,10 @@ class evol:
                 yout[self.kcore:k] = 0.
                 # double-check that we have overall "missing" helium, to be made up for in
                 # outward shell iterations
-                assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe
+                if self.kcore == 0: # e.g., doing dilute core
+                    assert np.dot(yout[:-1], self.dm) < self.mhe
+                else:
+                    assert np.dot(yout[self.kcore:], self.dm[self.kcore-1:]) < self.mhe
                 kbot = k
                 break
             elif y_interior < 0:
@@ -1159,7 +1162,7 @@ class evol:
         self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
         if self.evol_params['atm_option'].split()[0] == 'f11_tables':
             if self.surface_g * 1e-2 > max(self.atm.g_grid):
-                print('warning: extrapolating atm data to high surface g') # often only on initial iteration anyway
+                # print('warning: extrapolating atm data to high surface g') # often only on initial iteration anyway
                 self.surface_g = max(self.atm.g_grid) * 1e2 * 0.99
                 # raise AtmError('surface gravity too high for atm tables. value = %g, maximum = %g' % (self.surface_g*1e-2, max(self.atm.g_grid)))
             elif self.surface_g * 1e-2 < min(self.atm.g_grid):
@@ -1360,13 +1363,17 @@ class evol:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
-        if self.z2: # two-layer envelope in terms of Z
+        if self.static_params['z_profile_type'] == 'three_layer': # two-layer envelope in terms of Z
             assert self.ktrans > 0, 'self.z2 is set but self.ktrans is <= 0. if not setting transition_pressure, then leave z2 unset.'
             self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
             self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
             self.mz_env = self.mz_env_outer + self.mz_env_inner
             self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
             self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+        elif self.static_params['z_profile_type'] == 'sigmoid': # no inner or outer envelope to speak of
+            self.mz_core = 0
+            # print(len(self.z), len(self.dm))
+            self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
         else:
             # Z uniform in envelope, Z=1 in core.
             self.mz_env = self.z[-1] * (self.mtot - self.mcore * const.mearth)
