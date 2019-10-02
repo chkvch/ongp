@@ -306,6 +306,9 @@ class evol:
             elif self.evol_params['atm_option'] == 'f11_fit':
                 import f11_atm_fit
                 self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
+            elif self.evol_params['atm_option'] == 'thorngren':
+                import thorngren_atm; reload(thorngren_atm)
+                self.atm = thorngren_atm.atm()
             else:
                 raise ValueError('atm option {} not recognized.'.format(self.evol_params['atm_option']))
 
@@ -370,8 +373,34 @@ class evol:
                 # to get in the right ballpark.
                 c = params['sigmoid_center']
                 w = params['sigmoid_width']
-                self.zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
-                self.z = self.zfunc(self.m / self.mtot)
+                zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
+                self.z = zfunc(self.m / self.mtot)
+            elif params['z_profile_type'] == 'linear':
+                assert 'rf_z_top' in list(params), 'z_profile_type linear requires that rf_z_top be set.'
+                if self.z2:
+                    assert self.kcore == 0, 'z_profile_type linear requires that no discrete core be specified if self.z2 is set.'
+                    assert 'rf_z_bot' in list(params), 'z_profile_type linear requires that rf_z_bot be set.'
+                    rf = self.m / self.mtot
+                    self.z[rf <= params['rf_z_top']] = self.z1 + (self.z2 - self.z1) * (params['rf_z_top'] - rf[rf <= params['rf_z_top']]) / (params['rf_z_top'] - params['rf_z_bot'])
+                    self.z[rf < params['rf_z_bot']] = self.z2
+                    self.z[rf > params['rf_z_top']] = self.z1
+                    # set z so that it increases linearly from self.z1 at params['rf_z_top'] to self.z2 at r=0;
+                    # mirror this in adjust_linear in gravity
+                else:
+                    assert self.kcore > 0, 'z_profile_type linear requires a nonzero core mass if self.z2 not set.'
+                    # def zfunc(rf):
+                    #     z = np.copy(self.z)
+                    #     z[rf > params['rf_z_top']] = self.z1
+                    #     z[rf <= params['rf_z_top']] = self.z1 + (1. - self.z1) * (params['rf_z_top'] - rf[rf <= params['rf_z_top']])
+                    #     z[:self.kcore] = 1.
+                    #     return z
+                    rf = self.m / self.mtot
+                    rc = self.m[self.kcore] / self.mtot
+                    self.z[rf > params['rf_z_top']] = self.z1
+                    self.z[rf <= params['rf_z_top']] = self.z1 + (1. - self.z1) * (params['rf_z_top'] - rf[rf <= params['rf_z_top']]) / (params['rf_z_top'] - rc)
+                    self.z[:self.kcore] = 1.
+                # self.zfunc = zfunc
+                # self.z = self.zfunc(self.m / self.mtot) # as above, just use mf as proxy for rf during initialization
             elif params['z_profile_type'] == 'three_layer':
                 self.z[:self.kcore] = 1.
                 assert self.z1 >= 0., 'got negative z1 %g' % self.z1
@@ -1060,8 +1089,28 @@ class evol:
             return
         elif self.ktrans == -1: # no transition found (yet)
             return
-        if hasattr(self, 'zfunc'):
-            self.z = self.zfunc(self.r / self.r[-1])
+        if self.static_params['z_profile_type'] is not 'three_layer':
+            rf = self.r / self.r[-1]
+            if self.static_params['z_profile_type'] == 'linear':
+                # self.z = self.zfunc(self.r / self.r[-1])
+                if self.z2:
+                    r1 = self.static_params['rf_z_top']
+                    r2 = self.static_params['rf_z_bot']
+                    self.z[rf <= r1] = self.z1 + (self.z2 - self.z1) * (r1 - rf[rf <= r1]) / (r1 - r2)
+                    self.z[rf < r2] = self.z2
+                    self.z[rf > r1] = self.z1
+                else:
+                    rc = rf[self.kcore]
+                    r1 = self.static_params['rf_z_top']
+                    self.z[rf > r1] = self.z1
+                    self.z[rf <= r1] = self.z1 + (1. - self.z1) * (r1 - rf[rf <= r1]) / (r1 - rc)
+                    self.z[:self.kcore] = 1.
+            elif self.static_params['z_profile_type'] == 'sigmoid':
+                # self.z = self.zfunc(self.r / self.r[-1])
+                c = self.static_params['sigmoid_center']
+                w = self.static_params['sigmoid_width']
+                zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
+                self.z = zfunc(rf)
         else:
             self.z[:self.kcore] = 1.
             if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
@@ -1160,7 +1209,7 @@ class evol:
 
         # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.
         self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
-        if self.evol_params['atm_option'].split()[0] == 'f11_tables':
+        if self.evol_params['atm_option'].split()[0] == 'f11_tables': # check g value against table limits
             if self.surface_g * 1e-2 > max(self.atm.g_grid):
                 # print('warning: extrapolating atm data to high surface g') # often only on initial iteration anyway
                 self.surface_g = max(self.atm.g_grid) * 1e2 * 0.99
@@ -1169,7 +1218,10 @@ class evol:
                 raise AtmError('surface gravity too low for atm tables. value = %g, minimum = %g' % (self.surface_g*1e-2, min(self.atm.g_grid)))
         try:
             if hasattr(self, 'teq'):
-                self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
+                if self.evol_params['atm_option'] == 'thorngren':
+                    self.tint = self.atm.get_tint(self.teq) # appropriate for hot jupiters in equilibrium with their host star; anomalous interior heating
+                else:
+                    self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
                 self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             else:
                 self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10)
@@ -1364,12 +1416,17 @@ class evol:
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
         if self.static_params['z_profile_type'] == 'three_layer': # two-layer envelope in terms of Z
-            assert self.ktrans > 0, 'self.z2 is set but self.ktrans is <= 0. if not setting transition_pressure, then leave z2 unset.'
-            self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
-            self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
-            self.mz_env = self.mz_env_outer + self.mz_env_inner
-            self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
-            self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+            if hasattr(self, 'z2') and self.z2:
+                assert self.ktrans > 0, 'self.z2 is set but self.ktrans is <= 0. if not setting transition_pressure, then leave z2 unset.'
+                self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
+                self.mz_env_inner = np.sum(self.dm[self.kcore:self.ktrans]) * self.z[self.ktrans - 1]
+                self.mz_env = self.mz_env_outer + self.mz_env_inner
+                self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
+                self.mz = self.mz_env_outer + self.mz_env_inner + self.mz_core
+            else:
+                self.mz_env = np.sum(self.dm[self.kcore:] * self.z[self.kcore+1])
+                self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
+                self.mz = self.mz_env + self.mz_core
         elif self.static_params['z_profile_type'] == 'sigmoid': # no inner or outer envelope to speak of
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
