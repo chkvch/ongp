@@ -1,14 +1,14 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
-import gp_configs.app_config as app_cfg
-import gp_configs.model_config as model_cfg
-import logging
-import config_const as conf
-
-log = logging.getLogger(__name__)
-logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
-log.setLevel(conf.log_level)
+# import gp_configs.app_config as app_cfg
+# import gp_configs.model_config as model_cfg
+# import logging
+# import config_const as conf
+#
+# log = logging.getLogger(__name__)
+# logging.basicConfig(filename=app_cfg.logfile, filemode='w', format=conf.FORMAT)
+# log.setLevel(conf.log_level)
 
 class atm:
 
@@ -25,7 +25,7 @@ class atm:
     def __init__(self, planet='jup', print_table=False):
         assert planet in ['jup', 'sat'], 'planet label %s not recognized. choose from jup, sat' % planet
         self.planet = planet
-        log.debug('planet is %s', self.planet)
+        # log.debug('planet is %s', self.planet)
 
         if self.planet == 'jup':
             self.clo = 78.4e0
