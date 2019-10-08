@@ -235,10 +235,6 @@ class evol:
 
         '''
         build a single hydrostatic model.
-        the crucial independent variables are total mass, core mass, y1 and z1 (maybe y2 & z2 also),
-        and either t1 or t10.
-        can pass an ongp.evol instance to guess to use its current structure as a starting point for
-        hydro iterations.
         '''
 
         if not 'phase_t_offset' in params.keys():
@@ -374,6 +370,21 @@ class evol:
                 c = params['sigmoid_center']
                 w = params['sigmoid_width']
                 zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
+                self.z = zfunc(self.m / self.mtot)
+            elif params['z_profile_type'] == 'sig2':
+                assert self.kcore==0, 'z_profile_type sig2 requires that no discrete core be specified.'
+                assert self.z2 and self.z1, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
+                assert 'sigmoid_center_1' and 'sigmoid_center_2' in list(params), \
+                    'z_profile_type sig2 requires that sigmoid_center_1 and sigmoid_center_2 be set.'
+                assert 'sigmoid_width_1' and 'sigmoid_width_2' in list(params), \
+                    'z_profile_type sig2 requires that sigmoid_width_1 and sigmoid_width_2 be set.'
+                c1 = params['sigmoid_center_1']
+                c2 = params['sigmoid_center_2']
+                w1 = params['sigmoid_width_1']
+                w2 = params['sigmoid_width_2']
+                zfunc = lambda rf: self.z1 \
+                    + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
+                    + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
                 self.z = zfunc(self.m / self.mtot)
             elif params['z_profile_type'] == 'linear':
                 assert 'rf_z_top' in list(params), 'z_profile_type linear requires that rf_z_top be set.'
@@ -1088,29 +1099,8 @@ class evol:
             return
         elif self.ktrans == -1: # no transition found (yet)
             return
-        if self.static_params['z_profile_type'] is not 'three_layer':
-            rf = self.r / self.r[-1]
-            if self.static_params['z_profile_type'] == 'linear':
-                # self.z = self.zfunc(self.r / self.r[-1])
-                if self.z2:
-                    r1 = self.static_params['rf_z_top']
-                    r2 = self.static_params['rf_z_bot']
-                    self.z[rf <= r1] = self.z1 + (self.z2 - self.z1) * (r1 - rf[rf <= r1]) / (r1 - r2)
-                    self.z[rf < r2] = self.z2
-                    self.z[rf > r1] = self.z1
-                else:
-                    rc = rf[self.kcore]
-                    r1 = self.static_params['rf_z_top']
-                    self.z[rf > r1] = self.z1
-                    self.z[rf <= r1] = self.z1 + (1. - self.z1) * (r1 - rf[rf <= r1]) / (r1 - rc)
-                    self.z[:self.kcore] = 1.
-            elif self.static_params['z_profile_type'] == 'sigmoid':
-                # self.z = self.zfunc(self.r / self.r[-1])
-                c = self.static_params['sigmoid_center']
-                w = self.static_params['sigmoid_width']
-                zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
-                self.z = zfunc(rf)
-        else:
+        rf = self.r / self.r[-1]
+        if self.static_params['z_profile_type'] == 'three_layer':
             self.z[:self.kcore] = 1.
             if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
                 try:
@@ -1123,6 +1113,36 @@ class evol:
                 self.z[self.ktrans:] = self.z1
             else:
                 self.z[self.kcore:] = self.z1
+        elif self.static_params['z_profile_type'] == 'linear':
+            # self.z = self.zfunc(self.r / self.r[-1])
+            if self.z2:
+                r1 = self.static_params['rf_z_top']
+                r2 = self.static_params['rf_z_bot']
+                self.z[rf <= r1] = self.z1 + (self.z2 - self.z1) * (r1 - rf[rf <= r1]) / (r1 - r2)
+                self.z[rf < r2] = self.z2
+                self.z[rf > r1] = self.z1
+            else:
+                rc = rf[self.kcore]
+                r1 = self.static_params['rf_z_top']
+                self.z[rf > r1] = self.z1
+                self.z[rf <= r1] = self.z1 + (1. - self.z1) * (r1 - rf[rf <= r1]) / (r1 - rc)
+                self.z[:self.kcore] = 1.
+        elif self.static_params['z_profile_type'] == 'sigmoid':
+            # self.z = self.zfunc(self.r / self.r[-1])
+            c = self.static_params['sigmoid_center']
+            w = self.static_params['sigmoid_width']
+            zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
+            self.z = zfunc(rf)
+        elif self.static_params['z_profile_type'] == 'sig2':
+            c1 = self.static_params['sigmoid_center_1']
+            c2 = self.static_params['sigmoid_center_2']
+            w1 = self.static_params['sigmoid_width_1']
+            w2 = self.static_params['sigmoid_width_2']
+            zfunc = lambda rf: self.z1 \
+                + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
+                + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
+            self.z = zfunc(rf)
+
         if self.y2:
             try:
                 assert self.y2 > 0, 'if you want a Y-free envelope, no need to specify y2.'
@@ -1427,6 +1447,10 @@ class evol:
                 self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
                 self.mz = self.mz_env + self.mz_core
         elif self.static_params['z_profile_type'] == 'sigmoid': # no inner or outer envelope to speak of
+            self.mz_core = 0
+            # print(len(self.z), len(self.dm))
+            self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
+        elif self.static_params['z_profile_type'] == 'sig2': # no inner or outer envelope to speak of
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
             self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
