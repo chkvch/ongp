@@ -165,7 +165,21 @@ class eos:
         return res
 
     def get_grada(self, logp, logt, y):
-        return self.get(logp, logt, y)['grada']
+        # return self.get(logp, logt, y)['grada'] # this is fine, but more than necessary
+        s_h = 10 ** self.get_logs_h(logp, logt)
+        sp_h = self.get_sp_h(logp, logt)
+        st_h = self.get_st_h(logp, logt)
+
+        s_he = 10 ** self.get_logs_he(logp, logt)
+        sp_he = self.get_sp_he(logp, logt)
+        st_he = self.get_st_he(logp, logt)
+
+        # smix = 10 ** self.he_eos.get_logsmix(logp, logt, y)
+        s = (1. - y) * s_h + y * s_he # + smix
+        st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix/s*dlogsmix/dlogt
+        sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix/s*dlogsmix/dlogp
+        grada = - sp / st
+        return grada
 
     def get_logrho(self, logp, logt, y):
         return self.get(logp, logt, y)['logrho']
