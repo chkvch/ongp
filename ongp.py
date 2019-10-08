@@ -304,7 +304,7 @@ class evol:
                 else:
                     self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'])
             elif self.evol_params['atm_option'] == 'f11_fit':
-                import f11_atm_fit
+                import f11_atm_fit; reload(f11_atm_fit)
                 self.atm = f11_atm_fit.atm(self.evol_params['atm_planet'])
             elif self.evol_params['atm_option'] == 'thorngren':
                 import thorngren_atm; reload(thorngren_atm)
@@ -990,16 +990,16 @@ class evol:
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
 
 
-    def integrate_temperature(self, adiabatic=True, brute_force_loop=True):
+    def integrate_temperature(self, adiabatic=True, brute_force_loop=False):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
         adiabatic gradient here (as well as later) is ignoring any z contribution.
         if not adiabatic, then just integrate existing gradt
         '''
         if self.atm_which_t == 't1':
-            self.t[-1] = self.t1
+            self.t[-1] = tsurf = self.t1
         elif self.atm_which_t == 't10':
-            self.t[-1] = self.t10
+            self.t[-1] = tsurf = self.t10
         else:
             raise ValueError("atm_which_t must be one of 't1', 't10'")
 
@@ -1027,28 +1027,27 @@ class evol:
         self.grada_check_nans()
         if adiabatic:
             self.gradt = np.copy(self.grada) # may be modified later if include_he_immiscibility and rrho_where_have_helium_gradient
-            if brute_force_loop:
-                for k in np.arange(self.nz)[::-1]: # surface to center
-                    if k == self.nz - 1: continue
-                    if k == self.kcore - 1: break
-                    dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
-                    dlnt = self.grada[k] * dlnp
-                    self.t[k] = self.t[k+1] * (1. + dlnt)
-            else: # slices + cumsum does at least a factor of a few faster
-                dlnp = np.diff(np.log(self.p))
-                dlnt = self.grada[:-1] * dlnp
-                dt = dlnt * self.t[1:]
-                self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
-
         else:
-            for k in np.arange(self.nz)[::-1]:
+            # leave alone; potentially set as superadiabatic in static
+            pass
+        if brute_force_loop:
+            for k in np.arange(self.nz)[::-1]: # surface to center
                 if k == self.nz - 1: continue
                 if k == self.kcore - 1: break
                 dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
-                dlnt = self.gradt[k] * dlnp # gradt, not grada
+                dlnt = self.grada[k] * dlnp
                 self.t[k] = self.t[k+1] * (1. + dlnt)
-                if np.isinf(self.t[k]):
-                    raise RuntimeError('got infinite temperature in integration of non-ad gradt. k %i, gradt[k+1] %i, brunt_b[k] %g' % (k, self.gradt[k+1], self.brunt_b[k]))
+        else: # faster; historically not reliable for some reason?
+            # dlnp = np.diff(np.log(self.p))
+            # dlnt = self.grada[:-1] * dlnp
+            # dt = dlnt * self.t[1:]
+            # self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
+            # new form:
+            if self.kcore == 0:
+                self.t[:] = np.exp(cumtrapz(self.gradt[::-1] / self.p[::-1], x=self.p[::-1], initial=0.))[::-1]
+            else:
+                self.t[self.kcore:] = np.exp(cumtrapz(self.gradt[:self.kcore-1:-1] / self.p[:self.kcore-1:-1], x=self.p[:self.kcore-1:-1], initial=0.))[::-1]
+            self.t *= tsurf
 
         self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at temperature of core-mantle boundary
 
