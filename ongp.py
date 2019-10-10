@@ -231,6 +231,13 @@ class evol:
         rhoinv = (1. - z) / rho_hhe + z / rho_z
         return rhoinv ** -1
 
+    def zfunc(self, rf):
+        exp1 = np.exp(1. - 2 / self.w1 * (rf - self.c1))
+        term1 = (self.z2 - self.z1) * exp1 / (1. + exp1)
+        exp2 = np.exp(1. - 2 / self.w2 * (rf - self.c2))
+        term2 = (1. - self.z2) * exp2 / (1. + exp2)
+        return self.z1 + term1 + term2
+
     def static(self, params):
 
         '''
@@ -371,21 +378,20 @@ class evol:
                 w = params['sigmoid_width']
                 zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
                 self.z = zfunc(self.m / self.mtot)
-            elif params['z_profile_type'] == 'sig2':
+            elif params['z_profile_type'] in ('sig2', 'sig2_yz'):
                 assert self.kcore==0, 'z_profile_type sig2 requires that no discrete core be specified.'
                 assert self.z2 and self.z1, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
                 assert 'sigmoid_center_1' and 'sigmoid_center_2' in list(params), \
                     'z_profile_type sig2 requires that sigmoid_center_1 and sigmoid_center_2 be set.'
                 assert 'sigmoid_width_1' and 'sigmoid_width_2' in list(params), \
                     'z_profile_type sig2 requires that sigmoid_width_1 and sigmoid_width_2 be set.'
-                c1 = params['sigmoid_center_1']
-                c2 = params['sigmoid_center_2']
-                w1 = params['sigmoid_width_1']
-                w2 = params['sigmoid_width_2']
-                zfunc = lambda rf: self.z1 \
-                    + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
-                    + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
-                self.z = zfunc(self.m / self.mtot)
+                self.c1 = params['sigmoid_center_1']
+                self.c2 = params['sigmoid_center_2']
+                self.w1 = params['sigmoid_width_1']
+                self.w2 = params['sigmoid_width_2']
+
+                # set initial z profile roughly (radii still not known)
+                self.z = self.zfunc(self.m / self.mtot)
             elif params['z_profile_type'] == 'linear':
                 assert 'rf_z_top' in list(params), 'z_profile_type linear requires that rf_z_top be set.'
                 if self.z2:
@@ -1134,14 +1140,21 @@ class evol:
             zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
             self.z = zfunc(rf)
         elif self.static_params['z_profile_type'] == 'sig2':
-            c1 = self.static_params['sigmoid_center_1']
-            c2 = self.static_params['sigmoid_center_2']
-            w1 = self.static_params['sigmoid_width_1']
-            w2 = self.static_params['sigmoid_width_2']
-            zfunc = lambda rf: self.z1 \
-                + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
-                + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
-            self.z = zfunc(rf)
+            # c1 = self.static_params['sigmoid_center_1']
+            # c2 = self.static_params['sigmoid_center_2']
+            # w1 = self.static_params['sigmoid_width_1']
+            # w2 = self.static_params['sigmoid_width_2']
+            # zfunc = lambda rf: self.z1 \
+            #     + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
+            #     + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
+            # avoid overflow in np.exp for narrow widths:
+            # 1 / (1. + exp(large)) = exp(-large) / (exp(-large) + 1)
+            # exp1 = lambda rf: np.exp(1. - (rf - c1) / w1 * 2)
+            # exp2 = lambda rf: np.exp(1. - (rf - c2) / w2 * 2)
+            # zfunc = lambda rf: self.z1 \
+                # + (self.z2 - self.z1) * exp1(rf) / (1. + exp1(rf)) \
+                # + (1. - self.z2) * exp2(rf) / (1. + exp2(rf))
+            self.z = self.zfunc(rf)
 
         if self.y2:
             try:
