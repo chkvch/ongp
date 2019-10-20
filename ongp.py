@@ -1139,7 +1139,6 @@ class evol:
             w = self.static_params['sigmoid_width']
             zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
             self.z = zfunc(rf)
-<<<<<<< HEAD
         elif self.static_params['z_profile_type'] in ('sig2', 'sig2_yz'):
             c1 = self.static_params['sigmoid_center_1']
             c2 = self.static_params['sigmoid_center_2']
@@ -1149,24 +1148,6 @@ class evol:
                 + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
                 + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
             self.z = zfunc(rf)
-=======
-        elif self.static_params['z_profile_type'] == 'sig2':
-            # c1 = self.static_params['sigmoid_center_1']
-            # c2 = self.static_params['sigmoid_center_2']
-            # w1 = self.static_params['sigmoid_width_1']
-            # w2 = self.static_params['sigmoid_width_2']
-            # zfunc = lambda rf: self.z1 \
-            #     + (self.z2 - self.z1) / (1. + np.exp((rf - c1) / w1 * 2 - 1)) \
-            #     + (1. - self.z2) / (1. + np.exp((rf - c2) / w2 * 2 - 1))
-            # avoid overflow in np.exp for narrow widths:
-            # 1 / (1. + exp(large)) = exp(-large) / (exp(-large) + 1)
-            # exp1 = lambda rf: np.exp(1. - (rf - c1) / w1 * 2)
-            # exp2 = lambda rf: np.exp(1. - (rf - c2) / w2 * 2)
-            # zfunc = lambda rf: self.z1 \
-                # + (self.z2 - self.z1) * exp1(rf) / (1. + exp1(rf)) \
-                # + (1. - self.z2) * exp2(rf) / (1. + exp2(rf))
-            self.z = self.zfunc(rf)
->>>>>>> 47b4896fe60073c0955270630592dd8773a52f8a
 
         if self.y2:
             try:
