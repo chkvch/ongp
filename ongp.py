@@ -371,7 +371,7 @@ class evol:
                 w = params['sigmoid_width']
                 zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
                 self.z = zfunc(self.m / self.mtot)
-            elif params['z_profile_type'] == 'sig2':
+            elif params['z_profile_type'] in ('sig2', 'sig2_yz'):
                 assert self.kcore==0, 'z_profile_type sig2 requires that no discrete core be specified.'
                 assert self.z2 and self.z1, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
                 assert 'sigmoid_center_1' and 'sigmoid_center_2' in list(params), \
@@ -1133,7 +1133,7 @@ class evol:
             w = self.static_params['sigmoid_width']
             zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
             self.z = zfunc(rf)
-        elif self.static_params['z_profile_type'] == 'sig2':
+        elif self.static_params['z_profile_type'] in ('sig2', 'sig2_yz'):
             c1 = self.static_params['sigmoid_center_1']
             c2 = self.static_params['sigmoid_center_2']
             w1 = self.static_params['sigmoid_width_1']
@@ -1450,7 +1450,7 @@ class evol:
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
             self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
-        elif self.static_params['z_profile_type'] == 'sig2': # no inner or outer envelope to speak of
+        elif self.static_params['z_profile_type'] in ('sig2', 'sig2_yz'): # no inner or outer envelope to speak of
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
             self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
