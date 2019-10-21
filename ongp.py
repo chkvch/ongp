@@ -1266,6 +1266,7 @@ class evol:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
 
     def set_derivatives_etc(self):
+        return
         self.rtot = self.r[-1]
         self.r[0] = 1. # 1 cm central radius to keep these things at least calculable at center zone
         self.g = const.cgrav * self.m / self.r ** 2

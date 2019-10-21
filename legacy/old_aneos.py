@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
-from importlib import reload
-import aneos_rhot; reload(aneos_rhot)
 
 class eos:
 
@@ -12,8 +10,8 @@ class eos:
         available_materials = 'ice', 'iron', 'serpentine', 'water'
         assert self.material in available_materials, 'material must be one of %s, %s, %s, %s' % available_materials
         self.path = '%s/aneos_%s_pt.dat' % (path_to_data, self.material)
-        self.names = 'logrho', 'logt', 'logp', 'logu', 'logs' # , 'chit', 'chirho', 'gamma1'
-        self.data = np.genfromtxt(self.path, names=self.names, usecols=(0, 1, 2, 3, 4)) # will fail if haven't saved version of aneos_*_pt.dat with eight columns
+        self.names = 'logrho', 'logt', 'logp', 'logu', 'logs', 'chit', 'chirho', 'gamma1'
+        self.data = np.genfromtxt(self.path, names=self.names) # will fail if haven't saved version of aneos_*_pt.dat with eight columns
 
         # this version of aneos.py loads tables already regularized to rectangular in P, T.
         # thus use PT as a basis so we can use RegularGridInterpolator (fast.)
@@ -25,9 +23,9 @@ class eos:
         self.logrho_on_nodes = np.zeros((self.npts, self.npts))
         self.logu_on_nodes = np.zeros((self.npts, self.npts))
         self.logs_on_nodes = np.zeros((self.npts, self.npts))
-        # self.chit_on_nodes = np.zeros((self.npts, self.npts))
-        # self.chirho_on_nodes = np.zeros((self.npts, self.npts))
-        # self.gamma1_on_nodes = np.zeros((self.npts, self.npts))
+        self.chit_on_nodes = np.zeros((self.npts, self.npts))
+        self.chirho_on_nodes = np.zeros((self.npts, self.npts))
+        self.gamma1_on_nodes = np.zeros((self.npts, self.npts))
 
         for i, logpval in enumerate(self.logpvals):
             data_this_logp = self.data[self.data['logp'] == logpval]
@@ -36,73 +34,50 @@ class eos:
                 self.logrho_on_nodes[i, j] = data_this_logp_logt['logrho']
                 self.logu_on_nodes[i, j] = data_this_logp_logt['logu']
                 self.logs_on_nodes[i, j] = data_this_logp_logt['logs']
-                # self.chit_on_nodes[i, j] = data_this_logp_logt['chit']
-                # self.chirho_on_nodes[i, j] = data_this_logp_logt['chirho']
-                # self.gamma1_on_nodes[i, j] = data_this_logp_logt['gamma1']
+                self.chit_on_nodes[i, j] = data_this_logp_logt['chit']
+                self.chirho_on_nodes[i, j] = data_this_logp_logt['chirho']
+                self.gamma1_on_nodes[i, j] = data_this_logp_logt['gamma1']
 
         pt_basis = (self.logpvals, self.logtvals)
         self._get_logrho = RegularGridInterpolator(pt_basis, self.logrho_on_nodes)
         self._get_logu = RegularGridInterpolator(pt_basis, self.logu_on_nodes)
         self._get_logs = RegularGridInterpolator(pt_basis, self.logs_on_nodes)
-        # self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_nodes)
-        # self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_nodes)
-        # self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_nodes)
-
-        self.rhot_eos = aneos_rhot.eos(path_to_data, material)
-
-    def get_logrho(self, logp, logt):
-        return self._get_logrho((logp, logt))
-
-    def get(self, logp, logt):
-        res = {}
-        logrho = res['logrho'] = self._get_logrho((logp, logt))
-        logu = res['logu'] = self._get_logu((logp, logt))
-        logs = res['logs'] = self._get_logs((logp, logt))
-
-        # some derivs are easier to evaluate from the original rho, t basis
-        rhot_res = self.rhot_eos.get(logrho, logt)
-
-        res['chirho'] = rhot_res['chirho']
-        res['chit'] = rhot_res['chit']
-        res['rhop'] = rhot_res['rhop']
-        res['rhot'] = rhot_res['rhot'] # "-delta"
-        res['grada'] = rhot_res['grada']
-        res['gamma1'] = rhot_res['gamma1']
-
-        return res
+        self._get_chit = RegularGridInterpolator(pt_basis, self.chit_on_nodes)
+        self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_nodes)
+        self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_nodes)
 
     # wrapper functions so we can pass logp, logt as args instead of the (logp, logt) tuple
-    # def get_logrho(self, logp, logt):
-    #     assert not np.any(np.isinf(logt)), 'have inf in logt; cannot look up density.'
-    #     try:
-    #         return self._get_logrho((logp, logt))
-    #     except ValueError:
-    #         print('out of bounds in aneos get_logrho.')
-    #         raise
-    # def get_logu(self, logp, logt):
-    #     return self._get_logu((logp, logt))
-    # def get_logs(self, logp, logt):
-    #     return self._get_logs((logp, logt))
-    # def get_chit(self, logp, logt):
-    #     return self._get_chit((logp, logt))
-    # def get_chirho(self, logp, logt):
-    #     return self._get_chirho((logp, logt))
-    # def get_gamma1(self, logp, logt):
-    #     return self._get_gamma1((logp, logt))
+    def get_logrho(self, logp, logt):
+        assert not np.any(np.isinf(logt)), 'have inf in logt; cannot look up density.'
+        try:
+            return self._get_logrho((logp, logt))
+        except ValueError:
+            print('out of bounds in aneos get_logrho.')
+            raise
+    def get_logu(self, logp, logt):
+        return self._get_logu((logp, logt))
+    def get_logs(self, logp, logt):
+        return self._get_logs((logp, logt))
+    def get_chit(self, logp, logt):
+        return self._get_chit((logp, logt))
+    def get_chirho(self, logp, logt):
+        return self._get_chirho((logp, logt))
+    def get_gamma1(self, logp, logt):
+        return self._get_gamma1((logp, logt))
 
-    # def get_dlogrho_dlogp_const_t(self, logp, logt, f=0.8):
-    #     logp_lo = logp - np.log10(1. - f)
-    #     logp_hi = logp + np.log10(1. + f)
-    #     logrho_lo = self.get_logrho(logp_lo, logt)
-    #     logrho_hi = self.get_logrho(logp_hi, logt)
-    #     return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
-    #
-    # def get_dlogrho_dlogt_const_p(self, logp, logt, f=0.8):
-    #     logt_lo = logt - np.log10(1. - f)
-    #     logt_hi = logt + np.log10(1. + f)
-    #     logrho_lo = self.get_logrho(logp, logt_lo)
-    #     logrho_hi = self.get_logrho(logp, logt_hi)
-    #     return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
+    def get_dlogrho_dlogp_const_t(self, logp, logt, f=0.8):
+        logp_lo = logp - np.log10(1. - f)
+        logp_hi = logp + np.log10(1. + f)
+        logrho_lo = self.get_logrho(logp_lo, logt)
+        logrho_hi = self.get_logrho(logp_hi, logt)
+        return (logrho_hi - logrho_lo) / (logp_hi - logp_lo)
+
+    def get_dlogrho_dlogt_const_p(self, logp, logt, f=0.8):
+        logt_lo = logt - np.log10(1. - f)
+        logt_hi = logt + np.log10(1. + f)
+        logrho_lo = self.get_logrho(logp, logt_lo)
+        logrho_hi = self.get_logrho(logp, logt_hi)
+        return (logrho_hi - logrho_lo) / (logt_hi - logt_lo)
 
     # def get_dlogrho_dlogt_const_p(self, logp, logt):
     #     return self.get_chit(logp, logt) / self.get_chirho(logp, logt)
