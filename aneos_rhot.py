@@ -72,8 +72,8 @@ class eos:
         res = {}
         res['logp'] = logp
         res['logs'] = logs
-        res['prho'] = res['chirho'] = dlnp_dlnrho_const_t
-        res['pt'] = res['chit'] = dlnp_dlnt_const_rho
+        res['prho'] = res['chirho'] = chirho
+        res['pt'] = res['chit'] = chit
         res['rhop'] = dlnrho_dlnp_const_t
         res['rhot'] = dlnrho_dlnt_const_p
         res['gamma1'] = - dlns_dlnrho_const_p / dlns_dlnp_const_rho
