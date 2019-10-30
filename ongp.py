@@ -614,11 +614,11 @@ class evol:
                         break
 
                 if not np.isfinite(self.r[-1]):
-                    with open('output/found_infinite_radius.dat', 'w') as f:
-                        f.write('%12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r'))
-                        for k in range(self.nz):
-                            f.write('%12s %12g %12g %12g %12g %12g\n' % (k < self.kcore, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
-                    print('saved output/found_infinite_radius.dat')
+                    # with open('output/found_infinite_radius.dat', 'w') as f:
+                    #     f.write('%12s %12s %12s %12s %12s %12s\n' % ('core', 'p', 't', 'rho', 'm', 'r'))
+                    #     for k in range(self.nz):
+                    #         f.write('%12s %12g %12g %12g %12g %12g\n' % (k < self.kcore, self.p[k], self.t[k], self.rho[k], self.m[k], self.r[k]))
+                    # print('saved output/found_infinite_radius.dat')
                     raise ValueError('found infinite total radius')
                 last_three_radii = last_three_radii[1], last_three_radii[2], self.r[-1]
                 last_three_y1 = last_three_y1[1], last_three_y1[2], self.y[-1]
@@ -1024,7 +1024,7 @@ class evol:
             raise EOSError('%i nans in pressure after integrate hydrostatic on static iteration %i.' % (len(self.p[np.isnan(self.p)]), self.iters))
 
 
-    def integrate_temperature(self, adiabatic=True, brute_force_loop=False):
+    def integrate_temperature(self, adiabatic=True, old_style=False):
         '''
         set surface temperature and integrate the adiabat inward to get temperature.
         adiabatic gradient here (as well as later) is ignoring any z contribution.
@@ -1040,15 +1040,6 @@ class evol:
         self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
         # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
 
-        # this call to get grada is slow.
-        # next round of optimization should make sure we are carrying out the minimum number of eos calls because each one
-        # relies so heavily on interpolation in the hhe eos.
-        # try:
-            # self.grada[self.kcore:] = self.hhe_eos.get_grada(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-        # except ValueError:
-            # raise EOSError('failed in eos call for grada. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
-        # new: get eos res and set chirho, chit as well, as long as we're doing an eos call. then don't have to
-        # get those separately in evaluation of superadiabatic gradt for helium gradient region
         try:
             res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
             self.grada[self.kcore:] = res['grada']
@@ -1064,19 +1055,15 @@ class evol:
         else:
             # leave alone; potentially set as superadiabatic in static
             pass
-        if brute_force_loop:
+        if old_style:
+            raise ValueError("I see you're using an old style. I wondered where you'd learned it.") # you know very well
             for k in np.arange(self.nz)[::-1]: # surface to center
                 if k == self.nz - 1: continue
                 if k == self.kcore - 1: break
                 dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
                 dlnt = self.grada[k] * dlnp
                 self.t[k] = self.t[k+1] * (1. + dlnt)
-        else: # faster; historically not reliable for some reason?
-            # dlnp = np.diff(np.log(self.p))
-            # dlnt = self.grada[:-1] * dlnp
-            # dt = dlnt * self.t[1:]
-            # self.t[self.kcore:-1] = self.t[-1] - np.cumsum(dt[self.kcore:][::-1])[::-1]
-            # new form:
+        else: # fast
             if self.kcore == 0:
                 self.t[:] = np.exp(cumtrapz(self.gradt[::-1] / self.p[::-1], x=self.p[::-1], initial=0.))[::-1]
             else:
@@ -1218,11 +1205,11 @@ class evol:
                                                         * (first_good_grada - last_good_grada) + last_good_grada
             else: # abort
                 print('%i nans in grada for iteration %i, stopping' % (num_nans, self.iters))
-                with open('grada_nans.dat', 'w') as fw:
-                    for k, val in enumerate(self.grada):
-                        if np.isnan(val):
-                            fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
-                print('saved problematic logp, logt, y to grada_nans.dat')
+                # with open('grada_nans.dat', 'w') as fw:
+                #     for k, val in enumerate(self.grada):
+                #         if np.isnan(val):
+                #             fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
+                # print('saved problematic logp, logt, y to grada_nans.dat')
                 raise EOSError('%i nans in grada after eos call on static iteration %i.' % (len(self.grada[np.isnan(self.grada)]), self.iters))
 
     def rho_check_nans(self):
@@ -1237,11 +1224,11 @@ class evol:
                                                         / (self.r[k_last_nan+1] - self.r[k_first_nan]) \
                                                         * (first_good_rho - last_good_rho) + last_good_rho
             else:
-                with open('rho_nans.dat', 'w') as fw:
-                    for k, val in enumerate(self.rho):
-                        if np.isnan(val):
-                            fw.write('%16.8f %16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k], self.z[k]))
-                print('saved problematic logp, logt, y, z to rho_nans.dat')
+                # with open('rho_nans.dat', 'w') as fw:
+                #     for k, val in enumerate(self.rho):
+                #         if np.isnan(val):
+                #             fw.write('%16.8f %16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k], self.z[k]))
+                # print('saved problematic logp, logt, y, z to rho_nans.dat')
                 raise EOSError('%i nans in rho after eos call on static iteration %i.' % (len(self.rho[np.isnan(self.rho)]), self.iters))
 
     def set_atm(self):
@@ -1283,10 +1270,10 @@ class evol:
                     fname = 'atm_get_tint'
                 else:
                     fname = 'atm_get_tint_teff'
-                with open('atm_fail.dat', 'w') as f:
-                    for p, t, y in zip(self.p, self.t, self.y):
-                        f.write('{:14g} {:14g} {:14g}\n'.format(p, t, y))
-                print('wrote p,t,y to atm_fail.dat')
+                # with open('atm_fail.dat', 'w') as f:
+                #     for p, t, y in zip(self.p, self.t, self.y):
+                #         f.write('{:14g} {:14g} {:14g}\n'.format(p, t, y))
+                # print('wrote p,t,y to atm_fail.dat')
                 raise AtmError('%s failed to bracket solution for root find. g=%g, t10=%g' % (fname, self.surface_g*1e-2, self.t10))
             else:
                 raise AtmError('unspecified atm error for g=%g, t10=%g: %s' % (self.surface_g*1e-2, self.t10, e.args[0]))
@@ -1851,35 +1838,41 @@ class evol:
         profile['entropy'] = np.copy(self.entropy)
         profile['r'] = np.copy(self.r)
         profile['m'] = np.copy(self.m)
-        profile['g'] = np.copy(self.g)
-        profile['dlogp_dlogrho'] = np.copy(self.dlogp_dlogrho)
-        profile['gamma1'] = np.copy(self.gamma1)
-        profile['csound'] = np.copy(self.csound)
-        # profile['lamb_s12'] = np.copy(self.lamb_s12)
-        profile['brunt_n2'] = np.copy(self.brunt_n2)
-        # profile['brunt_n2_direct'] = self.brunt_n2_direct
-        profile['chirho'] = np.copy(self.chirho)
-        profile['chit'] = np.copy(self.chit)
-        profile['gradt'] = np.copy(self.gradt)
-        profile['grada'] = np.copy(self.grada)
-        profile['cp'] = np.copy(self.cp)
-        profile['cv'] = np.copy(self.cv)
-        profile['rf'] = np.copy(self.rf)
-        profile['mf'] = np.copy(self.mf)
-        profile['grady'] = np.copy(self.grady)
-        profile['brunt_b'] = np.copy(self.brunt_b)
-        # profile['pressure_scale_height'] = self.pressure_scale_height
-        if hasattr(self, 'ymax'):
-            profile['ymax'] = np.copy(self.ymax)
-        if hasattr(self, 'ystart'):
-            profile['dy'] = np.copy(self.y - self.ystart)
+        for qty in 'g', 'dlogp_dlogrho', 'gamma1', 'csound', 'brunt_n2', 'chirho', 'chit', 'gradt', 'grada', \
+            'cp', 'cv', 'rf', 'mf', 'grady', 'brunt_b', 'ymax', 'dy', 'delta_s', 'eps_grav', 'tds', 'luminosity':
+            try:
+                profile[qty] = np.copy(getattr(self, qty))
+            except AttributeError:
+                pass
+        # profile['g'] = np.copy(self.g)
+        # profile['dlogp_dlogrho'] = np.copy(self.dlogp_dlogrho)
+        # profile['gamma1'] = np.copy(self.gamma1)
+        # profile['csound'] = np.copy(self.csound)
+        # # profile['lamb_s12'] = np.copy(self.lamb_s12)
+        # profile['brunt_n2'] = np.copy(self.brunt_n2)
+        # # profile['brunt_n2_direct'] = self.brunt_n2_direct
+        # profile['chirho'] = np.copy(self.chirho)
+        # profile['chit'] = np.copy(self.chit)
+        # profile['gradt'] = np.copy(self.gradt)
+        # profile['grada'] = np.copy(self.grada)
+        # profile['cp'] = np.copy(self.cp)
+        # profile['cv'] = np.copy(self.cv)
+        # profile['rf'] = np.copy(self.rf)
+        # profile['mf'] = np.copy(self.mf)
+        # profile['grady'] = np.copy(self.grady)
+        # profile['brunt_b'] = np.copy(self.brunt_b)
+        # # profile['pressure_scale_height'] = self.pressure_scale_height
+        # if hasattr(self, 'ymax'):
+        #     profile['ymax'] = np.copy(self.ymax)
+        # if hasattr(self, 'ystart'):
+        #     profile['dy'] = np.copy(self.y - self.ystart)
         if hasattr(self, 'tck_ymax'):
             profile['tck_ymax'] = copy.copy(self.tck_ymax)
-        if self.step > 0:
-            profile['delta_s'] = np.copy(self.delta_s)
-            profile['eps_grav'] = np.copy(self.eps_grav)
-            profile['tds'] = np.copy(self.tds)
-            profile['luminosity'] = np.copy(self.luminosity)
+        # if self.step > 0:
+        #     profile['delta_s'] = np.copy(self.delta_s)
+        #     profile['eps_grav'] = np.copy(self.eps_grav)
+        #     profile['tds'] = np.copy(self.tds)
+        #     profile['luminosity'] = np.copy(self.luminosity)
         return profile
 
     def dump_history(self, prefix):
