@@ -98,6 +98,18 @@ class atm:
                 for t_column in t_columns:
                     t[t_column][m, n] = data_for_this_g[data_for_this_g['tint'] == tintval][t_column]
 
+            if print_table:
+                print('BEFORE')
+                # print('%8s ' * (2 + len(t_columns))) % (('g', 'tint') + t_columns)
+                header_fmt = '{:>8s} ' * (2 + len(t_columns))
+                print(header_fmt.format('g', 'tint', *t_columns))
+                for n, tintval in enumerate(self.tint_grid):
+                    fmt = '{:>8.1f} ' * (2 + len(t_columns))
+                    res_this_row = {}
+                    for name in t_columns:
+                        res_this_row[name] = self.data[name][self.data['g'] == gval][npts_tint - n - 1]
+                    print(fmt.format(gval, tintval, *[res_this_row[key] for key in list(res_this_row)]))
+
             if t['t10_10'][m, -1] == -1: # this g block has at least one blank element at high tint. should only happen for j/s
                 assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
                 last_nan = np.where(np.diff(t['t10_10'][m, :] < 0))[0][-1] + 1
@@ -139,6 +151,7 @@ class atm:
                 self.data[t_column][self.data['g'] == gval] = t[t_column][m, :][::-1]
 
             if print_table:
+                print('AFTER')
                 # print('%8s ' * (2 + len(t_columns))) % (('g', 'tint') + t_columns)
                 header_fmt = '{:>8s} ' * (2 + len(t_columns))
                 print(header_fmt.format('g', 'tint', *t_columns))
@@ -148,24 +161,7 @@ class atm:
                     for name in t_columns:
                         res_this_row[name] = self.data[name][self.data['g'] == gval][npts_tint - n - 1]
                     print(fmt.format(gval, tintval, *[res_this_row[key] for key in list(res_this_row)]))
-                    # try:
-                        # teff_10 = self.data['teff_10'][self.data['g'] == gval][npts_tint - n - 1]
-                        # t10_10 = self.data['teff_10'][self.data['g'] == gval][npts_tint - n - 1]
-                        # teff_07 = self.data['teff_07'][self.data['g'] == gval][npts_tint - n - 1]
-                        # t10_07 = self.data['teff_07'][self.data['g'] == gval][npts_tint - n - 1]
-                        # print('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
-                            # ( \
-                                # self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
-                                # self.data['t10'][self.data['g'] == gval][npts_tint - n - 1],
-                                # self.data['t1'][self.data['g'] == gval][npts_tint - n - 1],
-                            # ))
-                    # except ValueError:
-                        # no t1
-                        # print('%8.2f ' * (2 + len(t_columns))) % ((gval, tintval) + \
-                            # ( \
-                                # self.data['teff'][self.data['g'] == gval][npts_tint - n - 1],
-                                # self.data['t10'][self.data['g'] == gval][npts_tint - n - 1],
-                            # ))
+                print()
 
         self.get = {}
         for t_column in t_columns:
