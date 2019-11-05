@@ -1259,10 +1259,22 @@ class evol:
                 if self.evol_params['atm_option'] == 'thorngren':
                     self.tint = self.atm.get_tint(self.teq) # appropriate for hot jupiters in equilibrium with their host star; anomalous interior heating
                 else:
-                    self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 needs g in mks
+                    if self.evolve_params['evolve_solar_luminosity']:
+                        raise ValueError('evolve_solar_luminosity is not implemented for cases where self.teq is specified.')
+                    self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 takes g in mks
                 self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             else:
-                self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10)
+                if self.evolve_params['evolve_solar_luminosity']:
+                    alpha = self.age_gyr / 4.56
+                    # l_div_lsun = 0.7 * (1. - alpha) + alpha
+                    tint_10, teff_10 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '10') # tint and teff assuming 1.0 Lsun (present-day Sun)
+                    tint_07, teff_07 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '07') # tint and teff assuming 0.7 Lsun (young Sun)
+                    self.tint = alpha * tint_10 + (1. - alpha) * tint_07
+                    self.teff = alpha * teff_10 + (1. - alpha) * teff_07
+                    # print(self.age_gyr, l_div_lsun, self.tint, self.teff)
+                else:
+                    self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '10')
+
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError as e:
             if 'f(a) and f(b) must have different signs' in e.args[0]:
@@ -1605,6 +1617,10 @@ class evol:
                     dt = -1. * self.int_tdsdm / self.lint
                     # now that have timestep based on total intrinsic luminosity,
                     # calculate eps_grav to see distribution of energy generation
+                    if dt <= 0.:
+                        raise EnergyError('got non-positive dt {:e}'.format(dt))
+                        # self.status = EnergyError('got non-positive dt {:e}'.format(dt))
+                        # break
                     self.eps_grav = -1. * self.t * self.delta_s / dt
                     self.luminosity = np.insert(cumtrapz(self.eps_grav, dx=self.dm), 0, 0.)
                     self.dt_yr = dt / const.secyear
