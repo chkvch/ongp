@@ -254,10 +254,10 @@ class evol:
             params['include_core_entropy'] = False
         if not 'core_prho_relation' in params.keys():
             params['core_prho_relation'] = None
-        if not 'verbose' in params.keys():
-            params['verbose'] = False
         if not 'rainout_verbosity' in params.keys():
             params['rainout_verbosity'] = 0
+        if not 'evolve_solar_luminosity' in list(params):
+            params['evolve_solar_luminosity'] = False
 
         # save params passed to static
         self.static_params = params
@@ -394,7 +394,8 @@ class evol:
                 self.z = self.z1 + (self.z2 - self.z1) * 0.5 * (1. + np.cos(np.pi * (c - mf - w / 2) / w))
                 self.z[mf < c - w / 2] = self.z2
                 self.z[mf > c + w / 2] = self.z1
-
+            elif 'cos2' in params['z_profile_type']:
+                self.z[:] = self.z1
             elif params['z_profile_type'] in ('sig2', 'sig2_yz'):
                 assert self.kcore==0, 'z_profile_type sig2 requires that no discrete core be specified.'
                 assert self.z2 and self.z1, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
@@ -519,8 +520,6 @@ class evol:
 
         else:
             raise ConvergenceError('{} exceeded max iterations {}'.format(iteration, self.evol_params['max_iters_static']))
-
-        if params['verbose']: print('converged homogeneous model after %i iterations.' % self.iters)
 
         self.t_before_he = np.copy(self.t)
         self.y_before_he = np.copy(self.y)
@@ -1259,12 +1258,12 @@ class evol:
                 if self.evol_params['atm_option'] == 'thorngren':
                     self.tint = self.atm.get_tint(self.teq) # appropriate for hot jupiters in equilibrium with their host star; anomalous interior heating
                 else:
-                    if self.evolve_params['evolve_solar_luminosity']:
+                    if self.static_params['evolve_solar_luminosity']:
                         raise ValueError('evolve_solar_luminosity is not implemented for cases where self.teq is specified.')
                     self.tint = self.atm.get_tint(self.surface_g * 1e-2, self.t10) # Fortney+2011 takes g in mks
                 self.teff = (self.tint ** 4 + self.teq ** 4) ** (1. / 4)
             else:
-                if self.evolve_params['evolve_solar_luminosity']:
+                if self.static_params['evolve_solar_luminosity']:
                     alpha = self.age_gyr / 4.56
                     # l_div_lsun = 0.7 * (1. - alpha) + alpha
                     tint_10, teff_10 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '10') # tint and teff assuming 1.0 Lsun (present-day Sun)

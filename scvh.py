@@ -442,8 +442,8 @@ class eos:
         # assert not np.any(np.isnan(res_he['xhe'])), 'got nan in he eos call within overall P-T limits. probably off the original tables.'
 
         res = {}
-        rho_h = 10 ** res_h['logrho']
-        rho_he = 10 ** res_he['logrho']
+        rho_h = res['rho_h'] = 10 ** res_h['logrho']
+        rho_he = res['rho_he'] = 10 ** res_he['logrho']
         rhoinv = (1. - y) / rho_h + y / rho_he # additive volume rule -- eq. 39.
         rho = rhoinv ** -1.
         res['logrho'] = np.log10(rho)
