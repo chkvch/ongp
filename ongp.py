@@ -691,7 +691,8 @@ class evol:
             # on any of the known phase curves will establish the envelope abundance.
             # that will probably be 2 Mbar, or 4 Mbar if model goes to low y1 (high phase_t_offset).
 
-            k = np.where(p < pval)[0][0]-1 # e.g., 2.001 Mbar
+            # k = np.where(p < pval)[0][0]-1 # e.g., 2.001 Mbar
+            k = np.argsort(abs(p - pval))[0]
             if k < self.kcore: continue
             try:
                 # interpolate to get t value corresponding to pval, e.g., 2.0000000000 Mbar
@@ -806,11 +807,11 @@ class evol:
                     # thus, set envelope abundance by evaluating ymax for p==pval exactly.
                     pval = -1
                     for pval in sorted(list(ymax))[::-1]: # high to low
-                        if p[k] > pval:
+                        if p[k-1] > pval:
                             break
+                    # print('k1', 'yout', 'pval', 'p[k-2:k+2]', k1, yout[k], pval, p[k-2:k+2])
                     assert pval > 0
-                    assert p[k] > pval
-                    assert p[k+1] < pval
+                    assert (p[k] > pval and p[k+1] < pval) or (p[k-1] > pval and p[k] < pval)
                     # envelope will have identical y_xy to zone k=k1, which means it generally has
                     # a different y value because z may be discontinuous at k=k1.
                     # y / yp = 1 - z
