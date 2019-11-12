@@ -545,7 +545,8 @@ class evol:
                 # self.integrate_temperature()
                 self.k_gradient_bot = None
 
-                self.y = self.equilibrium_y_profile(params['phase_t_offset'],
+                if iteration % 2 == 0:
+                    self.y = self.equilibrium_y_profile(params['phase_t_offset'],
                             verbosity=params['rainout_verbosity'],
                             allow_y_inversions=params['allow_y_inversions'])
 
@@ -692,7 +693,7 @@ class evol:
             # that will probably be 2 Mbar, or 4 Mbar if model goes to low y1 (high phase_t_offset).
 
             # k = np.where(p < pval)[0][0]-1 # e.g., 2.001 Mbar
-            k = np.argsort(abs(p - pval))[0]
+            k = np.argsort(abs(p - pval))[0] # e.g., 2.001 Mbar or 1.998 Mbar
             if k < self.kcore: continue
             try:
                 # interpolate to get t value corresponding to pval, e.g., 2.0000000000 Mbar
@@ -724,9 +725,18 @@ class evol:
             else:
                 ymax[10.] = {'k':0, 'y':ylo}
 
-        ps = list(ymax)
-        ys = [ymax[pval]['y'] for pval in ps]
-        ks = [ymax[pval]['k'] for pval in ps]
+        assert not allow_y_inversions
+        # to ease some issues of convergence on first step undergoing demixing, where closest zone
+        # has P just < 2 Mbar, discard ymax values for 1.0 and 1.5 Mbar because these are > than
+        # ymax(2 Mbar) and we know we aren't allowing y inversions. instead extrapolate down (a
+        # tiny amount) from the 2 and 4 Mbar curves.
+        ymax.pop(1.5, None)
+        ymax.pop(1.0, None)
+        # assert False
+
+        ps = np.array(list(ymax))
+        ys = np.array([ymax[pval]['y'] for pval in ps])
+        ks = np.array([ymax[pval]['k'] for pval in ps])
 
         if hasattr(self, 'p_start'):
             # get this static model's starting y vector, interpolated onto current pressures
@@ -743,7 +753,7 @@ class evol:
 
         if verbosity > 1:
             print(ps, ys)
-        fymax = lambda p: splev(p, splrep(ps, ys, k=1))
+        fymax = lambda p: splev(p, splrep(ps, ys, k=1), ext=0)
         self.tck_ymax = splrep(ps, ys, k=1)
 
         if allow_y_inversions:
@@ -812,6 +822,7 @@ class evol:
                     # print('k1', 'yout', 'pval', 'p[k-2:k+2]', k1, yout[k], pval, p[k-2:k+2])
                     assert pval > 0
                     assert (p[k] > pval and p[k+1] < pval) or (p[k-1] > pval and p[k] < pval)
+                    yout[k] = fymax(pval) # EXPERIMENTING 11/11/2019
                     # envelope will have identical y_xy to zone k=k1, which means it generally has
                     # a different y value because z may be discontinuous at k=k1.
                     # y / yp = 1 - z
