@@ -7,7 +7,7 @@ import os
 import pickle
 
 class eos:
-    def __init__(self, path_to_data, fac_for_numerical_partials=1e-10):
+    def __init__(self, path_to_data=None, fac_for_numerical_partials=1e-10):
         '''
         load the Saumon, Chabrier, van Horn 1995 EOS tables for H and He.
         the eos tables were pulled from mesa-r8845/eos/eosDT_builder/eos_input_data/scvh/.
@@ -18,6 +18,8 @@ class eos:
         '''
 
         self.fac_for_numerical_partials = fac_for_numerical_partials
+
+        if not path_to_data: path_to_data = os.environ['ongp_data_path']
 
         # not using these at present, just making them available for reference
         self.logtmin, self.logtmax = 2.10, 7.06

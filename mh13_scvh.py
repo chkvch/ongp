@@ -7,7 +7,10 @@ import scvh; reload(scvh)
 import numpy as np
 
 class eos:
-    def __init__(self, path_to_data):
+    def __init__(self, path_to_data=None):
+        if not path_to_data:
+            import os
+            path_to_data = os.environ['ongp_data_path']
         self.columns = 'logp', 'logt', 'logrho', 'logs'
         self.h_path = '{}/MH13+SCvH-H-2018.dat'.format(path_to_data)
         self.h_data = np.genfromtxt(self.h_path, skip_header=16, names=self.columns)
@@ -15,7 +18,7 @@ class eos:
         self.logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 14.])
         self.logpvals = self.logpvals[self.logpvals > 5.8]
         self.logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 14.])
-        self.logtvals = self.logtvals[self.logtvals < 5]
+        # self.logtvals = self.logtvals[self.logtvals < 5]
 
         self.logrho = np.zeros((len(self.logpvals), len(self.logtvals)))
         self.logs = np.zeros((len(self.logpvals), len(self.logtvals)))
@@ -28,6 +31,8 @@ class eos:
                 self.logs[i, j] = logs_this_p[logt_this_p == logtval]
 
         del(self.h_data)
+
+        self.logtlo_h = 2.25
 
             # class scipy.interpolate.RectBivariateSpline(x, y, z, bbox=[None, None, None, None], kx=3, ky=3, s=0)
             #     Bivariate spline approximation over a rectangular mesh.
@@ -90,9 +95,25 @@ class eos:
 
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
+        if type(logp) is float: logp = np.array([logp])
+        if type(logt) is float: logt = np.array([logt])
+        if len(logp) != len(logt):
+            if len(logp) == 1:
+                logp = np.ones_like(logt) * logp[0]
+            elif len(logt) == 1:
+                logt = np.ones_like(logp) * logt[0]
+            else:
+                raise ValueError('got unequal lengths {} and {} for logp and logt and neither is equal to 1.'.format(len(logp), len(logt)))
+
         s_h = 10 ** self.get_logs_h(logp, logt)
         sp_h = self.get_sp_h(logp, logt)
         st_h = self.get_st_h(logp, logt)
+
+        # fix up values for low t by asking scvh h directly; mh13+scvh h table only covers logT >= 2.25, about 178 K.
+        tlo = self.logtlo_h
+        s_h[logt < tlo] = 10 ** self.he_eos.get_h['logs']((logp[logt < tlo], logt[logt < tlo]))
+        sp_h[logt < tlo] = self.he_eos.get_h['sp']((logp[logt < tlo], logt[logt < tlo]))
+        st_h[logt < tlo] = self.he_eos.get_h['st']((logp[logt < tlo], logt[logt < tlo]))
 
         s_he = 10 ** self.get_logs_he(logp, logt)
         sp_he = self.get_sp_he(logp, logt)
@@ -105,12 +126,15 @@ class eos:
         grada = - sp / st
 
         rho_h = 10 ** self.get_logrho_h(logp, logt)
+        rho_h[logt < tlo] = 10 ** self.he_eos.get_h['logrho']((logp[logt < tlo], logt[logt < tlo]))
         rho_he = 10 ** self.get_logrho_he(logp, logt)
         rhoinv = y / rho_he + (1. - y) / rho_h
         rho = rhoinv ** -1.
         logrho = np.log10(rho)
         rhop_h = self.get_rhop_h(logp, logt)
         rhot_h = self.get_rhot_h(logp, logt)
+        rhop_h[logt < tlo] = self.he_eos.get_h['rhop']((logp[logt < tlo], logt[logt < tlo]))
+        rhot_h[logt < tlo] = self.he_eos.get_h['rhot']((logp[logt < tlo], logt[logt < tlo]))
         rhop_he = self.get_rhop_he(logp, logt)
         rhot_he = self.get_rhot_he(logp, logt)
 
@@ -162,6 +186,10 @@ class eos:
             'cv':cv,
             'csound':csound
             }
+        # debugging
+        res['sp'] = sp
+        res['st'] = st
+        res['s_h'] = s_h
         return res
 
     def get_grada(self, logp, logt, y):
@@ -169,6 +197,12 @@ class eos:
         s_h = 10 ** self.get_logs_h(logp, logt)
         sp_h = self.get_sp_h(logp, logt)
         st_h = self.get_st_h(logp, logt)
+
+        # fix up values for low t by asking scvh h directly; mh13+scvh h table only covers logT >= 2.25, about 178 K.
+        tlo = self.logtlo_h
+        s_h[logt < tlo] = 10 ** self.he_eos.get_h['logs']((logp[logt < tlo], logt[logt < tlo]))
+        sp_h[logt < tlo] = self.he_eos.get_h['sp']((logp[logt < tlo], logt[logt < tlo]))
+        st_h[logt < tlo] = self.he_eos.get_h['st']((logp[logt < tlo], logt[logt < tlo]))
 
         s_he = 10 ** self.get_logs_he(logp, logt)
         sp_he = self.get_sp_he(logp, logt)

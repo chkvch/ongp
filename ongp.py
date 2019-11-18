@@ -199,8 +199,9 @@ class evol:
             try:
                 rho_z_high_t = 10 ** self.z_eos.get_logrho(logp_high_t, logt_high_t)
             except:
-                print('off high-t eos tables?')
-                raise
+                raise EOSError('off high-t eos tables')
+                # print('off high-t eos tables?')
+                # raise
 
             rho_z = np.concatenate((rho_z_high_t, rho_z_low_t))
 
@@ -301,7 +302,7 @@ class evol:
                 self.teq = params['teq']
             if self.evol_params['atm_option'] == 'f11_tables':
                 import f11_atm; reload(f11_atm)
-                if 'force_teq' in list(self.evol_params):
+                if 'force_teq' in list(self.evol_params) and self.evol_params['force_teq']:
                     self.atm = f11_atm.atm(self.evol_params['path_to_data'], self.evol_params['atm_planet'],
                         force_teq=self.evol_params['force_teq'])
                 else:
@@ -486,7 +487,7 @@ class evol:
             # set y and z profile assuming three-layer homogeneous. if doing helium rain (self.phase is set),
             # Y profile wile be set appropriately later in equilibrium_Y iterations.
             self.set_yz()
-            self.integrate_temperature()
+            self.integrate_temperature(old_style=True if 'bad_t_integral' in self.static_params and self.static_params['bad_t_integral'] else False)
             self.set_core_density()
             self.set_envelope_density()
             self.integrate_continuity() # get zone radii from their densities via continuity equation
@@ -1067,7 +1068,7 @@ class evol:
             # leave alone; potentially set as superadiabatic in static
             pass
         if old_style:
-            raise ValueError("I see you're using an old style. I wondered where you'd learned it.") # you know very well
+            # raise ValueError("I see you're using an old style. I wondered where you'd learned it.") # you know very well...
             for k in np.arange(self.nz)[::-1]: # surface to center
                 if k == self.nz - 1: continue
                 if k == self.kcore - 1: break
