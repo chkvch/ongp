@@ -367,24 +367,24 @@ class evol:
             self.y[:] = 0.
             self.y[self.kcore:] = self.y1
 
-            if params['z_profile_type'] == 'sigmoid':
-                assert self.kcore == 0, 'z_profile_type sigmoid requires that no discrete core be specified.'
-                assert self.z2, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
-                assert 'sigmoid_center' in list(params), 'z_profile_type sigmoid requires that sigmoid_center be set.'
-                assert 'sigmoid_width' in list(params), 'z_profile_type sigmoid requires that sigmoid_width be set.'
-                # for this z_profile_type, z will be given as a sigmoid function in radius.
+            if params['model_type'] == 'sigmoid':
+                assert self.kcore == 0, 'model_type sigmoid requires that no discrete core be specified.'
+                assert self.z2, 'model_type sigmoid requires that both z1 and z2 be set.'
+                assert 'sigmoid_center' in list(params), 'model_type sigmoid requires that sigmoid_center be set.'
+                assert 'sigmoid_width' in list(params), 'model_type sigmoid requires that sigmoid_width be set.'
+                # for this model_type, z will be given as a sigmoid function in radius.
                 # since on the first iteration radius is not yet known, just pass fractional mass
                 # to get in the right ballpark.
                 c = params['sigmoid_center']
                 w = params['sigmoid_width']
                 zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
                 self.z = zfunc(self.m / self.mtot)
-            elif params['z_profile_type'] == 'cosine':
-                assert self.kcore == 0, 'z_profile_type cosine requires that no discrete core be specified.'
-                assert self.z2, 'z_profile_type cosine requires that both z1 and z2 be set.'
-                assert 'sigmoid_center' in list(params), 'z_profile_type cosine requires that sigmoid_center be set.'
-                assert 'sigmoid_width' in list(params), 'z_profile_type cosine requires that sigmoid_width be set.'
-                # for this z_profile_type, z will be given as a sigmoid function in radius.
+            elif params['model_type'] == 'cosine':
+                assert self.kcore == 0, 'model_type cosine requires that no discrete core be specified.'
+                assert self.z2, 'model_type cosine requires that both z1 and z2 be set.'
+                assert 'sigmoid_center' in list(params), 'model_type cosine requires that sigmoid_center be set.'
+                assert 'sigmoid_width' in list(params), 'model_type cosine requires that sigmoid_width be set.'
+                # for this model_type, z will be given as a sigmoid function in radius.
                 # since on the first iteration radius is not yet known, just pass fractional mass
                 # to get in the right ballpark.
                 c = params['sigmoid_center']
@@ -395,15 +395,15 @@ class evol:
                 self.z = self.z1 + (self.z2 - self.z1) * 0.5 * (1. + np.cos(np.pi * (c - mf - w / 2) / w))
                 self.z[mf < c - w / 2] = self.z2
                 self.z[mf > c + w / 2] = self.z1
-            elif 'cos2' in params['z_profile_type']:
+            elif 'cos2' in params['model_type']:
                 self.z[:] = self.z1
-            elif params['z_profile_type'] in ('sig2', 'sig2_yz'):
-                assert self.kcore==0, 'z_profile_type sig2 requires that no discrete core be specified.'
-                assert self.z2 and self.z1, 'z_profile_type sigmoid requires that both z1 and z2 be set.'
+            elif params['model_type'] in ('sig2', 'sig2_yz'):
+                assert self.kcore==0, 'model_type sig2 requires that no discrete core be specified.'
+                assert self.z2 and self.z1, 'model_type sigmoid requires that both z1 and z2 be set.'
                 assert 'sigmoid_center_1' and 'sigmoid_center_2' in list(params), \
-                    'z_profile_type sig2 requires that sigmoid_center_1 and sigmoid_center_2 be set.'
+                    'model_type sig2 requires that sigmoid_center_1 and sigmoid_center_2 be set.'
                 assert 'sigmoid_width_1' and 'sigmoid_width_2' in list(params), \
-                    'z_profile_type sig2 requires that sigmoid_width_1 and sigmoid_width_2 be set.'
+                    'model_type sig2 requires that sigmoid_width_1 and sigmoid_width_2 be set.'
                 self.c1 = params['sigmoid_center_1']
                 self.c2 = params['sigmoid_center_2']
                 self.w1 = params['sigmoid_width_1']
@@ -411,11 +411,11 @@ class evol:
 
                 # set initial z profile roughly (radii still not known)
                 self.z = self.zfunc(self.m / self.mtot)
-            elif params['z_profile_type'] == 'linear':
-                assert 'rf_z_top' in list(params), 'z_profile_type linear requires that rf_z_top be set.'
+            elif params['model_type'] == 'linear':
+                assert 'rf_z_top' in list(params), 'model_type linear requires that rf_z_top be set.'
                 if self.z2:
-                    assert self.kcore == 0, 'z_profile_type linear requires that no discrete core be specified if self.z2 is set.'
-                    assert 'rf_z_bot' in list(params), 'z_profile_type linear requires that rf_z_bot be set.'
+                    assert self.kcore == 0, 'model_type linear requires that no discrete core be specified if self.z2 is set.'
+                    assert 'rf_z_bot' in list(params), 'model_type linear requires that rf_z_bot be set.'
                     rf = self.m / self.mtot
                     self.z[rf <= params['rf_z_top']] = self.z1 + (self.z2 - self.z1) * (params['rf_z_top'] - rf[rf <= params['rf_z_top']]) / (params['rf_z_top'] - params['rf_z_bot'])
                     self.z[rf < params['rf_z_bot']] = self.z2
@@ -423,7 +423,7 @@ class evol:
                     # set z so that it increases linearly from self.z1 at params['rf_z_top'] to self.z2 at r=0;
                     # mirror this in adjust_linear in gravity
                 else:
-                    assert self.kcore > 0, 'z_profile_type linear requires a nonzero core mass if self.z2 not set.'
+                    assert self.kcore > 0, 'model_type linear requires a nonzero core mass if self.z2 not set.'
                     # def zfunc(rf):
                     #     z = np.copy(self.z)
                     #     z[rf > params['rf_z_top']] = self.z1
@@ -437,12 +437,12 @@ class evol:
                     self.z[:self.kcore] = 1.
                 # self.zfunc = zfunc
                 # self.z = self.zfunc(self.m / self.mtot) # as above, just use mf as proxy for rf during initialization
-            elif params['z_profile_type'] == 'three_layer':
+            elif params['model_type'] == 'three_layer':
                 self.z[:self.kcore] = 1.
                 assert self.z1 >= 0., 'got negative z1 %g' % self.z1
                 self.z[self.kcore:] = self.z1
             else:
-                raise ValueError('z_profile_type {} is not understood.'.format(params['z_profile_type']))
+                raise ValueError('model_type {} is not understood.'.format(params['model_type']))
 
             # these used to be defined after iterations were completed, but they are needed for calculation
             # of brunt_b to allow superadiabatic regions with grad-grada proportional to brunt_b.
@@ -1122,7 +1122,7 @@ class evol:
         elif self.ktrans == -1: # no transition found (yet)
             return
         rf = self.r / self.r[-1]
-        if self.static_params['z_profile_type'] == 'three_layer':
+        if self.static_params['model_type'] == 'three_layer':
             self.z[:self.kcore] = 1.
             if self.z2: # two-layer envelope in terms of Z distribution. zenv is z of the outer envelope, z2 is z of the inner envelope
                 try:
@@ -1135,7 +1135,7 @@ class evol:
                 self.z[self.ktrans:] = self.z1
             else:
                 self.z[self.kcore:] = self.z1
-        elif self.static_params['z_profile_type'] == 'linear':
+        elif self.static_params['model_type'] == 'linear':
             # self.z = self.zfunc(self.r / self.r[-1])
             if self.z2:
                 r1 = self.static_params['rf_z_top']
@@ -1149,13 +1149,13 @@ class evol:
                 self.z[rf > r1] = self.z1
                 self.z[rf <= r1] = self.z1 + (1. - self.z1) * (r1 - rf[rf <= r1]) / (r1 - rc)
                 self.z[:self.kcore] = 1.
-        elif self.static_params['z_profile_type'] == 'sigmoid':
+        elif self.static_params['model_type'] == 'sigmoid':
             # self.z = self.zfunc(self.r / self.r[-1])
             c = self.static_params['sigmoid_center']
             w = self.static_params['sigmoid_width']
             zfunc = lambda rf: self.z1 + (self.z2 - self.z1) / (1. + np.exp((rf - c) / w * 2 - 1))
             self.z = zfunc(rf)
-        elif self.static_params['z_profile_type'] == 'cosine':
+        elif self.static_params['model_type'] == 'cosine':
             # self.z = self.zfunc(self.r / self.r[-1])
             c = self.static_params['sigmoid_center']
             w = self.static_params['sigmoid_width']
@@ -1164,7 +1164,7 @@ class evol:
             self.z[rf < c - w / 2] = self.z2
             self.z[rf > c + w / 2] = self.z1
 
-        elif self.static_params['z_profile_type'] in ('sig2', 'sig2_yz'):
+        elif self.static_params['model_type'] in ('sig2', 'sig2_yz'):
             c1 = self.static_params['sigmoid_center_1']
             c2 = self.static_params['sigmoid_center_2']
             w1 = self.static_params['sigmoid_width_1']
@@ -1478,7 +1478,7 @@ class evol:
                 assert np.all(self.z[self.kcore:] == 0.), 'consistency check failed: z_eos_option is None, but have non-zero z in envelope'
                 self.dlogrho_dlogt_const_p[self.kcore:] = res['rhot']
 
-        if self.static_params['z_profile_type'] == 'three_layer': # two-layer envelope in terms of Z
+        if self.static_params['model_type'] == 'three_layer': # two-layer envelope in terms of Z
             if hasattr(self, 'z2') and self.z2:
                 assert self.ktrans > 0, 'self.z2 is set but self.ktrans is <= 0. if not setting transition_pressure, then leave z2 unset.'
                 self.mz_env_outer = np.sum(self.dm[self.ktrans:]) * self.z[self.ktrans + 1]
@@ -1490,11 +1490,11 @@ class evol:
                 self.mz_env = np.sum(self.dm[self.kcore:] * self.z[self.kcore+1])
                 self.mz_core = np.dot(self.z[:self.kcore], self.dm[:self.kcore])
                 self.mz = self.mz_env + self.mz_core
-        elif self.static_params['z_profile_type'] in ('sigmoid', 'cosine'): # no inner or outer envelope to speak of
+        elif self.static_params['model_type'] in ('sigmoid', 'cosine'): # no inner or outer envelope to speak of
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
             self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
-        elif self.static_params['z_profile_type'] in ('sig2', 'sig2_yz'): # no inner or outer envelope to speak of
+        elif self.static_params['model_type'] in ('sig2', 'sig2_yz'): # no inner or outer envelope to speak of
             self.mz_core = 0
             # print(len(self.z), len(self.dm))
             self.mz_env = self.mz = np.dot(self.z[:-1], self.dm)
