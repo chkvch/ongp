@@ -110,7 +110,8 @@ class atm:
                         res_this_row[name] = self.data[name][self.data['g'] == gval][npts_tint - n - 1]
                     print(fmt.format(gval, tintval, *[res_this_row[key] for key in list(res_this_row)]))
 
-            if t['t10_10'][m, -1] == -1: # this g block has at least one blank element at high tint. should only happen for j/s
+            if 't10_10' in list(t) and t['t10_10'][m, -1] == -1:
+                # this g block has at least one blank element at high tint. should only happen for j/s
                 assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
                 last_nan = np.where(np.diff(t['t10_10'][m, :] < 0))[0][-1] + 1
                 tint = self.tint_grid[last_nan]
@@ -119,7 +120,8 @@ class atm:
                 for t_column in t_columns:
                     t[t_column][m, last_nan] = alpha * t[t_column][m, last_nan - 1] + (1. - alpha) * t[t_column][m, last_nan - 2]
             # assert not t['t10_07'][m, -1] == -1
-            if t['t10_07'][m, -1] == -1: # this g block has at least one blank element at high tint. should only happen for j/s
+            if 't10_07' in list(t) and t['t10_07'][m, -1] == -1:
+                # this g block has at least one blank element at high tint. should only happen for j/s
                 assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
                 last_nan = np.where(np.diff(t['t10_07'][m, :] < 0))[0][-1] + 1
                 tint = self.tint_grid[last_nan]
@@ -128,7 +130,8 @@ class atm:
                 for t_column in t_columns:
                     t[t_column][m, last_nan] = alpha * t[t_column][m, last_nan - 1] + (1. - alpha) * t[t_column][m, last_nan - 2]
 
-            if t['t10_10'][m, 0] == -1: # this g block has at least one blank element at low tint. should only happen for j/s
+            if 't10_10' in list(t) and t['t10_10'][m, 0] == -1:
+                # this g block has at least one blank element at low tint. should only happen for j/s
                 assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
                 first_nan = np.where(np.diff(t['t10_10'][m, :] < 0))[0][0] # first sign change
                 tint = self.tint_grid[first_nan]
@@ -137,7 +140,8 @@ class atm:
                 for t_column in t_columns:
                     t[t_column][m, first_nan] = alpha * t[t_column][m, first_nan + 1] + (1. - alpha) * t[t_column][m, first_nan + 2]
             # assert not t['t10_07'][m, 0] == -1
-            if t['t10_07'][m, 0] == -1: # this g block has at least one blank element at low tint. should only happen for j/s
+            if 't10_07' in list(t) and t['t10_07'][m, 0] == -1:
+                # this g block has at least one blank element at low tint. should only happen for j/s
                 assert not 't1' in t.keys(), 'found a blank (-1) element in u/n atm tables.'
                 first_nan = np.where(np.diff(t['t10_07'][m, :] < 0))[0][0] # first sign change
                 tint = self.tint_grid[first_nan]
@@ -199,7 +203,7 @@ class atm:
     #     data_g_hi = data_g_hi[data_g_hi['t10'] > 0]
     #     min_tint_g_hi = min(data_g_hi['tint'])
     #     max_tint_g_hi = max(data_g_hi['tint'])
-    # 
+    #
     #     min_tint = max(min_tint_g_lo, min_tint_g_hi)
     #     max_tint = min(max_tint_g_lo, max_tint_g_hi)
     #
@@ -212,10 +216,21 @@ class atm:
         intrinsic temperature tint (K) and effective temperature teff (K).
         """
 
+        if not flux_level:
+            if self.planet in ('u', 'n'):
+                t10_column = 't10'
+                teff_column = 'teff'
+            else:
+                t10_column = 't10_10'
+                teff_column = 'teff_10'
+        else:
+            t10_column = 't10_{:s}'.format(flux_level)
+            teff_column = 'teff_{:s}'.format(flux_level)
+
         assert t10 > 0., 'get_tint got a negative t10 %f' % t
         def zero_me(tint):
             try:
-                return t10 - self.get['t10_{:s}'.format(flux_level)]((g, tint))
+                return t10 - self.get[t10_column]((g, tint))
             except ValueError:
                 print('failed to interpolate for t10 at g = %f, tint = %f' % (g, tint))
 
@@ -230,12 +245,12 @@ class atm:
         g_lo, g_hi = self.g_grid[g_bin - 1], self.g_grid[g_bin]
 
         data_g_lo = self.data[self.data['g'] == g_lo]
-        data_g_lo = data_g_lo[data_g_lo['t10_{:s}'.format(flux_level)] > 0]
+        data_g_lo = data_g_lo[data_g_lo[t10_column] > 0]
         min_tint_g_lo = min(data_g_lo['tint'])
         max_tint_g_lo = max(data_g_lo['tint'])
 
         data_g_hi = self.data[self.data['g'] == g_hi]
-        data_g_hi = data_g_hi[data_g_hi['t10_{:s}'.format(flux_level)] > 0]
+        data_g_hi = data_g_hi[data_g_hi[t10_column] > 0]
         min_tint_g_hi = min(data_g_hi['tint'])
         max_tint_g_hi = max(data_g_hi['tint'])
 
@@ -243,10 +258,10 @@ class atm:
         max_tint = min(max_tint_g_lo, max_tint_g_hi)
 
         tint = brentq(zero_me, min_tint, max_tint)
-        teff = float(self.get['teff_{:s}'.format(flux_level)]((g, tint)))
+        teff = float(self.get[teff_column]((g, tint)))
         if np.isnan(teff):
             _ = np.linspace(min_tint, max_tint)
             while np.isnan(teff):
                 _ = np.delete(_, -1)
-                teff = splev(tint, splrep(_, self.get['teff_{:s}'.format(flux_level)]((g, _))))
+                teff = splev(tint, splrep(_, self.get[teff_column]((g, _))))
         return tint, teff

@@ -193,10 +193,10 @@ class eos:
         try:
             res = self.get_hhe(pair, y)
         except ValueError:
-            print('probably out of bounds in logP, logT, or Y -- did you accidentally pass P, T? (or loglogP, loglogT?)')
-            print(logp)
-            print(logt)
-            raise
+            raise ValueError('probably out of bounds in logP, logT, or Y -- did you accidentally pass P, T? (or loglogP, loglogT?)')
+            # print(logp)
+            # print(logt)
+            # raise
 
         res['logp'] = logp
         res['logt'] = logt

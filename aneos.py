@@ -6,8 +6,11 @@ import aneos_rhot; reload(aneos_rhot)
 
 class eos:
 
-    def __init__(self, path_to_data, material='serpentine'):
+    def __init__(self, path_to_data=None, material='serpentine'):
 
+        if not path_to_data:
+            import os
+            path_to_data = os.environ['ongp_data_path']
         self.material = material
         available_materials = 'ice', 'iron', 'serpentine', 'water'
         assert self.material in available_materials, 'material must be one of %s, %s, %s, %s' % available_materials

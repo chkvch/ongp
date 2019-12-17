@@ -595,7 +595,6 @@ class evol:
                 if 'debug_iterations' in params.keys() and params['debug_iterations']:
                     if type(params['debug_iterations']) is str: # focus one step
                         step = int(params['debug_iterations'].split()[1])
-                        # self.step = -1 # banana
                         if self.step == step:
                             with open('{:03n}.dump.pkl'.format(self.iters_rain), 'wb') as fw:
                                 pickle.dump(self, fw)
@@ -1051,15 +1050,32 @@ class evol:
 
         self.grada[:self.kcore] = 0. # ignore because doesn't play a role in the temperature structure (core is isothermal).
         # grada will in general still be set inside the core from the Z eos if possible, after a static model is converged.
+        if 'switch_z_grada' in self.static_params and self.static_params['switch_z_grada']:
+            # raise NotImplementedError('need to reimplement switch_z_grada in integrate_temperature.')
+            assert self.static_params['model_type'] == 'three_layer', 'switch_z_grada assumes three-layer'
+            res_z = self.z_eos.get(np.log10(self.p[self.kcore:self.ktrans]), np.log10(self.t[self.kcore:self.ktrans]))
+            self.grada[self.kcore:self.ktrans] = res_z['grada']
+            self.chit[self.kcore:self.ktrans] = res_z['chit']
+            self.chirho[self.kcore:self.ktrans] = res_z['chirho']
 
-        try:
-            res = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
-            self.grada[self.kcore:] = res['grada']
-            self.chit[self.kcore:] = res['chit']
-            self.chirho[self.kcore:] = res['chirho']
-            self.chiy[self.kcore:] = res['chiy']
-        except ValueError:
-            raise EOSError('failed in eos call. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
+            try:
+                res_hhe = self.hhe_eos.get(np.log10(self.p[self.ktrans:]), np.log10(self.t[self.ktrans:]), self.y[self.ktrans:])
+            except ValueError:
+                raise EOSError('failed in eos call. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
+            self.grada[self.ktrans:] = res_hhe['grada']
+            self.chit[self.ktrans:] = res_hhe['chit']
+            self.chirho[self.ktrans:] = res_hhe['chirho']
+            self.chiy[self.ktrans:] = res_hhe['chiy']
+
+        else: # ignore Z for the sake of calculating grada, chit, chirho
+            try:
+                res_hhe = self.hhe_eos.get(np.log10(self.p[self.kcore:]), np.log10(self.t[self.kcore:]), self.y[self.kcore:])
+            except ValueError:
+                raise EOSError('failed in eos call. p[-1]={:g} t[-1]={:g}'.format(self.p[-1], self.t[-1]))
+            self.grada[self.kcore:] = res_hhe['grada']
+            self.chit[self.kcore:] = res_hhe['chit']
+            self.chirho[self.kcore:] = res_hhe['chirho']
+            self.chiy[self.kcore:] = res_hhe['chiy']
 
         self.grada_check_nans()
         if adiabatic:
@@ -1178,7 +1194,7 @@ class evol:
             try:
                 assert self.y2 > 0, 'if you want a Y-free envelope, no need to specify y2.'
                 assert self.y2 < 1., 'set_yz got bad y %f' % self.y2
-                assert self.y2 >= self.y1, 'no y inversion allowed.'
+                # assert self.y2 >= self.y1, 'no y inversion allowed.' # actually let this go; stable Z jump can compensate
             except AssertionError as e:
                 raise UnphysicalParameterError(e.args[0])
             self.y[self.kcore:self.ktrans] = self.y2
@@ -1279,13 +1295,13 @@ class evol:
                 if self.static_params['evolve_solar_luminosity']:
                     alpha = self.age_gyr / 4.56
                     # l_div_lsun = 0.7 * (1. - alpha) + alpha
-                    tint_10, teff_10 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '10') # tint and teff assuming 1.0 Lsun (present-day Sun)
-                    tint_07, teff_07 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '07') # tint and teff assuming 0.7 Lsun (young Sun)
+                    tint_10, teff_10 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, flux_level='10') # tint and teff assuming 1.0 Lsun (present-day Sun)
+                    tint_07, teff_07 = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, flux_level='07') # tint and teff assuming 0.7 Lsun (young Sun)
                     self.tint = alpha * tint_10 + (1. - alpha) * tint_07
                     self.teff = alpha * teff_10 + (1. - alpha) * teff_07
                     # print(self.age_gyr, l_div_lsun, self.tint, self.teff)
                 else:
-                    self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, '10')
+                    self.tint, self.teff = self.atm.get_tint_teff(self.surface_g * 1e-2, self.t10, flux_level=None)
 
             self.lint = 4. * np.pi * self.rtot ** 2 * const.sigma_sb * self.tint ** 4
         except ValueError as e:
@@ -1585,7 +1601,9 @@ class evol:
         self.age_gyr = 0
         self.dt_yr = 0
         self.status = 'okay'
-        delta_t = params['initial_delta_t'] # nominal temperature step in K, can scale as we go
+        # nominal temperature step in K, can scale as we go
+        delta_t = params['initial_delta_t'] if 'initial_delta_t' in list(params) else 10.
+        if 'fixed_delta_t' in list(params): delta_t = params['fixed_delta_t']
         prev_y1 = -1
         done = False
         limit = ''
@@ -1610,10 +1628,14 @@ class evol:
         previous_entropy = self.entropy
 
         while not done:
+            if 'fixed_delta_t' in list(params):
+                delta_t = params['fixed_delta_t']
+                limit = 'fixed'
+            else:
+                limit = ''
             self.delta_t = delta_t
             retries = 0
             accept_step = False
-            limit = ''
             while not accept_step:
                 old_delta_t = delta_t
                 params[which_t] = previous_t - delta_t
@@ -1663,7 +1685,7 @@ class evol:
                         raise self.status
                         break
                         # formerly, we would retry with a larger timestep
-                    elif prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
+                    elif 'max_dy1' not in list(params) or prev_y1 - self.y[-1] < params['max_dy1']: # okay on dy1
                         if hasattr(self, 'phase') and self.nz_gradient <= 0:
                             from lorenzen import get_xp
                             # are we anywhere *close* to rainout for initial y1?
@@ -1738,11 +1760,11 @@ class evol:
                     self.y[self.kcore:] = self.y1
                     retries += 1
 
-                if abs(delta_t) > params['max_abs_delta_t']:
+                if 'max_abs_delta_t' in list(params) and abs(delta_t) > params['max_abs_delta_t']:
                     limit = 'maxdt1'
                     msg = '{:>50}'.format('delta_t {:.2f} > limit {:.2f}'.format(delta_t, params['max_abs_delta_t']))
                     delta_t = params['max_abs_delta_t']
-                elif delta_t / old_delta_t > params['max_ratio_delta_t']:
+                elif 'max_ratio_delta_t' in list(params) and delta_t / old_delta_t > params['max_ratio_delta_t']:
                     limit = 'Dt1'
                     msg = '{:>50}'.format('new_delta_t/old_delta_t {:.2f} > limit {:.2f}'.format(delta_t / old_delta_t, params['max_ratio_delta_t']))
                     delta_t = old_delta_t * params['max_ratio_delta_t']
@@ -1765,7 +1787,7 @@ class evol:
             if params[which_t] < end_t:
                 # took a good last step
                 done = True
-            elif self.teff < params['min_teff']:
+            elif 'min_teff' in list(params) and self.teff < params['min_teff']:
                 done = True
 
             # took a good step
@@ -1788,12 +1810,11 @@ class evol:
             # self.luminosity = luminosity
             prev_y1 = np.copy(self.y[-1])
 
-            if 'full_profiles' in list(params):
-                if params['full_profiles']:
-                    if not hasattr(self, 'profiles'): self.profiles = {}
-                    if self.step in list(self.profiles):
-                        assert done, 'step {} already in self.profiles; not expected'.format(self.step)
-                    self.profiles[self.step] = self.get_profile()
+            if 'full_profiles' in list(params) and params['full_profiles']:
+                if not hasattr(self, 'profiles'): self.profiles = {}
+                if self.step in list(self.profiles):
+                    assert done, 'step {} already in self.profiles; not expected'.format(self.step)
+                self.profiles[self.step] = self.get_profile()
             self.walltime = time.time() - start_time
             self.delta_y1 = prev_y1 - self.y[-1] if prev_y1 > 0 else 0
             self.append_history()
