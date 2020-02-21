@@ -15,9 +15,9 @@ class eos:
         self.h_path = '{}/MH13+SCvH-H-2018.dat'.format(path_to_data)
         self.h_data = np.genfromtxt(self.h_path, skip_header=16, names=self.columns)
 
-        self.logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 14.])
+        self.logpvals = np.unique(self.h_data['logp'][self.h_data['logp'] <= 16.])
         self.logpvals = self.logpvals[self.logpvals > 5.8]
-        self.logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 14.])
+        self.logtvals = np.unique(self.h_data['logt'][self.h_data['logp'] <= 16.])
         # self.logtvals = self.logtvals[self.logtvals < 5]
 
         self.logrho = np.zeros((len(self.logpvals), len(self.logtvals)))

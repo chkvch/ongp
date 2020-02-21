@@ -4,11 +4,14 @@ try:
 except:
     pass
 import numpy as np
+import os
 
 class eos:
-    def __init__(self, path_to_data, material):
+    def __init__(self, material, path_to_data=None):
+        self.material = material
         self.columns = 'logrho', 'logt', 'logp', 'logu', 'logs'
-        self.data_path = '{}/raw_or_unused_eos_data/aneos/aneos_{}.dat'.format(path_to_data, material)
+        if not path_to_data: path_to_data = os.environ['ongp_data_path']
+        self.data_path = '{}/raw_or_unused_eos_data/aneos/aneos_{}.dat'.format(path_to_data, self.material)
         self.data = np.genfromtxt(self.data_path, skip_header=0, names=self.columns)
 
         self.logrhovals = np.unique(self.data['logrho'])
@@ -16,13 +19,19 @@ class eos:
 
         self.logp = np.zeros((len(self.logrhovals), len(self.logtvals)))
         self.logs = np.zeros((len(self.logrhovals), len(self.logtvals)))
+        self.logu = np.zeros((len(self.logrhovals), len(self.logtvals)))
         for i, logrhoval in enumerate(self.logrhovals):
             logp_this_rho = self.data['logp'][self.data['logrho'] == logrhoval]
             logs_this_rho = self.data['logs'][self.data['logrho'] == logrhoval]
+            logu_this_rho = self.data['logu'][self.data['logrho'] == logrhoval]
             logt_this_rho = self.data['logt'][self.data['logrho'] == logrhoval]
             for j, logtval in enumerate(self.logtvals):
-                self.logp[i, j] = logp_this_rho[logt_this_rho == logtval] + 10. # GPa to dyne cm^-2
-                self.logs[i, j] = logs_this_rho[logt_this_rho == logtval] + 10. # kJ g^-1 to erg g^-1
+                # previously these were all scaled by 1e10 (MJ kg^-1 for s and u, GPa to cgs for p).
+                # actually not sure of any units; it seems pressure is already cgs. 
+                # need to check s and u against another eos.
+                self.logp[i, j] = logp_this_rho[logt_this_rho == logtval]
+                self.logs[i, j] = logs_this_rho[logt_this_rho == logtval]
+                self.logu[i, j] = logu_this_rho[logt_this_rho == logtval]
 
         del(self.data)
 
@@ -46,6 +55,9 @@ class eos:
         return rbs(self.logrhovals, self.logtvals, self.logp, **self.spline_kwargs)(lgrho, lgt, grid=False)
     def _get_logs(self, lgrho, lgt):
         return rbs(self.logrhovals, self.logtvals, self.logs, **self.spline_kwargs)(lgrho, lgt, grid=False)
+    def _get_logu(self, lgrho, lgt):
+        return rbs(self.logrhovals, self.logtvals, self.logu, **self.spline_kwargs)(lgrho, lgt, grid=False)
+        
     def _get_prho(self, lgrho, lgt):
         return rbs(self.logrhovals, self.logtvals, self.logp, **self.spline_kwargs)(lgrho, lgt, grid=False, dx=1)
     def _get_pt(self, lgrho, lgt):
@@ -80,3 +92,50 @@ class eos:
         res['grada'] = (1. - chirho / res['gamma1']) / chit
 
         return res
+
+    def regularize_to_pt(self, outpath):
+        from scipy.optimize import brentq
+        import time
+
+        print('regularizing %s tables to rectangular in P, T' % self.material)
+
+        npts = 100 # 200 # following the old aneos_*_pt tables
+        logpvals = np.linspace(6, 17, npts)
+        logtvals = np.linspace(2, 6, npts)
+
+        logrho_on_pt = np.zeros((npts, npts))
+        logs_on_pt = np.zeros((npts, npts))
+        logu_on_pt = np.zeros((npts, npts))
+
+        t0 = time.time()
+        for i, logpval in enumerate(logpvals):
+            for j, logtval in enumerate(logtvals):
+                try:
+                    zero_me = lambda logrho: self._get_logp(logrho, logtval) - logpval
+                    logrho_on_pt[i, j] = brentq(zero_me, min(self.logrhovals), max(self.logrhovals))
+                    logs_on_pt[i, j] = self._get_logs(logrho_on_pt[i, j], logtval)
+                    logu_on_pt[i, j] = self._get_logu(logrho_on_pt[i, j], logtval)
+                except ValueError:
+                    logrho_on_pt[i, j] = np.nan
+                    logs_on_pt[i, j] = np.nan
+                    logu_on_pt[i, j] = np.nan
+                    
+            done = i + 1
+            remain = len(logpvals) - done
+            et = time.time() - t0
+            seconds_per_row = et / done
+            eta = remain * seconds_per_row
+            print('\rrow {}/{}, {:.1f} s elapsed {:.1f} s remain{:20}'.format(done, len(logpvals), et, eta, ''), end='')
+
+        # this is what aneos.py is expecting from aneos_*_pt.dat:
+        # self.names = 'logrho', 'logt', 'logp', 'logu', 'logs' # , 'chit', 'chirho', 'gamma1'
+
+        fmt = '%21.16f\t' * 5
+        outfile = '{}/aneos_{}_pt_hi-p.dat'.format(outpath, self.material)
+        with open(outfile, 'w') as fw:
+            for i, logpval in enumerate(logpvals):
+                for j, logtval in enumerate(logtvals):
+                    line = fmt % (logrho_on_pt[i, j], logtval, logpval, logu_on_pt[i, j], logs_on_pt[i, j])
+                    fw.write(line + '\n')
+
+        print('wrote {}'.format(outfile))

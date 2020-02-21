@@ -42,7 +42,7 @@ class eos:
         # set up reasonable rectangular grid in logP for the purposes of modelling Jupiter and Saturn-mass planets.
         # points not in the original tables will just return nans.
         self.logpvals = np.union1d(self.h_data[2.1]['logp'], self.h_data[5.06]['logp'])
-        self.logpmin, self.logpmax = 5.0, 14.0 # january 17 2017: had logpmax=17 for daniel
+        self.logpmin, self.logpmax = 5.0, 17. # january 17 2017: had logpmax=17 for daniel
         self.logpvals = self.logpvals[self.logpvals >= self.logpmin]
         self.logpvals = self.logpvals[self.logpvals <= self.logpmax]
 

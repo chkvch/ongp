@@ -106,7 +106,7 @@ class evol:
         # overwrite with any passed by user
         for key, value in params.items():
             self.evol_params[key] = value
-
+            
         # default mesh
         self.mesh_params = {
             'mesh_func_type':'flat_with_surface_exponential_core_gaussian',
@@ -313,8 +313,14 @@ class evol:
             elif self.evol_params['atm_option'] == 'thorngren':
                 import thorngren_atm; reload(thorngren_atm)
                 self.atm = thorngren_atm.atm()
+            elif self.evol_params['atm_option'] == 'fortney':
+                import fortney_atm; reload(fortney_atm)
+                self.atm = fortney_atm.atm()
             else:
                 raise ValueError('atm option {} not recognized.'.format(self.evol_params['atm_option']))
+                
+            if 'isothermal_above_teq' in list(params) and params['isothermal_above_teq']:
+                self.isothermal_above_teq = True
 
             if 'yenv' in list(params):
                 params['y1'] = params.pop('yenv')
@@ -564,8 +570,9 @@ class evol:
                 k_gradient_bottom = np.where(np.diff(np.diff(self.y[self.kcore:])) < -0.1)[0]
                 if np.any(k_gradient_bottom):
                     self.k_gradient_bot = k_gradient_bottom[0] + 1 + self.kcore
-                    if self.static_params['adjust_shell_top_abundance']:
-                        self.k_gradient_bot += 1 # shift to intermediate-abundance zone
+                    if 'adjust_shell_top_abundance' in list(self.static_params):
+                        if self.static_params['adjust_shell_top_abundance']:
+                            self.k_gradient_bot += 1 # shift to intermediate-abundance zone
 
                 # these bookkeeping numbers are not accurate if y inversions allowed;
                 # not a big deal but do fix later
@@ -1091,12 +1098,26 @@ class evol:
                 dlnp = np.log(self.p[k]) - np.log(self.p[k+1])
                 dlnt = self.grada[k] * dlnp
                 self.t[k] = self.t[k+1] * (1. + dlnt)
+        elif True: # experimental -- seems to work just as well; should be more accurate than simple euler integration
+            interp_gradt = interp1d(self.p[::-1], self.gradt[::-1], kind='linear', fill_value='extrapolate')
+            def dtdp(p, t):
+                return t / p * interp_gradt(p)
+            from scipy.integrate import solve_ivp
+            sol = solve_ivp(dtdp, (self.p[-1], self.p[0]), np.array([tsurf]), t_eval=self.p[::-1])
+            assert sol.success, 'failed in integrate_temperature'
+            self.t[:] = sol.y[0][::-1]
         else: # fast
             if self.kcore == 0:
                 self.t[:] = np.exp(cumtrapz(self.gradt[::-1] / self.p[::-1], x=self.p[::-1], initial=0.))[::-1]
             else:
                 self.t[self.kcore:] = np.exp(cumtrapz(self.gradt[:self.kcore-1:-1] / self.p[:self.kcore-1:-1], x=self.p[:self.kcore-1:-1], initial=0.))[::-1]
             self.t *= tsurf
+            
+        if hasattr(self, 'isothermal_above_teq') and self.isothermal_above_teq:
+            if hasattr(self, 'teq'):
+                if np.any(self.t < self.teq):
+                    k_atm = np.where(self.t < self.teq)[0][0]
+                    self.t[k_atm:] = self.teq
 
         self.t[:self.kcore] = self.t[self.kcore] # core is isothermal at temperature of core-mantle boundary
 
@@ -1269,9 +1290,15 @@ class evol:
             assert self.t1 > 0., 'bad t1 %g' % self.t1
             assert len(self.p[self.p < 1e7]) >= 5, 'fewer than 5 zones outside of 10 bars; atm likely not accurate'
         elif self.atm_which_t == 't10':
-            assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
+            if 'isothermal_above_teq' not in list(self.static_params) or not self.static_params['isothermal_above_teq']:
+                assert self.t10 == self.t[-1] # this should be true by construction (see integrate_temperature)
             self.t1 = -1
         assert self.t10 > 0., 'bad t10 %g' % self.t10
+
+        if self.evol_params['atm_option'] == 'fortney': # need to get T at 990 bars
+            k990 = np.where(self.p < 990e6)[0][0]
+            tck = splrep(self.p[k990-2:k990+2][::-1], self.t[k990-2:k990+2][::-1], k=3) # cubic
+            self.t990 = np.float64(splev(990e6, tck))
 
         # look up intrinsic temperature, effective temperature, intrinsic luminosity from atm module. that module takes g in mks.
         self.surface_g = const.cgrav * self.mtot / self.r[-1] ** 2 # in principle different for 1-bar vs. 10-bar surface, but negligible
@@ -1286,6 +1313,9 @@ class evol:
             if hasattr(self, 'teq'):
                 if self.evol_params['atm_option'] == 'thorngren':
                     self.tint = self.atm.get_tint(self.teq) # appropriate for hot jupiters in equilibrium with their host star; anomalous interior heating
+                elif self.evol_params['atm_option'] == 'fortney':
+                    assert hasattr(self, 't990'), 't990 must be set to use fortney atmosphere tables for hot planets'
+                    self.tint = self.atm.get_tint(self.surface_g, self.teq, self.t990)
                 else:
                     if self.static_params['evolve_solar_luminosity']:
                         raise ValueError('evolve_solar_luminosity is not implemented for cases where self.teq is specified.')
@@ -1584,14 +1614,14 @@ class evol:
         previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
         stdout_columns = 'step', 'iters', 'iters_he', 'retr', 'limit', \
-            which_t, 'teff', 'radius', 'd{}'.format(which_t), 'dt_yr', 'age_gyr', \
+            which_t, 'tint', 'teff', 'radius', 'd{}'.format(which_t), 'dt_yr', 'age_gyr', \
             'nz_grady', 'nz_shell', 'k_grady', 'k_shell', 'y1', 'mhe_rerr','et_s'
         start_time = time.time()
         header_format = '{:>6s} {:>6s} {:>8s} {:>6s} {:>6s} '
-        header_format += '{:>5s} {:>5s} {:>8s} {:>5s} {:>8s} {:>8s} '
+        header_format += '{:>7s} {:>7s} {:>7s} {:>8s} {:>5s} {:>8s} {:>8s} '
         header_format += '{:>10s} {:>10s} {:>10s} {:>10s} {:>6s} {:>8s} {:>8s} '
         stdout_format = '{:>6n} {:>6n} {:>8n} {:>6n} {:>6s} '
-        stdout_format += '{:>5.1f} {:>5.1f} {:>8.1e} {:>5.1f} {:>8.1e} {:>8.4f} '
+        stdout_format += '{:>7.1f} {:>7.1f} {:>7.1f} {:>8.1e} {:>5.1f} {:>8.1e} {:>8.4f} '
         stdout_format += '{:>10n} {:>10n} {:>10n} {:>10n} {:>6.3f} {:>8.1e} {:>8.1f}'
         if stdout_interval > 0:
             print(header_format.format(*stdout_columns))
@@ -1805,6 +1835,8 @@ class evol:
             # self.prev_y = np.copy(self.y)
 
             self.age_gyr += self.dt_yr * 1e-9
+            if 'max_age' in list(params) and self.age_gyr > params['max_age']:
+                done = True
             # self.delta_s = delta_s # erg K^-1 g^-1
             # self.eps_grav = eps_grav
             # self.luminosity = luminosity
@@ -1827,7 +1859,7 @@ class evol:
             mhe_rerr = self.rel_mhe_error if hasattr(self, 'rel_mhe_error') else 0
             if self.step % stdout_interval == 0 and stdout_interval > 0:
                 stdout_data = self.step, self.iters, iters_rain, retries, limit, \
-                    params[which_t], self.teff, self.rtot, delta_t, self.dt_yr, self.age_gyr, \
+                    params[which_t], self.tint, self.teff, self.rtot, delta_t, self.dt_yr, self.age_gyr, \
                     self.nz_gradient, self.nz_shell, k_grady, k_shell, \
                     self.y[-1], mhe_rerr, self.walltime
                 print(stdout_format.format(*stdout_data))

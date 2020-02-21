@@ -6,7 +6,7 @@ import aneos_rhot; reload(aneos_rhot)
 
 class eos:
 
-    def __init__(self, path_to_data=None, material='serpentine'):
+    def __init__(self, path_to_data=None, material='serpentine', extended=False):
 
         if not path_to_data:
             import os
@@ -14,7 +14,10 @@ class eos:
         self.material = material
         available_materials = 'ice', 'iron', 'serpentine', 'water'
         assert self.material in available_materials, 'material must be one of %s, %s, %s, %s' % available_materials
-        self.path = '%s/aneos_%s_pt.dat' % (path_to_data, self.material)
+        if extended:
+            self.path = '{}/aneos_{}_pt_hi-p.dat'.format(path_to_data, self.material)
+        else:
+            self.path = '{}/aneos_{}_pt.dat'.format(path_to_data, self.material)
         self.names = 'logrho', 'logt', 'logp', 'logu', 'logs' # , 'chit', 'chirho', 'gamma1'
         self.data = np.genfromtxt(self.path, names=self.names, usecols=(0, 1, 2, 3, 4)) # will fail if haven't saved version of aneos_*_pt.dat with eight columns
 
@@ -51,7 +54,7 @@ class eos:
         # self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_nodes)
         # self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_nodes)
 
-        self.rhot_eos = aneos_rhot.eos(path_to_data, material)
+        self.rhot_eos = aneos_rhot.eos(material)
 
     def get_logrho(self, logp, logt):
         return self._get_logrho((logp, logt))

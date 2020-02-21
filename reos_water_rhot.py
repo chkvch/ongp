@@ -4,10 +4,12 @@ try:
 except:
     pass
 import numpy as np
+import os
 
 class eos:
-    def __init__(self, path_to_data):
+    def __init__(self, path_to_data=None):
         self.columns = 'rho', 't', 'p', 'u', 's'
+        if not path_to_data: path_to_data = os.environ['ongp_data_path']
         self.data_path = '{}/raw_or_unused_eos_data/reos/eosH2OREOS_13a_wS.dat'.format(path_to_data)
         self.data = np.genfromtxt(self.data_path, skip_header=1, names=self.columns)
 
