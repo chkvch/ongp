@@ -1611,7 +1611,7 @@ class evol:
         # nsteps = params['nsteps']
         # ts = np.logspace(np.log10(end_t), np.log10(start_t), nsteps)[::-1]
 
-        previous_entropy = None
+        self.previous_entropy = None
         # these columns are for the realtime (e.g., notebook) output
         stdout_columns = 'step', 'iters', 'iters_he', 'retr', 'limit', \
             which_t, 'tint', 'teff', 'radius', 'd{}'.format(which_t), 'dt_yr', 'age_gyr', \
@@ -1655,7 +1655,7 @@ class evol:
             raise self.status
 
         previous_t = start_t
-        previous_entropy = self.entropy
+        self.previous_entropy = self.entropy
 
         while not done:
             if 'fixed_delta_t' in list(params):
@@ -1674,7 +1674,7 @@ class evol:
 
                 try:
                     self.static(params) # pass the full evolve params; many won't be used
-                    self.delta_s = self.entropy - previous_entropy
+                    self.delta_s = self.entropy - self.previous_entropy
                     self.delta_s *= const.kb / const.mp # now erg K^-1 g^-1
                     self.tds = self.t * self.delta_s
                     self.int_tdsdm = trapz(self.t * self.delta_s, dx=self.dm)
@@ -1682,7 +1682,19 @@ class evol:
                     # now that have timestep based on total intrinsic luminosity,
                     # calculate eps_grav to see distribution of energy generation
                     if dt <= 0.:
-                        raise EnergyError('got non-positive dt {:e}'.format(dt))
+                        with open('debug_energy.pkl', 'wb') as f:
+                            pickle.dump({
+                                'int_tdsdm':self.int_tdsdm, 
+                                'tds':self.tds, 
+                                'delta_s':self.delta_s, 
+                                'entropy':self.entropy,
+                                'previous_entropy':self.previous_entropy,
+                                'p':self.p, 
+                                't':self.t, 
+                                'lint':self.lint, 
+                                'profiles':self.profiles, 
+                                'history':self.history}, f)
+                        raise EnergyError('got non-positive dt {:e}. wrote debug_energy.pkl.'.format(dt))
                         # self.status = EnergyError('got non-positive dt {:e}'.format(dt))
                         # break
                     self.eps_grav = -1. * self.t * self.delta_s / dt
@@ -1821,7 +1833,6 @@ class evol:
                 done = True
 
             # took a good step
-            previous_entropy = self.entropy
             previous_t = params[which_t]
             self.step += 1
 
@@ -1850,6 +1861,8 @@ class evol:
             self.walltime = time.time() - start_time
             self.delta_y1 = prev_y1 - self.y[-1] if prev_y1 > 0 else 0
             self.append_history()
+
+            self.previous_entropy = self.entropy
 
             # realtime output
             if self.status != 'okay': limit = 'fail'
@@ -1917,6 +1930,7 @@ class evol:
         profile['y'] = np.copy(self.y)
         profile['z'] = np.copy(self.z)
         profile['entropy'] = np.copy(self.entropy)
+        profile['previous_entropy'] = self.previous_entropy
         profile['r'] = np.copy(self.r)
         profile['m'] = np.copy(self.m)
         for qty in 'g', 'dlogp_dlogrho', 'gamma1', 'csound', 'brunt_n2', 'chirho', 'chit', 'gradt', 'grada', \
@@ -1925,28 +1939,6 @@ class evol:
                 profile[qty] = np.copy(getattr(self, qty))
             except AttributeError:
                 pass
-        # profile['g'] = np.copy(self.g)
-        # profile['dlogp_dlogrho'] = np.copy(self.dlogp_dlogrho)
-        # profile['gamma1'] = np.copy(self.gamma1)
-        # profile['csound'] = np.copy(self.csound)
-        # # profile['lamb_s12'] = np.copy(self.lamb_s12)
-        # profile['brunt_n2'] = np.copy(self.brunt_n2)
-        # # profile['brunt_n2_direct'] = self.brunt_n2_direct
-        # profile['chirho'] = np.copy(self.chirho)
-        # profile['chit'] = np.copy(self.chit)
-        # profile['gradt'] = np.copy(self.gradt)
-        # profile['grada'] = np.copy(self.grada)
-        # profile['cp'] = np.copy(self.cp)
-        # profile['cv'] = np.copy(self.cv)
-        # profile['rf'] = np.copy(self.rf)
-        # profile['mf'] = np.copy(self.mf)
-        # profile['grady'] = np.copy(self.grady)
-        # profile['brunt_b'] = np.copy(self.brunt_b)
-        # # profile['pressure_scale_height'] = self.pressure_scale_height
-        # if hasattr(self, 'ymax'):
-        #     profile['ymax'] = np.copy(self.ymax)
-        # if hasattr(self, 'ystart'):
-        #     profile['dy'] = np.copy(self.y - self.ystart)
         if hasattr(self, 'tck_ymax'):
             profile['tck_ymax'] = copy.copy(self.tck_ymax)
         # if self.step > 0:
