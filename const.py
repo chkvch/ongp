@@ -1,7 +1,4 @@
 import numpy as np
-import logging
-
-
 
 pi = np.pi
 one = 1

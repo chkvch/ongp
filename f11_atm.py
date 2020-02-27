@@ -263,5 +263,5 @@ class atm:
             _ = np.linspace(min_tint, max_tint)
             while np.isnan(teff):
                 _ = np.delete(_, -1)
-                teff = splev(tint, splrep(_, self.get[teff_column]((g, _))))
+                teff = splev(tint, splrep(_, self.get[teff_column]((g, _))), ext=2)
         return tint, teff
