@@ -13,6 +13,9 @@ from scipy.optimize import root, brentq
              CHIR - logarithmic derivative of pressure over density
              PMbar - pressure in Mbar
              USPEC - specific internal energy in ergs/gram
+             
+           SNk=UNkT-FNkT
+
 '''
    
 names = 'rho', 't', 'p', 'p_nkT', 'f_NkT', 'u_NkT', 'cv_Nk', 'chit', 'chirho', 's_Nk', 'u'
