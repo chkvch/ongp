@@ -39,15 +39,30 @@ class evol:
 
         if 'z_eos_option' in list(params):
             # initialize z equation of state
-            import aneos; reload(aneos)
-            import reos_water
             if params['z_eos_option'] == 'reos water':
+                import reos_water; reload(reos_water)
                 self.z_eos = reos_water.eos(params['path_to_data'])
-                self.z_eos_low_t = aneos.eos(params['path_to_data'], 'water')
+                import aneos; reload(aneos)
+                self.z_eos_low_t = aneos.eos(params['path_to_data'], 'ice')
             elif 'aneos' in params['z_eos_option']:
                 material = params['z_eos_option'].split()[1]
-                self.z_eos = aneos.eos(params['path_to_data'], material)
-                self.z_eos_low_t = None
+                if material == 'mix':
+                    import aneos_mix; reload(aneos_mix)
+                    self.z_eos = aneos_mix.eos(params['path_to_data'])
+                else:
+                    import aneos; reload(aneos)
+                    self.z_eos = aneos.eos(params['path_to_data'], material)
+            elif params['z_eos_option'] == 'mazevet':
+                import mazevet; reload(mazevet)
+                self.z_eos = mazevet.eos(params['path_to_data'])
+                import aneos; reload(aneos)
+                self.z_eos_low_t = aneos.eos(params['path_to_data'], 'ice')
+            elif params['z_eos_option'] == 'sesame':
+                raise NotImplementedError('sesame eos is only implemented in rho-t basis.')
+                import sesame; reload(sesame)
+                self.z_eos = mazevet.eos(params['path_to_data'])
+                import aneos; reload(aneos)
+                self.z_eos_low_t = aneos.eos(params['path_to_data'], 'ice')
             else:
                 raise ValueError("z eos option '%s' not recognized." % params['z_eos_option'])
 
@@ -181,8 +196,9 @@ class evol:
 
         assert self.evol_params['z_eos_option'], 'cannot calculate rho_z with no z eos specified.'
 
-        if self.evol_params['z_eos_option'] == 'reos water':
-            # if using reos water, extend down to T < 1000 K using aneos water.
+        # if self.evol_params['z_eos_option'] == 'reos water':
+        if hasattr(self, 'z_eos_low_t'):
+            # extend down to T < 1000 K using different low-t z eos.
             # for this, mask to find the low-T part.
             logp_high_t = logp[logt >= 3.]
             logt_high_t = logt[logt >= 3.]
@@ -193,15 +209,12 @@ class evol:
             try:
                 rho_z_low_t = 10 ** self.z_eos_low_t.get_logrho(logp_low_t, logt_low_t)
             except:
-                print('off low-t eos tables?')
-                raise
+                raise EOSError('off low-t eos tables.')
 
             try:
                 rho_z_high_t = 10 ** self.z_eos.get_logrho(logp_high_t, logt_high_t)
             except:
-                raise EOSError('off high-t eos tables')
-                # print('off high-t eos tables?')
-                # raise
+                raise EOSError('off high-t eos tables.')
 
             rho_z = np.concatenate((rho_z_high_t, rho_z_low_t))
 
@@ -227,9 +240,9 @@ class evol:
             raise UnphysicalParameterError('one or more bad z')
         elif np.any(z > 1.):
             raise UnphysicalParameterError('one or more bad z')
-        rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
-        rho_z = self.get_rho_z(logp, logt)
-        rhoinv = (1. - z) / rho_hhe + z / rho_z
+        self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
+        self.rho_z = self.get_rho_z(logp, logt)
+        rhoinv = (1. - z) / self.rho_hhe + z / self.rho_z
         return rhoinv ** -1
 
     def zfunc(self, rf):
@@ -1480,7 +1493,7 @@ class evol:
         # print 'at time of calculating rho_t for final static model, log core temperature is %f' % np.log10(self.t[0])
         if self.kcore > 0 and self.evol_params['z_eos_option']:
             self.dlogrho_dlogt_const_p[:self.kcore] = self.z_eos.get_dlogrho_dlogt_const_p(np.log10(self.p[:self.kcore]), np.log10(self.t[:self.kcore]))
-        if self.evol_params['z_eos_option'] == 'reos water' and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
+        if hasattr(self, 'z_eos_low_t') and self.t[-1] < 1e3: # must be calculated separately for low T and high T part of the envelope
             k_t_boundary = np.where(np.log10(self.t) > 3.)[0][-1]
             try:
                 if self.z1 > 0.: # use eq. (16) in ms.pdf for this derivative from additive volume mixture
