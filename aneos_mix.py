@@ -5,8 +5,9 @@ from importlib import reload
 import aneos_rhot; reload(aneos_rhot)
 
 class eos:
-    ''' does a 50-50 rock/ice mix from aneos ice and serpentine tables '''
-    def __init__(self, path_to_data=None, extended=False):
+    ''' does a rock/ice mix from aneos ice and serpentine tables '''
+    def __init__(self, path_to_data=None, f_ice=0.5, extended=False):
+        self.f_ice = f_ice
         if not path_to_data:
             import os
             path_to_data = os.environ['ongp_data_path']
@@ -69,11 +70,13 @@ class eos:
         self.rhot_eos_ice = aneos_rhot.eos('ice')
         self.rhot_eos_ser = aneos_rhot.eos('serpentine')
 
-    def get_logrho(self, logp, logt, X=0.5):
+    def get_logrho(self, logp, logt):
+        X = self.f_ice
         return -np.log10(X / 10 ** self._get_logrho_ice((logp, logt)) + (1. - X) / 10 ** self._get_logrho_ser((logp, logt)))
 
-    def get(self, logp, logt, X=0.5):
+    def get(self, logp, logt):
         ''' of the heavy elements, X is the mass fraction of ice, 1-X the mass fraction of rock '''
+        X = self.f_ice
         res = {}
         logrho_ice = self._get_logrho_ice((logp, logt))
         logu_ice = self._get_logu_ice((logp, logt))
@@ -82,7 +85,6 @@ class eos:
         logu_ser = self._get_logu_ser((logp, logt))
         logs_ser = self._get_logs_ser((logp, logt))
         
-        X = 0.5 # mass fraction of ice
         rhoinv = X / 10 ** logrho_ice + (1. - X) / 10 ** logrho_ser
         logrho = - np.log10(rhoinv)
         u = X * 10 ** logu_ice + (1. - X) * 10 ** logu_ser

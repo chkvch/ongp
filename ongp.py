@@ -48,7 +48,8 @@ class evol:
                 material = params['z_eos_option'].split()[1]
                 if material == 'mix':
                     import aneos_mix; reload(aneos_mix)
-                    self.z_eos = aneos_mix.eos(params['path_to_data'])
+                    f_ice = params['f_ice'] if 'f_ice' in list(params) else 0.5
+                    self.z_eos = aneos_mix.eos(params['path_to_data'], f_ice)
                 else:
                     import aneos; reload(aneos)
                     self.z_eos = aneos.eos(params['path_to_data'], material)
