@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
 from importlib import reload
 import aneos_rhot; reload(aneos_rhot)
@@ -201,12 +201,14 @@ class eos:
 
 
     def plot_rhot_coverage(self, ax=None):
+        import matplotlib.pyplot as plt
         if ax == None: ax = plt.gca()
         ax.plot(self.data['logrho'], self.data['logt'], 'k,')
         ax.set_xlabel(r'$\log\rho$')
         ax.set_ylabel(r'$\log T$')
 
     def plot_pt_coverage(self, ax=None):
+        import matplotlib.pyplot as plt
         if ax == None: ax = plt.gca()
         ax.plot(self.data['logp'], self.data['logt'], 'k,')
         ax.set_xlabel(r'$\log P$')

@@ -6,7 +6,7 @@ class eos:
         if not path_to_data:
             import os
             path_to_data = os.environ['ongp_data_path']
-        self.path = f'{path_to_data}/mazevet_pt.dat'
+        self.path = f'{path_to_data}/sesame_water7150.dat'
         self.names = 'p', 't', 'rho', 'u', 'chirho', 'chit' # p, rho, u all cgs
         self.data = np.genfromtxt(self.path, names=self.names)
         

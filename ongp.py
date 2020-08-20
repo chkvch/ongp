@@ -1268,11 +1268,6 @@ class evol:
                                                         * (first_good_grada - last_good_grada) + last_good_grada
             else: # abort
                 print('%i nans in grada for iteration %i, stopping' % (num_nans, self.iters))
-                # with open('grada_nans.dat', 'w') as fw:
-                #     for k, val in enumerate(self.grada):
-                #         if np.isnan(val):
-                #             fw.write('%16.8f %16.8f %16.8f\n' % (np.log10(self.p[k]), np.log10(self.t[k]), self.y[k]))
-                # print('saved problematic logp, logt, y to grada_nans.dat')
                 raise EOSError('%i nans in grada after eos call on static iteration %i.' % (len(self.grada[np.isnan(self.grada)]), self.iters))
 
     def rho_check_nans(self):
