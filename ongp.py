@@ -19,7 +19,7 @@ class evol:
             if not os.path.exists(params['path_to_data']):
                 raise ValueError('must specify path_to_data indicating path to eos/atm data. best way is to set environment variable ongp_data_path.')
 
-        if not 'hhe_eos_option' in params.keys():
+        if not 'hhe_eos_option' in params:
             params['hhe_eos_option'] = 'scvh'
         # initialize hydrogen-helium equation of state
         if params['hhe_eos_option'] == 'scvh':
@@ -37,7 +37,7 @@ class evol:
         else:
             print('hydrogen-helium eos option {} not recognized'.format(params['hhe_eos_option']))
 
-        if 'z_eos_option' in list(params):
+        if 'z_eos_option' in params:
             # initialize z equation of state
             if params['z_eos_option'] == 'reos water':
                 import reos_water; reload(reos_water)
