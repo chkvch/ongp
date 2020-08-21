@@ -17,7 +17,7 @@ class evol:
         if not 'path_to_data' in params:
             if 'ongp_data_path' in os.environ:
                 params['path_to_data'] = os.environ['ongp_data_path']
-            if (not os.path.exists(params['path_to_data'])) or ('ongp_data_path' not in os.environ):
+            if ('path_to_data' not in params) or (not os.path.exists(params['path_to_data'])) or ('ongp_data_path' not in os.environ):
                 raise ValueError('must specify path_to_data indicating path to eos/atm data. best way is to set environment variable ongp_data_path.')
 
         if not 'hhe_eos_option' in params:
