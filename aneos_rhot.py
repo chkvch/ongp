@@ -11,7 +11,7 @@ class eos:
         self.material = material
         self.columns = 'logrho', 'logt', 'logp', 'logu', 'logs'
         if not path_to_data: path_to_data = os.environ['ongp_data_path']
-        self.data_path = '{}/raw_or_unused_eos_data/aneos/aneos_{}.dat'.format(path_to_data, self.material)
+        self.data_path = '{}/aneos_{}.dat'.format(path_to_data, self.material)
         self.data = np.genfromtxt(self.data_path, skip_header=0, names=self.columns)
 
         self.logrhovals = np.unique(self.data['logrho'])

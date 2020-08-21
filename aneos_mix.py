@@ -67,8 +67,8 @@ class eos:
         # self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_nodes)
         # self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_nodes)
 
-        self.rhot_eos_ice = aneos_rhot.eos('ice')
-        self.rhot_eos_ser = aneos_rhot.eos('serpentine')
+        self.rhot_eos_ice = aneos_rhot.eos('ice', path_to_data)
+        self.rhot_eos_ser = aneos_rhot.eos('serpentine', path_to_data)
 
     def get_logrho(self, logp, logt):
         X = self.f_ice
