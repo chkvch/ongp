@@ -3,7 +3,11 @@ from itertools import islice
 import numpy as np
 
 class eos:
-    def __init__(self, path_to_data):
+    def __init__(self, path_to_data=None):
+
+        if not path_to_data:
+            import os
+            path_to_data = os.environ['ongp_data_path']
 
         npts_t = 121
         npts_t -= 60 # skip logT < 5; there are 60 such points
@@ -15,8 +19,8 @@ class eos:
 
 #log T [K]        log P [GPa]   log rho [g/cc]  log U [MJ/kg] log S [MJ/kg/K]  dlrho/dlT_P,  dlrho/dlP_T,   dlS/dlT_P,     dlS/dlP_T         grad_ad
         columns = 'logt', 'logp', 'logrho', 'logu', 'logs', 'rhot', 'rhop', 'st', 'sp'
-        h_path = '{}/DirEOS2019/TABLE_H_TP_v1'.format(path_to_data)
-        he_path = '{}/DirEOS2019/TABLE_HE_TP_v1'.format(path_to_data)
+        h_path = f'{path_to_data}/DirEOS2019/TABLE_H_TP_v1'
+        he_path = f'{path_to_data}/DirEOS2019/TABLE_HE_TP_v1'
         self.logtvals = np.array([])
 
         self.data = {}
@@ -73,18 +77,44 @@ class eos:
     def get_st_he(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.data['he']['st'], **self.spline_kwargs)(lgp, lgt, grid=False)
 
+    # testing shows that getting derivative on spline actually does a better job of yielding a grada
+    # that, when integrated, gives a profile corresponding to constant entropy in this eos
+    def get_sp_h_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['h']['logs'], **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    def get_st_h_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['h']['logs'], **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    def get_sp_he_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['he']['logs'], **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    def get_st_he_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['he']['logs'], **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    # see if doing same for partials of rho helps give a more reliable gamma1
+    def get_rhop_h_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['h']['logrho'], **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    def get_rhot_h_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['h']['logrho'], **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+    def get_rhop_he_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['he']['logrho'], **self.spline_kwargs)(lgp, lgt, grid=False, dx=1)
+    def get_rhot_he_alt(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.data['he']['logrho'], **self.spline_kwargs)(lgp, lgt, grid=False, dy=1)
+
+
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
         s_h = 10 ** self.get_logs_h(logp, logt)
         s_he = 10 ** self.get_logs_he(logp, logt)
-        sp_h = self.get_sp_h(logp, logt)
-        st_h = self.get_st_h(logp, logt)
-        sp_he = self.get_sp_he(logp, logt)
-        st_he = self.get_st_he(logp, logt)
+        # sp_h = self.get_sp_h(logp, logt)
+        # st_h = self.get_st_h(logp, logt)
+        # sp_he = self.get_sp_he(logp, logt)
+        # st_he = self.get_st_he(logp, logt)
+        sp_h = self.get_sp_h_alt(logp, logt)
+        st_h = self.get_st_h_alt(logp, logt)
+        sp_he = self.get_sp_he_alt(logp, logt)
+        st_he = self.get_st_he_alt(logp, logt)
 
-        s = (1. - y) * s_h + y * s_he # + smix
-        st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix/s*dlogsmix/dlogt
-        sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix/s*dlogsmix/dlogp
+
+        s = (1. - y) * s_h + y * s_he # + smix # can add smix via eq. (11) of CMS19; about 0.23 kb/mp for Y=0.275
+        st = (1. - y) * s_h / s * st_h + y * s_he / s * st_he # + smix/s*dlogsmix/dlogt # CMS19 include no T or P dependence in smix
+        sp = (1. - y) * s_h / s * sp_h + y * s_he / s * sp_he # + smix/s*dlogsmix/dlogp # CMS19 include no T or P dependence in smix
         grada = - sp / st
 
         rho_h = 10 ** self.get_logrho_h(logp, logt)
@@ -92,10 +122,14 @@ class eos:
         rhoinv = y / rho_he + (1. - y) / rho_h
         rho = rhoinv ** -1.
         logrho = np.log10(rho)
-        rhop_h = self.get_rhop_h(logp, logt)
-        rhot_h = self.get_rhot_h(logp, logt)
-        rhop_he = self.get_rhop_he(logp, logt)
-        rhot_he = self.get_rhot_he(logp, logt)
+        # rhop_h = self.get_rhop_h(logp, logt)
+        # rhot_h = self.get_rhot_h(logp, logt)
+        # rhop_he = self.get_rhop_he(logp, logt)
+        # rhot_he = self.get_rhot_he(logp, logt)
+        rhop_h = self.get_rhop_h_alt(logp, logt)
+        rhot_h = self.get_rhot_h_alt(logp, logt)
+        rhop_he = self.get_rhop_he_alt(logp, logt)
+        rhot_he = self.get_rhot_he_alt(logp, logt)
 
         rhot = (1. - y) * rho / rho_h * rhot_h + y * rho / rho_he * rhot_he
         rhop = (1. - y) * rho / rho_h * rhop_h + y * rho / rho_he * rhop_he
@@ -111,10 +145,20 @@ class eos:
         cv = cp * chirho / gamma1 # Unno 13.87
         csound = np.sqrt(10 ** logp / rho * gamma1)
 
+        # grada_ = - ((1. - y) * s_h * sp_h + y * s_he * sp_he) / ((1. - y) * s_h * st_h + y * s_he * st_he)
+        #
+        # sp_h_alt = self.get_sp_h_alt(logp, logt)
+        # st_h_alt = self.get_st_h_alt(logp, logt)
+        # sp_he_alt = self.get_sp_he_alt(logp, logt)
+        # st_he_alt = self.get_st_he_alt(logp, logt)
+        # grada_alt = - ((1. - y) * s_h * sp_h_alt + y * s_he * sp_he_alt) / ((1. - y) * s_h * st_h_alt + y * s_he * st_he_alt)
+
         res =  {
             'grada':grada,
             'logrho':logrho,
             'logs':np.log10(s),
+            'logs_h':np.log10(s_h),
+            'logs_he':np.log10(s_he),
             'gamma1':gamma1,
             'chirho':chirho,
             'chit':chit,
@@ -125,7 +169,7 @@ class eos:
             'rho_he':rho_he,
             'rhop':rhop,
             'rhot':rhot,
-            'cp':cv,
+            'cp':cp,
             'cv':cv,
             'csound':csound
             }
@@ -138,7 +182,16 @@ class eos:
         return self.get(logp, logt, y)['logrho']
 
     def get_logs(self, logp, logt, y):
-        return self.get(logp, logt, y)['logs']
+        # return self.get(logp, logt, y)['logs']
+        s_h = 10 ** self.get_logs_h(logp, logt)
+        s_he = 10 ** self.get_logs_he(logp, logt)
+        sp_h = self.get_sp_h(logp, logt)
+        st_h = self.get_st_h(logp, logt)
+        sp_he = self.get_sp_he(logp, logt)
+        st_he = self.get_st_he(logp, logt)
+
+        s = (1. - y) * s_h + y * s_he # + smix
+        return np.log10(s)
 
     def get_gamma1(self, logp, logt, y):
         return self.get(logp, logt, y)['gamma1']
