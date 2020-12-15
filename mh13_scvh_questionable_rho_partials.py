@@ -34,6 +34,26 @@ class eos:
 
         self.logtlo_h = 2.25
 
+            # class scipy.interpolate.RectBivariateSpline(x, y, z, bbox=[None, None, None, None], kx=3, ky=3, s=0)
+            #     Bivariate spline approximation over a rectangular mesh.
+
+            #     Can be used for both smoothing and interpolating data.
+
+            #     x,y : array_like
+            #     1-D arrays of coordinates in strictly ascending order.
+
+            #     z : array_like
+            #     2-D array of data with shape (x.size,y.size).
+
+            #     bbox : array_like, optional
+            #     Sequence of length 4 specifying the boundary of the rectangular approximation domain. By default, bbox=[min(x,tx),max(x,tx), min(y,ty),max(y,ty)].
+
+            #     kx, ky : ints, optional
+            #     Degrees of the bivariate spline. Default is 3.
+
+            #     s : float, optional
+            #     Positive smoothing factor defined for estimation condition: sum((w[i]*(z[i]-s(x[i], y[i])))**2, axis=0) <= s Default is s=0, which is for interpolation.
+
         self.spline_kwargs = {'kx':3, 'ky':3}
         self.he_eos = scvh.eos(path_to_data)
 
@@ -47,10 +67,10 @@ class eos:
     def get_st_h(self, lgp, lgt):
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
 
-    def get_rhop_h(self, lgp, lgt):
-        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1, grid=False)
-    def get_rhot_h(self, lgp, lgt):
-        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
+    # def get_rhop_h(self, lgp, lgt):
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1)
+    # def get_rhot_h(self, lgp, lgt):
+    #     return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dy=1)
     # rho_t and rho_p from MH13 tables are presenting some difficulties, e.g., rhot_h changes sign in the neighborhood of
     # 1 Mbar in a Jupiter adiabat. instead get rhot_h and rhop_h from the scvh tables below. only really enters
     # the calculation of brunt_B.
@@ -68,10 +88,10 @@ class eos:
         return self.he_eos.get_he['rhop']((lgp, lgt))
     def get_rhot_he(self, lgp, lgt):
         return self.he_eos.get_he['rhot']((lgp, lgt))
-    # def get_rhop_h(self, lgp, lgt):
-    #     return self.he_eos.get_h['rhop']((lgp, lgt))
-    # def get_rhot_h(self, lgp, lgt):
-    #     return self.he_eos.get_h['rhot']((lgp, lgt))
+    def get_rhop_h(self, lgp, lgt):
+        return self.he_eos.get_h['rhop']((lgp, lgt))
+    def get_rhot_h(self, lgp, lgt):
+        return self.he_eos.get_h['rhot']((lgp, lgt))
 
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):

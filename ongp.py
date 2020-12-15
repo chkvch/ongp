@@ -34,6 +34,9 @@ class evol:
         elif params['hhe_eos_option'] == 'mh13_scvh':
             import mh13_scvh; reload(mh13_scvh)
             self.hhe_eos = mh13_scvh.eos(params['path_to_data'])
+        elif params['hhe_eos_option'] == 'mh13_scvh_testing':
+            import mh13_scvh_testing; reload(mh13_scvh_testing)
+            self.hhe_eos = mh13_scvh_testing.eos(params['path_to_data'])
         elif params['hhe_eos_option'] == 'chabrier':
             import chabrier; reload(chabrier)
             self.hhe_eos = chabrier.eos(params['path_to_data'])
@@ -125,7 +128,7 @@ class evol:
         # overwrite with any passed by user
         for key, value in params.items():
             self.evol_params[key] = value
-            
+
         # default mesh
         self.mesh_params = {
             'mesh_func_type':'flat_with_surface_exponential_core_gaussian',
@@ -335,7 +338,7 @@ class evol:
                 self.atm = fortney_atm.atm()
             else:
                 raise ValueError('atm option {} not recognized.'.format(self.evol_params['atm_option']))
-                
+
             if 'isothermal_above_teq' in list(params) and params['isothermal_above_teq']:
                 self.isothermal_above_teq = True
 
@@ -1129,7 +1132,7 @@ class evol:
             else:
                 self.t[self.kcore:] = np.exp(cumtrapz(self.gradt[:self.kcore-1:-1] / self.p[:self.kcore-1:-1], x=self.p[:self.kcore-1:-1], initial=0.))[::-1]
             self.t *= tsurf
-            
+
         if hasattr(self, 'isothermal_above_teq') and self.isothermal_above_teq:
             if hasattr(self, 'teq'):
                 if np.any(self.t < self.teq):
@@ -1696,15 +1699,15 @@ class evol:
                     if dt <= 0.:
                         with open('debug_energy.pkl', 'wb') as f:
                             pickle.dump({
-                                'int_tdsdm':self.int_tdsdm, 
-                                'tds':self.tds, 
-                                'delta_s':self.delta_s, 
+                                'int_tdsdm':self.int_tdsdm,
+                                'tds':self.tds,
+                                'delta_s':self.delta_s,
                                 'entropy':self.entropy,
                                 'previous_entropy':self.previous_entropy,
-                                'p':self.p, 
-                                't':self.t, 
-                                'lint':self.lint, 
-                                'profiles':self.profiles, 
+                                'p':self.p,
+                                't':self.t,
+                                'lint':self.lint,
+                                'profiles':self.profiles,
                                 'history':self.history}, f)
                         raise EnergyError('got non-positive dt {:e}. wrote debug_energy.pkl.'.format(dt))
                         # self.status = EnergyError('got non-positive dt {:e}'.format(dt))
