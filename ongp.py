@@ -229,7 +229,7 @@ class evol:
             try:
                 rho_z = 10 ** self.z_eos.get_logrho(logp, logt)
             except ValueError:
-                raise ValueError('off z_eos tables.')
+                raise EOSError('off z_eos tables.')
 
         return rho_z
 
@@ -247,7 +247,13 @@ class evol:
             raise UnphysicalParameterError('one or more bad z')
         elif np.any(z > 1.):
             raise UnphysicalParameterError('one or more bad z')
-        self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
+        try:
+            self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
+        except ValueError as e:
+            if 'out of bounds' in e.args[0]:
+                raise EOSError('out of bounds in hhe_eos')
+            else:
+                raise
         self.rho_z = self.get_rho_z(logp, logt)
         rhoinv = (1. - z) / self.rho_hhe + z / self.rho_z
         return rhoinv ** -1
