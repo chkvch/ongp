@@ -48,10 +48,10 @@ class eos:
         return rbs(self.logpvals, self.logtvals, self.logs, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
 
     # if you want a more reasonable "direct" Brunt, get rhop and rhot this way: # models for Janosz this way
-    # def get_rhop_h(self, lgp, lgt):
-        # return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1, grid=False)
-    # def get_rhot_h(self, lgp, lgt):
-        # return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
+    def get_rhop_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dx=1, grid=False)
+    def get_rhot_h(self, lgp, lgt):
+        return rbs(self.logpvals, self.logtvals, self.logrho, **self.spline_kwargs)(lgp, lgt, dy=1, grid=False)
     # rho_t and rho_p from MH13 tables are presenting some difficulties, e.g., rhot_h changes sign in the neighborhood of
     # 1 Mbar in a Jupiter adiabat. instead get rhot_h and rhop_h from the scvh tables below. only really enters
     # the calculation of brunt_B.
@@ -70,10 +70,10 @@ class eos:
     def get_rhot_he(self, lgp, lgt):
         return self.he_eos.get_he['rhot']((lgp, lgt))
     # if you want a more reasonable Gamma_1 (but direct form of Brunt might look bad), get rhop and rhot this way: # this is our default
-    def get_rhop_h(self, lgp, lgt):
-        return self.he_eos.get_h['rhop']((lgp, lgt))
-    def get_rhot_h(self, lgp, lgt):
-        return self.he_eos.get_h['rhot']((lgp, lgt))
+    # def get_rhop_h(self, lgp, lgt):
+        # return self.he_eos.get_h['rhop']((lgp, lgt))
+    # def get_rhot_h(self, lgp, lgt):
+        # return self.he_eos.get_h['rhot']((lgp, lgt))
 
     # general method for getting quantities for hydrogen-helium mixture
     def get(self, logp, logt, y):
