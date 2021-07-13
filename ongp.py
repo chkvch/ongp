@@ -248,7 +248,8 @@ class evol:
         elif np.any(z > 1.):
             raise UnphysicalParameterError('one or more bad z')
         try:
-            self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
+            # self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y)
+            self.rho_hhe = 10 ** self.hhe_eos.get_logrho(logp, logt, y / (1. - z))
         except ValueError as e:
             if 'out of bounds' in e.args[0]:
                 raise EOSError('out of bounds in hhe_eos')
@@ -1170,7 +1171,7 @@ class evol:
                 if self.iters < 2:
                     self.ktrans = int(2. * self.nz / 3)
                 else:
-                    raise HydroError('found no molecular-metallic transition. ptrans %.3e, max p %.3e, iters %i ' \
+                    raise HydroError('found no molecular-metallic transition. may need a smaller ptrans or try a cooler planet. ptrans %.3e, max p %.3e, iters %i ' \
                         % (self.static_params['transition_pressure']*1e12, max(self.p), self.iters))
             else: # skip for U, N
                 self.ktrans = -1
@@ -1713,7 +1714,7 @@ class evol:
                                 'p':self.p,
                                 't':self.t,
                                 'lint':self.lint,
-                                'profiles':self.profiles,
+                                'profiles':self.profiles if hasattr(self, 'profiles') else None,
                                 'history':self.history}, f)
                         raise EnergyError('got non-positive dt {:e}. wrote debug_energy.pkl.'.format(dt))
                         # self.status = EnergyError('got non-positive dt {:e}'.format(dt))
