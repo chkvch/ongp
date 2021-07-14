@@ -54,7 +54,7 @@ class eos:
         # self._get_chirho = RegularGridInterpolator(pt_basis, self.chirho_on_nodes)
         # self._get_gamma1 = RegularGridInterpolator(pt_basis, self.gamma1_on_nodes)
 
-        self.rhot_eos = aneos_rhot.eos(material)
+        self.rhot_eos = aneos_rhot.eos(material, path_to_data)
 
     def get_logrho(self, logp, logt):
         return self._get_logrho((logp, logt))
